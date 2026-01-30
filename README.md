@@ -13,7 +13,6 @@ This is infrastructure.
 Regulatory scope
 
 The framework is designed around Articles 9 to 13 of the EU AI Act, covering
-
 • Risk management systems
 • Data and model governance
 • Technical documentation
