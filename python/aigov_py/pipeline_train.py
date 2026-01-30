@@ -168,7 +168,7 @@ def main() -> None:
         "run_id": run_id,
         "payload": {
           "artifact_path": artifact_path,
-          "promotion_reason": "approv     _human",
+          "promotion_reason": "approved_by_human",
         },
       }
     )
