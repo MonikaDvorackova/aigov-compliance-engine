@@ -3,49 +3,32 @@ use crate::schema::EvidenceEvent;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
+pub const POLICY_VERSION: &str = "v0.4_human_approval";
+
 pub fn enforce(event: &EvidenceEvent, log_path: &str) -> Result<(), String> {
   match event.event_type.as_str() {
     "data_registered" => enforce_data_registered(event),
     "model_trained" => enforce_model_trained(event, log_path),
     "evaluation_reported" => enforce_evaluation_reported(event),
+    "human_approved" => enforce_human_approved(event),
     "model_promoted" => enforce_model_promoted(event, log_path),
     _ => Ok(()),
   }
 }
 
+/* ------------------------- schema checks ------------------------- */
+
 fn enforce_data_registered(event: &EvidenceEvent) -> Result<(), String> {
   let p = &event.payload;
 
   let dataset_ok = p.get("dataset").and_then(|v| v.as_str()).is_some();
-  let fp_ok = p
-    .get("dataset_fingerprint")
-    .and_then(|v| v.as_str())
-    .map(|s| !s.trim().is_empty())
-    .unwrap_or(false);
+  let fp_ok = p.get("dataset_fingerprint").and_then(|v| v.as_str()).is_some();
 
   if dataset_ok && fp_ok {
     return Ok(());
   }
 
-  Err(
-    "policy_violation: data_registered payload must include dataset(str) and dataset_fingerprint(str)"
-      .to_string(),
-  )
-}
-
-fn enforce_model_trained(event: &EvidenceEvent, log_path: &str) -> Result<(), String> {
-  if has_event_type_for_run(&event.run_id, "data_registered", log_path)? {
-    return Ok(());
-  }
-
-  Err("policy_violation: model_trained requires prior data_registered for the same run_id".to_string())
-}
-
-fn enforce_model_promoted(event: &EvidenceEvent, log_path: &str) -> Result<(), String> {
-  if has_passed_evaluation(&event.run_id, log_path)? {
-    return Ok(());
-  }
-  Err("policy_violation: model_promoted requires prior evaluation_reported with passed=true".to_string())
+  Err("policy_violation: data_registered payload must include dataset(str) and dataset_fingerprint(str)".to_string())
 }
 
 fn enforce_evaluation_reported(event: &EvidenceEvent) -> Result<(), String> {
@@ -63,7 +46,65 @@ fn enforce_evaluation_reported(event: &EvidenceEvent) -> Result<(), String> {
   Err("policy_violation: evaluation_reported payload must include metric(str), value(number), threshold(number), passed(bool)".to_string())
 }
 
-fn has_event_type_for_run(run_id: &str, event_type: &str, log_path: &str) -> Result<bool, String> {
+// Human approval is tied to the promotion decision (variant B).
+// Required payload:
+// - scope: "model_promoted"
+// - decision: "approve" | "reject"
+// - approver: string (person or role)
+// - justification: string
+fn enforce_human_approved(event: &EvidenceEvent) -> Result<(), String> {
+  let p = &event.payload;
+
+  let scope_ok = matches!(p.get("scope").and_then(|v| v.as_str()), Some("model_promoted"));
+  let decision = p.get("decision").and_then(|v| v.as_str());
+  let decision_ok = matches!(decision, Some("approve") | Some("reject"));
+  let approver_ok = p.get("approver").and_then(|v| v.as_str()).is_some();
+  let just_ok = p.get("justification").and_then(|v| v.as_str()).is_some();
+
+  if scope_ok && decision_ok && approver_ok && just_ok {
+    return Ok(());
+  }
+
+  Err("policy_violation: human_approved payload must include scope=\"model_promoted\", decision(\"approve\"|\"reject\"), approver(str), justification(str)".to_string())
+}
+
+/* ------------------------- ordering / gating ------------------------- */
+
+fn enforce_model_trained(event: &EvidenceEvent, log_path: &str) -> Result<(), String> {
+  if has_event_for_run("data_registered", &event.run_id, log_path)? {
+    return Ok(());
+  }
+  Err("policy_violation: model_trained requires prior data_registered for the same run_id".to_string())
+}
+
+fn enforce_model_promoted(event: &EvidenceEvent, log_path: &str) -> Result<(), String> {
+  // Gate 1: requires passed evaluation
+  if !has_passed_evaluation(&event.run_id, log_path)? {
+    return Err("policy_violation: model_promoted requires prior evaluation_reported with passed=true".to_string());
+  }
+
+  // Gate 2 (variant B): requires explicit human approval for promotion
+  match latest_human_approval_decision(&event.run_id, log_path)? {
+    Some("approve") => Ok(()),
+    Some("reject") => Err("policy_violation: model_promoted blocked by human_approved decision=reject".to_string()),
+    _ => Err("policy_violation: model_promoted requires prior human_approved decision=approve with scope=model_promoted".to_string()),
+  }
+}
+
+/* ------------------------- log queries ------------------------- */
+
+fn open_log_reader(log_path: &str) -> Result<BufReader<File>, String> {
+  let f = match File::open(log_path) {
+    Ok(f) => f,
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+      return Err("log_not_found".to_string());
+    }
+    Err(e) => return Err(e.to_string()),
+  };
+  Ok(BufReader::new(f))
+}
+
+fn has_event_for_run(event_type: &str, run_id: &str, log_path: &str) -> Result<bool, String> {
   let f = match File::open(log_path) {
     Ok(f) => f,
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
@@ -76,11 +117,7 @@ fn has_event_type_for_run(run_id: &str, event_type: &str, log_path: &str) -> Res
     let l = line.map_err(|e| e.to_string())?;
     let rec: StoredRecord = serde_json::from_str(&l).map_err(|e| e.to_string())?;
 
-    if rec.event.run_id != run_id {
-      continue;
-    }
-
-    if rec.event.event_type == event_type {
+    if rec.event.run_id == run_id && rec.event.event_type == event_type {
       return Ok(true);
     }
   }
@@ -104,7 +141,6 @@ fn has_passed_evaluation(run_id: &str, log_path: &str) -> Result<bool, String> {
     if rec.event.run_id != run_id {
       continue;
     }
-
     if rec.event.event_type != "evaluation_reported" {
       continue;
     }
@@ -122,4 +158,49 @@ fn has_passed_evaluation(run_id: &str, log_path: &str) -> Result<bool, String> {
   }
 
   Ok(false)
+}
+
+// Returns the latest human_approved decision for the run_id with scope=model_promoted.
+fn latest_human_approval_decision(run_id: &str, log_path: &str) -> Result<Option<&'static str>, String> {
+  let f = match File::open(log_path) {
+    Ok(f) => f,
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+    Err(e) => return Err(e.to_string()),
+  };
+
+  let reader = BufReader::new(f);
+
+  let mut latest: Option<String> = None;
+
+  for line in reader.lines() {
+    let l = line.map_err(|e| e.to_string())?;
+    let rec: StoredRecord = serde_json::from_str(&l).map_err(|e| e.to_string())?;
+
+    if rec.event.run_id != run_id {
+      continue;
+    }
+    if rec.event.event_type != "human_approved" {
+      continue;
+    }
+
+    let scope_ok = rec
+      .event
+      .payload
+      .get("scope")
+      .and_then(|v| v.as_str())
+      .map(|s| s == "model_promoted")
+      .unwrap_or(false);
+
+    if !scope_ok {
+      continue;
+    }
+
+    latest = rec.event.payload.get("decision").and_then(|v| v.as_str()).map(|s| s.to_string());
+  }
+
+  match latest.as_deref() {
+    Some("approve") => Ok(Some("approve")),
+    Some("reject") => Ok(Some("reject")),
+    _ => Ok(None),
+  }
 }

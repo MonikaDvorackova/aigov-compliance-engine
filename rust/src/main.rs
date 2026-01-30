@@ -10,7 +10,7 @@ use serde_json::json;
 use std::net::SocketAddr;
 
 const LOG_PATH: &str = "audit_log.jsonl";
-const POLICY_VERSION: &str = "v0.3_traceability";
+const POLICY_VERSION: &str = "v0.4_human_approval";
 
 #[derive(Deserialize)]
 struct BundleQuery {
