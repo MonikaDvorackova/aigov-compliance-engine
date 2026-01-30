@@ -1,0 +1,26 @@
+# Python
+python/.venv/
+python/__pycache__/
+python/**/*.pyc
+python/**/*.pyo
+python/**/*.pyd
+python/.pytest_cache/
+python/.mypy_cache/
+python/.ruff_cache/
+python/dist/
+python/build/
+python/*.egg-info/
+
+# Rust
+rust/target/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+*.jsonl
+
+# IDE
+.vscode/
+.idea/
