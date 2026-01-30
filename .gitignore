@@ -24,3 +24,7 @@ rust/target/
 # IDE
 .vscode/
 .idea/
+
+python/.venv/
+python/artifacts/
+rust/target/
