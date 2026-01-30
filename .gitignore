@@ -30,3 +30,4 @@ python/artifacts/
 rust/target/
 
 docs/evidence/*.json
+!docs/evidence/45cf8bfe-b32f-40b5-9b99-be6ff35f1a85.json
