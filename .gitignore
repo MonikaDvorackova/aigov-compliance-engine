@@ -28,3 +28,5 @@ rust/target/
 python/.venv/
 python/artifacts/
 rust/target/
+
+docs/evidence/*.json
