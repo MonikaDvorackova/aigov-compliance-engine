@@ -3,14 +3,22 @@ use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-fn sha256_hex(s: &str) -> String {
+fn sha256_hex_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(s.as_bytes());
+    hasher.update(bytes);
     let out = hasher.finalize();
     hex::encode(out)
 }
 
-// Recompute each record_hash from (prev_hash + "\n" + canonical_event_json)
+fn compute_record_hash(prev_hash: &str, event_json: &str) -> String {
+    let mut bytes = Vec::with_capacity(prev_hash.len() + 1 + event_json.len());
+    bytes.extend_from_slice(prev_hash.as_bytes());
+    bytes.push(b'\n');
+    bytes.extend_from_slice(event_json.as_bytes());
+    sha256_hex_bytes(&bytes)
+}
+
+// Verify each record_hash from (prev_hash + "\n" + event_json_as_stored)
 pub fn verify_chain(log_path: &str) -> Result<(), String> {
     let f = File::open(log_path).map_err(|e| e.to_string())?;
     let reader = BufReader::new(f);
@@ -19,9 +27,14 @@ pub fn verify_chain(log_path: &str) -> Result<(), String> {
     let mut line_no: usize = 0;
 
     for line in reader.lines() {
-        line_no += 1;
         let l = line.map_err(|e| e.to_string())?;
-        let rec: StoredRecord = serde_json::from_str(&l).map_err(|e| e.to_string())?;
+        let t = l.trim();
+        if t.is_empty() {
+            continue;
+        }
+        line_no += 1;
+
+        let rec: StoredRecord = serde_json::from_str(t).map_err(|e| e.to_string())?;
 
         if rec.prev_hash != expected_prev {
             return Err(format!(
@@ -30,8 +43,8 @@ pub fn verify_chain(log_path: &str) -> Result<(), String> {
             ));
         }
 
-        let event_json = serde_json::to_string(&rec.event).map_err(|e| e.to_string())?;
-        let recomputed = sha256_hex(&format!("{}\n{}", rec.prev_hash, event_json));
+        // IMPORTANT: use the stored JSON bytes, do not reserialize a struct
+        let recomputed = compute_record_hash(&rec.prev_hash, &rec.event_json);
 
         if rec.record_hash != recomputed {
             return Err(format!(

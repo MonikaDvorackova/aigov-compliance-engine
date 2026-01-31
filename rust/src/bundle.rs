@@ -1,36 +1,42 @@
 use crate::audit_store::StoredRecord;
 use crate::schema::EvidenceEvent;
 use sha2::{Digest, Sha256};
+use std::cmp::Ordering;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
 pub fn collect_events_for_run(log_path: &str, run_id: &str) -> Result<Vec<EvidenceEvent>, String> {
-    let f = match File::open(log_path) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(format!("log not found: {}", log_path));
+    let f = File::open(log_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            format!("log not found: {}", log_path)
+        } else {
+            e.to_string()
         }
-        Err(e) => return Err(e.to_string()),
-    };
+    })?;
 
     let reader = BufReader::new(f);
     let mut out: Vec<EvidenceEvent> = Vec::new();
 
     for line in reader.lines() {
         let l = line.map_err(|e| e.to_string())?;
-        if l.trim().is_empty() {
+        let t = l.trim();
+        if t.is_empty() {
             continue;
         }
 
-        let rec: StoredRecord = serde_json::from_str(&l).map_err(|e| e.to_string())?;
+        let rec: StoredRecord = serde_json::from_str(t).map_err(|e| e.to_string())?;
 
-        if rec.event.run_id == run_id {
-            out.push(rec.event);
+        // Prefer the stored JSON to avoid re-serialization differences
+        let ev: EvidenceEvent =
+            serde_json::from_str(&rec.event_json).map_err(|e| e.to_string())?;
+
+        if ev.run_id == run_id {
+            out.push(ev);
         }
     }
 
-    // hezké exporty a stabilní pořadí
-    out.sort_by(|a, b| a.ts_utc.cmp(&b.ts_utc));
+    // Stable ordering for exports and hashing
+    out.sort_by(stable_event_order);
 
     Ok(out)
 }
@@ -39,7 +45,8 @@ pub fn find_model_artifact_path(events: &[EvidenceEvent]) -> Option<String> {
     for e in events.iter().rev() {
         if e.event_type == "model_promoted" {
             if let Some(ap) = e.payload.get("artifact_path").and_then(|v| v.as_str()) {
-                if !ap.trim().is_empty() {
+                let ap = ap.trim();
+                if !ap.is_empty() {
                     return Some(ap.to_string());
                 }
             }
@@ -48,21 +55,66 @@ pub fn find_model_artifact_path(events: &[EvidenceEvent]) -> Option<String> {
     None
 }
 
-fn canonical_bundle_json(
+fn stable_event_order(a: &EvidenceEvent, b: &EvidenceEvent) -> Ordering {
+    // primary: timestamp
+    let t = a.ts_utc.cmp(&b.ts_utc);
+    if t != Ordering::Equal {
+        return t;
+    }
+
+    // secondary: event_type (so ties are stable)
+    let et = a.event_type.cmp(&b.event_type);
+    if et != Ordering::Equal {
+        return et;
+    }
+
+    // tertiary: event_id
+    a.event_id.cmp(&b.event_id)
+}
+
+fn canonicalize_json(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Object(map) => {
+            // sort keys by re-creating the object in key order
+            let mut keys: Vec<String> = map.keys().cloned().collect();
+            keys.sort();
+
+            let mut new_map = serde_json::Map::with_capacity(map.len());
+            for k in keys {
+                let mut val = map.remove(&k).unwrap();
+                canonicalize_json(&mut val);
+                new_map.insert(k, val);
+            }
+            *map = new_map;
+        }
+        serde_json::Value::Array(arr) => {
+            // Keep array order as-is (events order is handled by stable_event_order)
+            for x in arr.iter_mut() {
+                canonicalize_json(x);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn canonical_bundle_value(
     run_id: &str,
     policy_version: &str,
     log_path: &str,
     model_artifact_path: Option<&str>,
     events: &[EvidenceEvent],
 ) -> serde_json::Value {
-    serde_json::json!({
+    let mut v = serde_json::json!({
         "ok": true,
         "run_id": run_id,
         "policy_version": policy_version,
         "log_path": log_path,
         "model_artifact_path": model_artifact_path,
         "events": events
-    })
+    });
+
+    canonicalize_json(&mut v);
+    v
 }
 
 pub fn bundle_sha256(
@@ -72,10 +124,9 @@ pub fn bundle_sha256(
     model_artifact_path: Option<&str>,
     events: &[EvidenceEvent],
 ) -> String {
-    let v = canonical_bundle_json(run_id, policy_version, log_path, model_artifact_path, events);
-    let bytes = serde_json::to_vec(&v).expect("serialize bundle");
+    let v = canonical_bundle_value(run_id, policy_version, log_path, model_artifact_path, events);
+    let bytes = serde_json::to_vec(&v).expect("serialize canonical bundle");
     let mut h = Sha256::new();
     h.update(bytes);
-    let out = h.finalize();
-    hex::encode(out)
+    hex::encode(h.finalize())
 }

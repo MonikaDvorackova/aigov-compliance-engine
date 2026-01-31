@@ -28,7 +28,8 @@ fn enforce_data_registered(event: &EvidenceEvent) -> Result<(), String> {
     if dataset_ok && fp_ok {
         Ok(())
     } else {
-        Err("policy_violation: data_registered payload must include dataset(str) and dataset_fingerprint(str)".to_string())
+        Err("policy_violation: data_registered payload must include dataset(str) and dataset_fingerprint(str)"
+            .to_string())
     }
 }
 
@@ -43,11 +44,11 @@ fn enforce_evaluation_reported(event: &EvidenceEvent) -> Result<(), String> {
     if metric_ok && value_ok && threshold_ok && passed_ok {
         Ok(())
     } else {
-        Err("policy_violation: evaluation_reported payload must include metric(str), value(number), threshold(number), passed(bool)".to_string())
+        Err("policy_violation: evaluation_reported payload must include metric(str), value(number), threshold(number), passed(bool)"
+            .to_string())
     }
 }
 
-// Human approval is tied to the promotion decision (variant B).
 // Required payload:
 // - scope: "model_promoted"
 // - decision: "approve" | "reject"
@@ -70,7 +71,8 @@ fn enforce_human_approved(event: &EvidenceEvent) -> Result<(), String> {
     if scope_ok && decision_ok && approver_ok && just_ok {
         Ok(())
     } else {
-        Err("policy_violation: human_approved payload must include scope=\"model_promoted\", decision(\"approve\"|\"reject\"), approver(str), justification(str)".to_string())
+        Err("policy_violation: human_approved payload must include scope=\"model_promoted\", decision(\"approve\"|\"reject\"), approver(str), justification(str)"
+            .to_string())
     }
 }
 
@@ -80,10 +82,7 @@ fn enforce_model_trained(event: &EvidenceEvent, log_path: &str) -> Result<(), St
     if has_event_for_run("data_registered", &event.run_id, log_path)? {
         Ok(())
     } else {
-        Err(
-            "policy_violation: model_trained requires prior data_registered for the same run_id"
-                .to_string(),
-        )
+        Err("policy_violation: model_trained requires prior data_registered for the same run_id".to_string())
     }
 }
 
@@ -91,22 +90,22 @@ fn enforce_model_promoted(event: &EvidenceEvent, log_path: &str) -> Result<(), S
     // Gate 1: requires passed evaluation
     if !has_passed_evaluation(&event.run_id, log_path)? {
         return Err(
-            "policy_violation: model_promoted requires prior evaluation_reported with passed=true"
-                .to_string(),
+            "policy_violation: model_promoted requires prior evaluation_reported with passed=true".to_string(),
         );
     }
 
-    // Gate 2 (variant B): requires explicit human approval for promotion
+    // Gate 2: requires explicit human approval for promotion
     match latest_human_approval_decision(&event.run_id, log_path)? {
         Some(Decision::Approve) => Ok(()),
         Some(Decision::Reject) => Err(
             "policy_violation: model_promoted blocked by human_approved decision=reject".to_string(),
         ),
-        None => Err("policy_violation: model_promoted requires prior human_approved decision=approve with scope=model_promoted".to_string()),
+        None => Err("policy_violation: model_promoted requires prior human_approved decision=approve with scope=model_promoted"
+            .to_string()),
     }
 }
 
-/* ------------------------- log queries ------------------------- */
+/* ------------------------- log helpers ------------------------- */
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Decision {
@@ -122,6 +121,10 @@ fn open_reader_if_exists(log_path: &str) -> Result<Option<BufReader<File>>, Stri
     }
 }
 
+fn read_event(rec: StoredRecord) -> Result<EvidenceEvent, String> {
+    serde_json::from_str::<EvidenceEvent>(&rec.event_json).map_err(|e| e.to_string())
+}
+
 fn has_event_for_run(event_type: &str, run_id: &str, log_path: &str) -> Result<bool, String> {
     let Some(reader) = open_reader_if_exists(log_path)? else {
         return Ok(false);
@@ -129,14 +132,15 @@ fn has_event_for_run(event_type: &str, run_id: &str, log_path: &str) -> Result<b
 
     for line in reader.lines() {
         let l = line.map_err(|e| e.to_string())?;
-        if l.trim().is_empty() {
+        let t = l.trim();
+        if t.is_empty() {
             continue;
         }
 
-        let rec: StoredRecord =
-            serde_json::from_str(&l).map_err(|e| format!("log_parse_error: {} line={}", e, l))?;
+        let rec: StoredRecord = serde_json::from_str(t).map_err(|e| e.to_string())?;
+        let ev = read_event(rec)?;
 
-        if rec.event.run_id == run_id && rec.event.event_type == event_type {
+        if ev.run_id == run_id && ev.event_type == event_type {
             return Ok(true);
         }
     }
@@ -151,22 +155,22 @@ fn has_passed_evaluation(run_id: &str, log_path: &str) -> Result<bool, String> {
 
     for line in reader.lines() {
         let l = line.map_err(|e| e.to_string())?;
-        if l.trim().is_empty() {
+        let t = l.trim();
+        if t.is_empty() {
             continue;
         }
 
-        let rec: StoredRecord =
-            serde_json::from_str(&l).map_err(|e| format!("log_parse_error: {} line={}", e, l))?;
+        let rec: StoredRecord = serde_json::from_str(t).map_err(|e| e.to_string())?;
+        let ev = read_event(rec)?;
 
-        if rec.event.run_id != run_id {
+        if ev.run_id != run_id {
             continue;
         }
-        if rec.event.event_type != "evaluation_reported" {
+        if ev.event_type != "evaluation_reported" {
             continue;
         }
 
-        let passed = rec
-            .event
+        let passed = ev
             .payload
             .get("passed")
             .and_then(|v| v.as_bool())
@@ -180,11 +184,7 @@ fn has_passed_evaluation(run_id: &str, log_path: &str) -> Result<bool, String> {
     Ok(false)
 }
 
-// Returns the latest human_approved decision for the run_id with scope=model_promoted.
-fn latest_human_approval_decision(
-    run_id: &str,
-    log_path: &str,
-) -> Result<Option<Decision>, String> {
+fn latest_human_approval_decision(run_id: &str, log_path: &str) -> Result<Option<Decision>, String> {
     let Some(reader) = open_reader_if_exists(log_path)? else {
         return Ok(None);
     };
@@ -193,22 +193,22 @@ fn latest_human_approval_decision(
 
     for line in reader.lines() {
         let l = line.map_err(|e| e.to_string())?;
-        if l.trim().is_empty() {
+        let t = l.trim();
+        if t.is_empty() {
             continue;
         }
 
-        let rec: StoredRecord =
-            serde_json::from_str(&l).map_err(|e| format!("log_parse_error: {} line={}", e, l))?;
+        let rec: StoredRecord = serde_json::from_str(t).map_err(|e| e.to_string())?;
+        let ev = read_event(rec)?;
 
-        if rec.event.run_id != run_id {
+        if ev.run_id != run_id {
             continue;
         }
-        if rec.event.event_type != "human_approved" {
+        if ev.event_type != "human_approved" {
             continue;
         }
 
-        let scope_ok = rec
-            .event
+        let scope_ok = ev
             .payload
             .get("scope")
             .and_then(|v| v.as_str())
@@ -219,7 +219,7 @@ fn latest_human_approval_decision(
             continue;
         }
 
-        latest = match rec.event.payload.get("decision").and_then(|v| v.as_str()) {
+        latest = match ev.payload.get("decision").and_then(|v| v.as_str()) {
             Some("approve") => Some(Decision::Approve),
             Some("reject") => Some(Decision::Reject),
             _ => latest,
