@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import dataclass
@@ -20,6 +21,14 @@ class Event:
 
 def _load_bundle(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _events(bundle: Dict[str, Any]) -> List[Event]:
@@ -72,10 +81,13 @@ def main() -> None:
 
     system = run_started.system if run_started else (events[0].system if events else "")
     actor = run_started.actor if run_started else (events[0].actor if events else "")
-    policy_version = str(bundle.get("policy_version", ""))
-    log_path = str(bundle.get("log_path", ""))
-    artifact_path = str(bundle.get("model_artifact_path", ""))
-    bundle_sha256 = str(bundle.get("bundle_sha256", ""))
+    policy_version = str(bundle.get("policy_version", "")).strip()
+    log_path = str(bundle.get("log_path", "")).strip()
+    artifact_path = str(bundle.get("model_artifact_path", "")).strip()
+
+    bundle_sha256 = str(bundle.get("bundle_sha256", "")).strip()
+    if not bundle_sha256:
+        bundle_sha256 = _sha256_file(bundle_path)
 
     dataset = ""
     dataset_fp = ""
@@ -118,16 +130,21 @@ def main() -> None:
     report_path = report_dir / f"{run_id}.md"
 
     lines: List[str] = []
+
     lines.append(f"# Audit report for run `{run_id}`")
     lines.append("")
+    lines.append("run_id=" + run_id)
+    lines.append("bundle_sha256=" + bundle_sha256)
+    lines.append("policy_version=" + (policy_version or ""))
+    lines.append("")
+
     lines.append("## Summary")
     lines.append("")
     lines.append(f"- System: `{_md_escape(system)}`")
     lines.append(f"- Actor: `{_md_escape(actor)}`")
     lines.append(f"- Policy version: `{_md_escape(policy_version)}`")
     lines.append(f"- Evidence bundle: `docs/evidence/{run_id}.json`")
-    if bundle_sha256:
-        lines.append(f"- Evidence bundle SHA256: `{_md_escape(bundle_sha256)}`")
+    lines.append(f"- Evidence bundle SHA256: `{_md_escape(bundle_sha256)}`")
     if artifact_path:
         lines.append(f"- Model artifact (reported): `{_md_escape(artifact_path)}`")
     lines.append("")
@@ -156,7 +173,7 @@ def main() -> None:
     lines.append("| Scope | Decision | Approver | Justification |")
     lines.append("|---|---|---|---|")
     lines.append(
-        f"| `{_md_escape(scope)}` | `{_md_escape(decision)}` | `{_md_escape(approver)}` | {_md_escape(justification)} |"
+        f"| `{_md_escape(scope)}` | `{_md_escape(decision)}` | `{_md_escape(approver)}` | `{_md_escape(justification)}` |"
     )
     lines.append("")
 
