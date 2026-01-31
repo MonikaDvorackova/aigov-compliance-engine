@@ -1,4 +1,6 @@
 # Python
+docs/evidence/*.json
+!docs/evidence/demo_bundle.json
 python/.venv/
 python/__pycache__/
 python/**/*.pyc
