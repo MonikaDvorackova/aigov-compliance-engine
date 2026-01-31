@@ -1,4 +1,4 @@
-.PHONY: audit run verify status bundle approve promote demo verify-log report require-run full
+.PHONY: audit run verify status bundle approve promote demo verify-log report report-template require-run full
 
 # =========================================================
 # Core runtime
@@ -46,7 +46,8 @@ approve: require-run verify-log
 report: require-run
 	cd python && . .venv/bin/activate && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.report
-	report-template: require-run
+
+report-template: require-run
 	@mkdir -p docs/reports
 	@echo "run_id=$(RUN_ID)" > docs/reports/$(RUN_ID).md
 	@echo "bundle_sha256=" >> docs/reports/$(RUN_ID).md
@@ -57,7 +58,7 @@ report: require-run
 	@echo "Fill in the required header fields above and append narrative sections as needed." >> docs/reports/$(RUN_ID).md
 	@echo "saved docs/reports/$(RUN_ID).md"
 
-promote: require-run approve report bundle verify-log
+promote: require-run verify-log
 	cd python && . .venv/bin/activate && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.promote
 
@@ -74,5 +75,8 @@ full: run verify
 	@echo ""
 	@echo "Pipeline finished"
 	@echo "Now run"
+	@echo "RUN_ID=<run_id> make approve"
 	@echo "RUN_ID=<run_id> make promote"
+	@echo "RUN_ID=<run_id> make bundle"
+	@echo "RUN_ID=<run_id> make report"
 	@echo ""
