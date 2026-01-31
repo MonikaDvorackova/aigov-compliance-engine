@@ -2,6 +2,7 @@ mod audit_store;
 mod bundle;
 mod policy;
 mod schema;
+mod verify_chain;
 
 use axum::{extract::Query, routing::get, routing::post, Json, Router};
 use schema::EvidenceEvent;
@@ -14,60 +15,108 @@ const POLICY_VERSION: &str = "v0.4_human_approval";
 
 #[derive(Deserialize)]
 struct BundleQuery {
-  run_id: String,
+    run_id: String,
+}
+
+#[derive(Deserialize)]
+struct BundleHashQuery {
+    run_id: String,
 }
 
 async fn ingest(Json(event): Json<EvidenceEvent>) -> Json<serde_json::Value> {
-  if let Err(e) = policy::enforce(&event, LOG_PATH) {
-    return Json(json!({ "ok": false, "error": e, "policy_version": POLICY_VERSION }));
-  }
+    if let Err(e) = policy::enforce(&event, LOG_PATH) {
+        return Json(json!({ "ok": false, "error": e, "policy_version": POLICY_VERSION }));
+    }
 
-  match audit_store::append_record(LOG_PATH, event) {
-    Ok(rec) => Json(json!({ "ok": true, "record_hash": rec.record_hash, "policy_version": POLICY_VERSION })),
-    Err(e) => Json(json!({ "ok": false, "error": e, "policy_version": POLICY_VERSION })),
-  }
+    match audit_store::append_record(LOG_PATH, event) {
+        Ok(rec) => Json(json!({
+            "ok": true,
+            "record_hash": rec.record_hash,
+            "policy_version": POLICY_VERSION
+        })),
+        Err(e) => Json(json!({ "ok": false, "error": e, "policy_version": POLICY_VERSION })),
+    }
 }
 
 async fn verify() -> Json<serde_json::Value> {
-  match audit_store::verify_chain(LOG_PATH) {
-    Ok(_) => Json(json!({ "ok": true, "policy_version": POLICY_VERSION })),
-    Err(e) => Json(json!({ "ok": false, "error": e, "policy_version": POLICY_VERSION })),
-  }
+    match audit_store::verify_chain(LOG_PATH) {
+        Ok(_) => Json(json!({ "ok": true, "policy_version": POLICY_VERSION })),
+        Err(e) => Json(json!({ "ok": false, "error": e, "policy_version": POLICY_VERSION })),
+    }
 }
 
 async fn status() -> Json<serde_json::Value> {
-  Json(json!({ "ok": true, "policy_version": POLICY_VERSION }))
+    Json(json!({ "ok": true, "policy_version": POLICY_VERSION }))
 }
 
-async fn bundle(Query(q): Query<BundleQuery>) -> Json<serde_json::Value> {
-  match bundle::collect_events_for_run(LOG_PATH, &q.run_id) {
-    Ok(events) => {
-      let artifact_path = bundle::find_model_artifact_path(&events);
-      Json(json!({
-        "ok": true,
-        "run_id": q.run_id,
-        "policy_version": POLICY_VERSION,
-        "log_path": format!("rust/{}", LOG_PATH),
-        "model_artifact_path": artifact_path,
-        "events": events
-      }))
+async fn bundle_route(Query(q): Query<BundleQuery>) -> Json<serde_json::Value> {
+    match bundle::collect_events_for_run(LOG_PATH, &q.run_id) {
+        Ok(events) => {
+            let artifact_path = bundle::find_model_artifact_path(&events);
+            Json(json!({
+                "ok": true,
+                "run_id": q.run_id,
+                "policy_version": POLICY_VERSION,
+                "log_path": format!("rust/{}", LOG_PATH),
+                "model_artifact_path": artifact_path,
+                "events": events
+            }))
+        }
+        Err(e) => Json(json!({ "ok": false, "error": e, "policy_version": POLICY_VERSION })),
     }
-    Err(e) => Json(json!({ "ok": false, "error": e, "policy_version": POLICY_VERSION })),
-  }
+}
+
+async fn bundle_hash_route(Query(q): Query<BundleHashQuery>) -> Json<serde_json::Value> {
+    match bundle::collect_events_for_run(LOG_PATH, &q.run_id) {
+        Ok(events) => {
+            let artifact_path = bundle::find_model_artifact_path(&events);
+            let log_path = format!("rust/{}", LOG_PATH);
+            let digest = bundle::bundle_sha256(
+                &q.run_id,
+                POLICY_VERSION,
+                &log_path,
+                artifact_path.as_deref(),
+                &events,
+            );
+
+            Json(json!({
+                "ok": true,
+                "run_id": q.run_id,
+                "policy_version": POLICY_VERSION,
+                "bundle_sha256": digest
+            }))
+        }
+        Err(e) => Json(json!({ "ok": false, "error": e, "policy_version": POLICY_VERSION })),
+    }
+}
+
+async fn verify_log() -> (axum::http::StatusCode, String) {
+    match verify_chain::verify_chain(LOG_PATH) {
+        Ok(_) => (axum::http::StatusCode::OK, "{\"ok\":true}".to_string()),
+        Err(e) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                serde_json::to_string(&e).unwrap()
+            ),
+        ),
+    }
 }
 
 #[tokio::main]
 async fn main() {
-  let app = Router::new()
-    .route("/evidence", post(ingest))
-    .route("/verify", get(verify))
-    .route("/status", get(status))
-    .route("/bundle", get(bundle));
+    let app = Router::new()
+        .route("/evidence", post(ingest))
+        .route("/verify", get(verify))
+        .route("/status", get(status))
+        .route("/bundle", get(bundle_route))
+        .route("/bundle-hash", get(bundle_hash_route))
+        .route("/verify-log", get(verify_log));
 
-  let addr = SocketAddr::from(([127, 0, 0, 1], 8088));
-  println!("aigov_audit listening on http://{}", addr);
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8088));
+    println!("aigov_audit listening on http://{}", addr);
 
-  axum::serve(tokio::net::TcpListener::bind(addr).await.unwrap(), app)
-    .await
-    .unwrap();
+    axum::serve(tokio::net::TcpListener::bind(addr).await.unwrap(), app)
+        .await
+        .unwrap();
 }

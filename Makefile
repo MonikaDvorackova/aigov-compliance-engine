@@ -1,4 +1,4 @@
-.PHONY: audit run verify bundle status approve promote
+.PHONY: audit run verify status bundle approve promote demo verify-log report
 
 audit:
 	cd rust && cargo run
@@ -8,6 +8,9 @@ run:
 
 verify:
 	curl -sS http://127.0.0.1:8088/verify ; echo
+
+verify-log:
+	curl -sS http://127.0.0.1:8088/verify-log ; echo
 
 status:
 	curl -sS http://127.0.0.1:8088/status ; echo
@@ -27,3 +30,7 @@ promote:
 demo:
 	@if [ -z "$(RUN_ID)" ]; then echo "Usage: RUN_ID=<run_id> make demo"; exit 2; fi
 	cd python && . .venv/bin/activate && RUN_ID=$(RUN_ID) python -m aigov_py.demo
+
+report:
+	@if [ -z "$(RUN_ID)" ]; then echo "Usage: RUN_ID=<run_id> make report"; exit 2; fi
+	cd python && . .venv/bin/activate && RUN_ID=$(RUN_ID) python -m aigov_py.report
