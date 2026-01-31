@@ -25,4 +25,5 @@ promote:
 	cd python && . .venv/bin/activate && RUN_ID=$(RUN_ID) python -m aigov_py.promote
 
 demo:
-	@cd python && . .venv/bin/activate && RUN_ID="$(RUN_ID)" python -m aigov_py.demo
+	@if [ -z "$(RUN_ID)" ]; then echo "Usage: RUN_ID=<run_id> make demo"; exit 2; fi
+	cd python && . .venv/bin/activate && RUN_ID=$(RUN_ID) python -m aigov_py.demo
