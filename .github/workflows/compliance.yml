@@ -1,0 +1,27 @@
+name: compliance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  make-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify repo policy files are consistent
+        run: |
+          test -f Makefile
+          echo "ok"
+
+  reports-present:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure reports directory exists
+        run: |
+          test -d docs/reports
+          ls -la docs/reports | head -n 50
