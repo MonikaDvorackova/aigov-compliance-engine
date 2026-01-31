@@ -114,18 +114,18 @@ jobs:
           for f in $NEW_REPORTS; do
             echo "Checking $f"
 
-            if ! grep -Eqi "$UUID_RE" "$f"; then
-              echo "Missing run id uuid in $f"
+            if ! grep -Eq "^run_id=${UUID_RE}$" "$f"; then
+              echo "Missing or invalid run_id line in $f"
               FAIL=1
             fi
 
-            if ! grep -Eqi "bundle_sha256[[:space:]]*=[[:space:]]*$SHA_RE" "$f" && ! grep -Eqi "$SHA_RE" "$f"; then
-              echo "Missing bundle sha256 in $f"
+            if ! grep -Eq "^bundle_sha256=${SHA_RE}$" "$f"; then
+              echo "Missing or invalid bundle_sha256 line in $f"
               FAIL=1
             fi
 
-            if ! grep -Eqi "policy_version" "$f"; then
-              echo "Missing policy_version in $f"
+            if ! grep -Eq "^policy_version=.+$" "$f"; then
+              echo "Missing or invalid policy_version line in $f"
               FAIL=1
             fi
           done
