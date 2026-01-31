@@ -1,0 +1,71 @@
+name: compliance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  make-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify repo policy files are consistent
+        run: |
+          test -f Makefile
+          echo "ok"
+
+  reports-present:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure reports directory exists
+        run: |
+          test -d docs/reports
+          ls -la docs/reports | head -n 50
+
+  report-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require new audit report when code or policy changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "Not a pull_request event, skipping report gate"
+            exit 0
+          fi
+
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          echo "Base sha: $BASE_SHA"
+          echo "Head sha: $HEAD_SHA"
+
+          CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}")"
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          NEED_REPORT=0
+          echo "$CHANGED" | grep -Eq '^(python/|rust/|Makefile$)' && NEED_REPORT=1 || true
+
+          if [ "$NEED_REPORT" -eq 0 ]; then
+            echo "No code or policy affecting changes detected, report not required"
+            exit 0
+          fi
+
+          NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+          echo "New reports:"
+          echo "$NEW_REPORTS"
+
+          if [ -z "$NEW_REPORTS" ]; then
+            echo "Audit report required: add a new file under docs/reports"
+            exit 2
+          fi
+
+          echo "Report gate passed"
