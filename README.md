@@ -1,12 +1,19 @@
 AIGov Architecture
+
 Audit ready AI Governance Framework for the EU AI Act
+
 Reference implementation of compliance by design machine learning systems aligned with Articles 9 to 13 of the EU AI Act.
+
 What this is
+
 AIGov Architecture is an open reference framework for building audit ready, traceable and legally compliant AI systems.
 It translates the obligations of the EU AI Act directly into technical system design, so that governance, risk management, logging and accountability are enforced inside the machine learning pipeline, not added afterwards.
+
 This is not documentation.
 This is infrastructure.
+
 Regulatory scope
+
 The framework is designed around Articles 9 to 13 of the EU AI Act, covering
 Risk management systems
 Data and model governance
@@ -15,7 +22,9 @@ Record keeping and logging
 Transparency and traceability
 Human oversight
 The goal is to enable compliance by design, not after the fact compliance reporting.
+
 Architecture
+
 The system is split into two tightly coupled layers.
 1 Model and pipeline layer (Python)
 This layer contains
@@ -44,7 +53,9 @@ Deterministic
 Tamper resistant
 Auditor friendly
 This is what makes the system legally defensible.
+
 Core idea
+
 Every high risk AI system must be able to answer
 What data was used
 Which model version was deployed
@@ -54,17 +65,23 @@ What policies were applied
 What changed
 Who is responsible
 This framework makes those answers machine verifiable.
+
 Use cases
+
 High risk AI under the EU AI Act
 Regulated industries
 Public sector AI
 Model auditing and certification
 Due diligence for investors
 Litigation and regulatory defense
+
 Status
+
 This repository is developed as a proof of concept and reference implementation.
 It is also used as the technical backbone of an academic LLM thesis on AI Governance Engineering and audit ready machine learning systems.
+
 Quick start governance demo
+
 This demo shows how an AI model is trained, evaluated, approved by a human and only then allowed to be promoted, with a cryptographically verifiable audit trail.
 1 Start the governance engine
 In the first terminal run
@@ -117,15 +134,21 @@ RUN_ID=<run_id> make report
 This produces
 docs/reports/<run_id>.md
 This document is a legal grade technical report of the entire model lifecycle.
+
 What this proves
+
 This system demonstrates that
 No model can be deployed without recorded human approval
 All training and data lineage is immutable
 Every decision is cryptographically verifiable
 Compliance is enforced at runtime
+
 This is not logging.
+
 This is compliance by design.
+
 License
+
 Apache 2.0
 You are free to use this framework commercially.
 You are not free to remove attribution or misrepresent authorship. 
