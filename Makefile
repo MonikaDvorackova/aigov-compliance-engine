@@ -46,6 +46,16 @@ approve: require-run verify-log
 report: require-run
 	cd python && . .venv/bin/activate && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.report
+	report-template: require-run
+	@mkdir -p docs/reports
+	@echo "run_id=$(RUN_ID)" > docs/reports/$(RUN_ID).md
+	@echo "bundle_sha256=" >> docs/reports/$(RUN_ID).md
+	@echo "policy_version=" >> docs/reports/$(RUN_ID).md
+	@echo "" >> docs/reports/$(RUN_ID).md
+	@echo "# Audit report for run \`$(RUN_ID)\`" >> docs/reports/$(RUN_ID).md
+	@echo "" >> docs/reports/$(RUN_ID).md
+	@echo "Fill in the required header fields above and append narrative sections as needed." >> docs/reports/$(RUN_ID).md
+	@echo "saved docs/reports/$(RUN_ID).md"
 
 promote: require-run approve report bundle verify-log
 	cd python && . .venv/bin/activate && \
