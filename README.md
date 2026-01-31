@@ -129,4 +129,4 @@ This is compliance by design.
 License
 Apache 2.0
 You are free to use this framework commercially.
-You are not free to remove attribution or misrepresent authorship.
+You are not free to remove attribution or misrepresent authorship. 
