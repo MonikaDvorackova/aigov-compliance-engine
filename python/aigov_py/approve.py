@@ -1,8 +1,23 @@
+from __future__ import annotations
+
 import json
 import os
+import uuid
+import urllib.request
 from datetime import datetime, timezone
+from typing import Any, Dict
 
-import requests
+
+def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read().decode("utf-8"))
 
 
 def main() -> None:
@@ -10,14 +25,18 @@ def main() -> None:
     if not run_id:
         raise SystemExit("RUN_ID is required")
 
-    ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    base = os.getenv("AIGOV_AUDIT_ENDPOINT", "http://127.0.0.1:8088").rstrip("/")
+    url = f"{base}/evidence"
 
-    event = {
-        "event_id": f"ha_{run_id}",
+    # Always unique: prevents accidental duplicates from repeated CLI calls.
+    event_id = f"ha_{uuid.uuid4()}"
+
+    payload: Dict[str, Any] = {
+        "event_id": event_id,
         "event_type": "human_approved",
-        "ts_utc": ts,
-        "actor": "monika",
-        "system": "aigov_poc",
+        "ts_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "actor": os.getenv("AIGOV_ACTOR", "monika"),
+        "system": os.getenv("AIGOV_SYSTEM", "aigov_poc"),
         "run_id": run_id,
         "payload": {
             "scope": "model_promoted",
@@ -27,8 +46,9 @@ def main() -> None:
         },
     }
 
-    r = requests.post("http://127.0.0.1:8088/evidence", json=event, timeout=10)
-    print(r.text)
+    out = _post_json(url, payload)
+    # Keep output stable for CI logs
+    print(json.dumps(out, ensure_ascii=False))
 
 
 if __name__ == "__main__":
