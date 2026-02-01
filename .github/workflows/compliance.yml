@@ -136,3 +136,45 @@ jobs:
           fi
 
           echo "Report content validation passed"
+
+  evidence-pack:
+    runs-on: ubuntu-latest
+    needs: [report-content]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure evidence pack can be generated from new report RUN_ID
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "Not pull_request, skipping"
+            exit 0
+          fi
+
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+          if [ -z "$NEW_REPORTS" ]; then
+            echo "No new reports added, skipping evidence pack"
+            exit 0
+          fi
+
+          REPORT="$(echo "$NEW_REPORTS" | head -n 1)"
+          echo "Using report $REPORT"
+
+          RUN_ID="$(grep -E '^run_id=' "$REPORT" | head -n 1 | cut -d= -f2)"
+          if [ -z "$RUN_ID" ]; then
+            echo "Could not parse run_id from $REPORT"
+            exit 2
+          fi
+
+          echo "RUN_ID=$RUN_ID"
+          make evidence-pack RUN_ID="$RUN_ID"
+
+          test -f "docs/packs/$RUN_ID.zip"
+          echo "Evidence pack OK: docs/packs/$RUN_ID.zip"
