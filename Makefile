@@ -127,12 +127,22 @@ audit-object: require-run ensure-dirs
 # =========================================================
 
 evidence-pack: require-run ensure-dirs
-	@set -e; \
-	cd python && . .venv/bin/activate && RUN_ID=$(RUN_ID) python -m aigov_py.evidence_pack; \
-	if [ -f "docs/packs/$(RUN_ID).zip" ]; then \
+	cd python && . .venv/bin/activate && RUN_ID=$(RUN_ID) python -m aigov_py.evidence_pack
+	@if [ -f "docs/packs/$(RUN_ID).zip" ]; then \
 		echo "evidence pack OK: docs/packs/$(RUN_ID).zip"; \
 		exit 0; \
-	fi; \
-	if [ -f "docs/evidence/$(RUN_ID).zip" ]; then \
+	fi
+	@if [ -f "docs/evidence/$(RUN_ID).zip" ]; then \
 		cp "docs/evidence/$(RUN_ID).zip" "docs/packs/$(RUN_ID).zip"; \
-		ec
+		echo "copied docs/evidence/$(RUN_ID).zip -> docs/packs/$(RUN_ID).zip"; \
+		exit 0; \
+	fi
+	@if [ -f "$(RUN_ID).zip" ]; then \
+		mv "$(RUN_ID).zip" "docs/packs/$(RUN_ID).zip"; \
+		echo "moved ./$(RUN_ID).zip -> docs/packs/$(RUN_ID).zip"; \
+		exit 0; \
+	fi
+	@echo "evidence_pack did not produce docs/packs/$(RUN_ID).zip"
+	@echo "Expected docs/packs/$(RUN_ID).zip or docs/evidence/$(RUN_ID).zip"
+	@exit 2
+
