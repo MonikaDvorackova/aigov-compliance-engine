@@ -82,7 +82,10 @@ fn enforce_model_trained(event: &EvidenceEvent, log_path: &str) -> Result<(), St
     if has_event_for_run("data_registered", &event.run_id, log_path)? {
         Ok(())
     } else {
-        Err("policy_violation: model_trained requires prior data_registered for the same run_id".to_string())
+        Err(
+            "policy_violation: model_trained requires prior data_registered for the same run_id"
+                .to_string(),
+        )
     }
 }
 
@@ -90,7 +93,8 @@ fn enforce_model_promoted(event: &EvidenceEvent, log_path: &str) -> Result<(), S
     // Gate 1: requires passed evaluation
     if !has_passed_evaluation(&event.run_id, log_path)? {
         return Err(
-            "policy_violation: model_promoted requires prior evaluation_reported with passed=true".to_string(),
+            "policy_violation: model_promoted requires prior evaluation_reported with passed=true"
+                .to_string(),
         );
     }
 
@@ -184,7 +188,10 @@ fn has_passed_evaluation(run_id: &str, log_path: &str) -> Result<bool, String> {
     Ok(false)
 }
 
-fn latest_human_approval_decision(run_id: &str, log_path: &str) -> Result<Option<Decision>, String> {
+fn latest_human_approval_decision(
+    run_id: &str,
+    log_path: &str,
+) -> Result<Option<Decision>, String> {
     let Some(reader) = open_reader_if_exists(log_path)? else {
         return Ok(None);
     };
