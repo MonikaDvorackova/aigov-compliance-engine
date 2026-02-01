@@ -147,7 +147,6 @@ jobs:
 
           FAIL=0
 
-          # Enforce extensions (allowlist) and naming convention (<run_id>.md|txt)
           for f in $NEW_REPORTS; do
             case "$f" in
               *.md|*.txt) : ;;
@@ -181,7 +180,6 @@ jobs:
             fi
           done
 
-          # Forbid modifications, renames, or deletions of existing evidence (history integrity)
           MOD_REPORTS="$(git diff --name-only --diff-filter=MR "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           MOD_AUDIT="$(git diff --name-only --diff-filter=MR "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/audit/**' || true)"
           if [ -n "$MOD_REPORTS" ]; then
@@ -208,7 +206,6 @@ jobs:
             FAIL=1
           fi
 
-          # Validate report required fields
           for f in $NEW_REPORTS; do
             echo "Checking report $f"
 
@@ -228,19 +225,17 @@ jobs:
             fi
           done
 
-          # Validate audit objects are JSON and contain keys
           for f in $NEW_AUDIT_OBJECTS; do
             echo "Checking audit object $f"
             PYFILE="$f" python -c 'import os,json; p=os.environ["PYFILE"]; o=json.load(open(p,"r",encoding="utf-8")); assert isinstance(o,dict); assert isinstance(o.get("run_id"),str) and o["run_id"]; assert isinstance(o.get("bundle_sha256"),str) and o["bundle_sha256"]; print("ok")' || FAIL=1
           done
 
-          # Cross-check: report run_id must have matching docs/audit/<run_id>.json and bundle_sha256 must match
           for f in $NEW_REPORTS; do
             RUN_ID="$(grep -E "^run_id=" "$f" | head -n 1 | cut -d= -f2 | tr -d "\r\n")"
             R_SHA="$(grep -E "^bundle_sha256=" "$f" | head -n 1 | cut -d= -f2 | tr -d "\r\n")"
 
             if [ -z "$RUN_ID" ] || [ -z "$R_SHA" ]; then
-              echo "Could not extract run_id/bundle_sha256 from $f"
+              echo "Could not extract run_id or bundle_sha256 from $f"
               FAIL=1
               continue
             fi
@@ -252,7 +247,7 @@ jobs:
               continue
             fi
 
-            RUN_ID_ENV="$RUN_ID" R_SHA_ENV="$R_SHA" AUDIT_OBJ_ENV="$AUDIT_OBJ" python -c 'import os,json; rid=os.environ["RUN_ID_ENV"]; rsha=os.environ["R_SHA_ENV"]; p=os.environ["AUDIT_OBJ_ENV"]; o=json.load(open(p,"r",encoding="utf-8")); assert o.get("run_id")==rid, "run_id mismatch"; assert o.get("bundle_sha256")==rsha, "bundle_sha256 mismatch"; print("ok")' || FAIL=1
+            RUN_ID_ENV="$RUN_ID" R_SHA_ENV="$R_SHA" AUDIT_OBJ_ENV="$AUDIT_OBJ" python -c 'import os,json; rid=os.environ["RUN_ID_ENV"]; rsha=os.environ["R_SHA_ENV"]; p=os.environ["AUDIT_OBJ_ENV"]; o=json.load(open(p,"r",encoding="utf-8")); assert o.get("run_id")==rid; assert o.get("bundle_sha256")==rsha; print("ok")' || FAIL=1
           done
 
           if [ "$FAIL" -ne 0 ]; then
@@ -271,19 +266,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Build evidence packs for new reports in this PR
+      - name: Verify evidence packs exist for new reports in this PR
         shell: bash
         run: |
           set -euo pipefail
-
-          if ! make -n evidence-pack RUN_ID=dummy >/dev/null 2>&1; then
-            echo "No evidence-pack target, skipping"
-            exit 0
-          fi
 
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
@@ -294,39 +280,27 @@ jobs:
             exit 0
           fi
 
-          mkdir -p docs/packs
-
           for f in $NEW_REPORTS; do
             RUN_ID="$(grep -E "^run_id=" "$f" | head -n 1 | cut -d= -f2 | tr -d "\r\n")"
+            ZIP="docs/packs/${RUN_ID}.zip"
+
             if [ -z "$RUN_ID" ]; then
               echo "Could not extract RUN_ID from $f"
               exit 2
             fi
 
-            AUDIT_OBJ="docs/audit/${RUN_ID}.json"
-            if [ ! -f "$AUDIT_OBJ" ]; then
-              echo "Missing required audit object $AUDIT_OBJ for report $f"
-              exit 2
-            fi
-
-            echo "Generating evidence pack for RUN_ID=$RUN_ID"
-            make evidence-pack RUN_ID="$RUN_ID"
-
-            ZIP="docs/packs/${RUN_ID}.zip"
             if [ ! -f "$ZIP" ]; then
-              echo "Expected $ZIP but not found"
+              echo "Missing evidence pack: $ZIP"
               exit 2
             fi
 
-            echo "Listing evidence pack contents: $ZIP"
+            echo "Pack found: $ZIP"
             unzip -l "$ZIP" | head -n 200
-
-            # Minimal structure checks (tune to your pack layout)
             unzip -l "$ZIP" | grep -Eq '\.json$' || { echo "Pack must contain at least one .json"; exit 2; }
             unzip -l "$ZIP" | grep -Eq '\.(md|txt)$' || { echo "Pack must contain at least one .md or .txt"; exit 2; }
-
-            echo "Evidence pack OK: $ZIP"
           done
+
+          echo "Evidence pack validation passed"
 
   upload-evidence-packs:
     if: github.event_name == 'pull_request'
@@ -336,12 +310,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Upload evidence packs as workflow artifacts
-        shell: bash
-        run: |
-          set -euo pipefail
-          ls -la docs/packs || true
 
       - uses: actions/upload-artifact@v4
         with:
