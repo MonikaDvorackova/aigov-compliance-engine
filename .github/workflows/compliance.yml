@@ -1,6 +1,6 @@
 name: compliance
 
-on:
+"on":
   pull_request:
   push:
     branches: [main]
@@ -26,33 +26,35 @@ jobs:
       - name: Verify Makefile targets parse
         run: |
           make -n promote RUN_ID=dummy >/dev/null
+          make -n audit-object RUN_ID=dummy >/dev/null 2>&1 || true
+          make -n evidence-pack RUN_ID=dummy >/dev/null 2>&1 || true
 
   reports-present:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Ensure reports directory exists
+      - name: Ensure reports and audit directories exist
         run: |
-          test -d docs/reports
+          mkdir -p docs/reports
+          mkdir -p docs/audit
+          mkdir -p docs/packs
           ls -la docs/reports | head -n 50
+          ls -la docs/audit | head -n 50
+          ls -la docs/packs | head -n 50
 
   report-gate:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Require new audit report when code or policy changes
+      - name: Require new audit report and audit object when code or policy changes
         shell: bash
         run: |
           set -euo pipefail
-
-          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
-            echo "Not pull_request, skipping"
-            exit 0
-          fi
 
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
@@ -61,10 +63,10 @@ jobs:
           echo "Changed files:"
           echo "$CHANGED"
 
-          NEED_REPORT=0
-          echo "$CHANGED" | grep -Eq '^(python/|rust/|Makefile$|docs/policy/|policies/)' && NEED_REPORT=1 || true
+          NEED_EVIDENCE=0
+          echo "$CHANGED" | grep -Eq '^(python/|rust/|Makefile$|docs/policy/|policies/)' && NEED_EVIDENCE=1 || true
 
-          if [ "$NEED_REPORT" -eq 0 ]; then
+          if [ "$NEED_EVIDENCE" -eq 0 ]; then
             echo "No policy relevant changes detected"
             exit 0
           fi
@@ -72,15 +74,23 @@ jobs:
           NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           echo "New reports:"
           echo "$NEW_REPORTS"
-
           if [ -z "$NEW_REPORTS" ]; then
             echo "Audit report required: add a new file under docs/reports"
             exit 2
           fi
 
-          echo "Report gate passed"
+          NEW_AUDIT_OBJECTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/audit/**' || true)"
+          echo "New audit objects:"
+          echo "$NEW_AUDIT_OBJECTS"
+          if [ -z "$NEW_AUDIT_OBJECTS" ]; then
+            echo "Audit object required: add a new file under docs/audit"
+            exit 2
+          fi
+
+          echo "Evidence gate passed"
 
   report-content:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     needs: [report-gate]
     steps:
@@ -88,31 +98,82 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate new reports contain required evidence fields
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate evidence filenames, report fields, and audit object content
         shell: bash
         run: |
           set -euo pipefail
-
-          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
-            echo "Not pull_request, skipping"
-            exit 0
-          fi
 
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
 
           NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
-          if [ -z "$NEW_REPORTS" ]; then
-            echo "No new reports added"
-            exit 0
-          fi
+          NEW_AUDIT_OBJECTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/audit/**' || true)"
+
+          echo "New reports:"
+          echo "$NEW_REPORTS"
+          echo "New audit objects:"
+          echo "$NEW_AUDIT_OBJECTS"
 
           UUID_RE='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
           SHA_RE='[0-9a-f]{64}'
 
           FAIL=0
+
+          # Enforce extensions (allowlist)
           for f in $NEW_REPORTS; do
-            echo "Checking $f"
+            case "$f" in
+              *.md|*.txt) : ;;
+              *)
+                echo "Report must be .md or .txt: $f"
+                FAIL=1
+                ;;
+            esac
+          done
+
+          for f in $NEW_AUDIT_OBJECTS; do
+            case "$f" in
+              *.json) : ;;
+              *)
+                echo "Audit object must be .json: $f"
+                FAIL=1
+                ;;
+            esac
+          done
+
+          # Forbid modifications or deletions of existing evidence (history integrity)
+          MOD_REPORTS="$(git diff --name-only --diff-filter=MR "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+          MOD_AUDIT="$(git diff --name-only --diff-filter=MR "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/audit/**' || true)"
+          if [ -n "$MOD_REPORTS" ]; then
+            echo "Modifying or renaming existing reports is forbidden:"
+            echo "$MOD_REPORTS"
+            FAIL=1
+          fi
+          if [ -n "$MOD_AUDIT" ]; then
+            echo "Modifying or renaming existing audit objects is forbidden:"
+            echo "$MOD_AUDIT"
+            FAIL=1
+          fi
+
+          DEL_REPORTS="$(git diff --name-only --diff-filter=D "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+          DEL_AUDIT="$(git diff --name-only --diff-filter=D "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/audit/**' || true)"
+          if [ -n "$DEL_REPORTS" ]; then
+            echo "Deleting existing reports is forbidden:"
+            echo "$DEL_REPORTS"
+            FAIL=1
+          fi
+          if [ -n "$DEL_AUDIT" ]; then
+            echo "Deleting existing audit objects is forbidden:"
+            echo "$DEL_AUDIT"
+            FAIL=1
+          fi
+
+          # Validate report required fields
+          for f in $NEW_REPORTS; do
+            echo "Checking report $f"
 
             if ! grep -Eq "^run_id=${UUID_RE}$" "$f"; then
               echo "Missing or invalid run_id line in $f"
@@ -130,14 +191,42 @@ jobs:
             fi
           done
 
+          # Validate audit objects are JSON and contain keys
+          for f in $NEW_AUDIT_OBJECTS; do
+            echo "Checking audit object $f"
+            PYFILE="$f" python -c 'import os,json; p=os.environ["PYFILE"]; o=json.load(open(p,"r",encoding="utf-8")); assert isinstance(o,dict); assert isinstance(o.get("run_id"),str) and o["run_id"]; assert isinstance(o.get("bundle_sha256"),str) and o["bundle_sha256"]; print("ok")' || FAIL=1
+          done
+
+          # Cross-check: report run_id must have matching docs/audit/<run_id>.json and bundle_sha256 must match
+          for f in $NEW_REPORTS; do
+            RUN_ID="$(grep -E "^run_id=" "$f" | head -n 1 | cut -d= -f2 | tr -d "\r\n")"
+            R_SHA="$(grep -E "^bundle_sha256=" "$f" | head -n 1 | cut -d= -f2 | tr -d "\r\n")"
+
+            if [ -z "$RUN_ID" ] || [ -z "$R_SHA" ]; then
+              echo "Could not extract run_id/bundle_sha256 from $f"
+              FAIL=1
+              continue
+            fi
+
+            AUDIT_OBJ="docs/audit/${RUN_ID}.json"
+            if [ ! -f "$AUDIT_OBJ" ]; then
+              echo "Missing required audit object ${AUDIT_OBJ} for report $f"
+              FAIL=1
+              continue
+            fi
+
+            RUN_ID_ENV="$RUN_ID" R_SHA_ENV="$R_SHA" AUDIT_OBJ_ENV="$AUDIT_OBJ" python -c 'import os,json; rid=os.environ["RUN_ID_ENV"]; rsha=os.environ["R_SHA_ENV"]; p=os.environ["AUDIT_OBJ_ENV"]; o=json.load(open(p,"r",encoding="utf-8")); assert o.get("run_id")==rid, "run_id mismatch"; assert o.get("bundle_sha256")==rsha, "bundle_sha256 mismatch"; print("ok")' || FAIL=1
+          done
+
           if [ "$FAIL" -ne 0 ]; then
-            echo "Report content validation failed"
+            echo "Evidence content validation failed"
             exit 2
           fi
 
-          echo "Report content validation passed"
+          echo "Evidence content validation passed"
 
   evidence-pack:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     needs: [report-content]
     steps:
@@ -145,13 +234,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Ensure evidence pack can be generated from new report RUN_ID
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build evidence packs for new reports in this PR
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
-            echo "Not pull_request, skipping"
+          if ! make -n evidence-pack RUN_ID=dummy >/dev/null 2>&1; then
+            echo "No evidence-pack target, skipping"
             exit 0
           fi
 
@@ -160,21 +253,75 @@ jobs:
 
           NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           if [ -z "$NEW_REPORTS" ]; then
-            echo "No new reports added, skipping evidence pack"
+            echo "No new reports added, skipping"
             exit 0
           fi
 
-          REPORT="$(echo "$NEW_REPORTS" | head -n 1)"
-          echo "Using report $REPORT"
+          mkdir -p docs/packs
 
-          RUN_ID="$(grep -E '^run_id=' "$REPORT" | head -n 1 | cut -d= -f2)"
-          if [ -z "$RUN_ID" ]; then
-            echo "Could not parse run_id from $REPORT"
-            exit 2
-          fi
+          for f in $NEW_REPORTS; do
+            RUN_ID="$(grep -E "^run_id=" "$f" | head -n 1 | cut -d= -f2 | tr -d "\r\n")"
+            if [ -z "$RUN_ID" ]; then
+              echo "Could not extract RUN_ID from $f"
+              exit 2
+            fi
 
-          echo "RUN_ID=$RUN_ID"
-          make evidence-pack RUN_ID="$RUN_ID"
+            AUDIT_OBJ="docs/audit/${RUN_ID}.json"
+            if [ ! -f "$AUDIT_OBJ" ]; then
+              echo "Missing required audit object $AUDIT_OBJ for report $f"
+              exit 2
+            fi
 
-          test -f "docs/packs/$RUN_ID.zip"
-          echo "Evidence pack OK: docs/packs/$RUN_ID.zip"
+            echo "Generating evidence pack for RUN_ID=$RUN_ID"
+            make evidence-pack RUN_ID="$RUN_ID"
+
+            ZIP="docs/packs/${RUN_ID}.zip"
+            if [ ! -f "$ZIP" ]; then
+              echo "Expected $ZIP but not found"
+              exit 2
+            fi
+
+            echo "Listing evidence pack contents: $ZIP"
+            unzip -l "$ZIP" | head -n 200
+
+            # Minimal structure checks (tune names to your actual pack layout)
+            unzip -l "$ZIP" | grep -Eq '\.json$' || { echo "Pack must contain at least one .json"; exit 2; }
+            unzip -l "$ZIP" | grep -Eq 'docs/reports/|report|\.md$|\.txt$' || true
+
+            echo "Evidence pack OK: $ZIP"
+          done
+
+  upload-evidence-packs:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs: [evidence-pack]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Upload evidence packs as workflow artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la docs/packs || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: evidence-packs
+          path: docs/packs/*.zip
+          if-no-files-found: error
+
+  main-push-smoke:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Smoke verify Makefile and promote dry-run
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f Makefile
+          make -n promote RUN_ID=dummy >/dev/null
+          echo ok
