@@ -39,9 +39,11 @@ jobs:
           mkdir -p docs/reports
           mkdir -p docs/audit
           mkdir -p docs/packs
+          mkdir -p docs/policy
           ls -la docs/reports | head -n 50
           ls -la docs/audit | head -n 50
           ls -la docs/packs | head -n 50
+          ls -la docs/policy | head -n 50
 
   report-gate:
     if: github.event_name == 'pull_request'
@@ -51,7 +53,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Require new audit report and audit object when code or policy changes
+      - name: Require policy scope file exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f docs/policy/scope.txt
+          echo ok
+
+      - name: Require new audit report and audit object when scoped files change
         shell: bash
         run: |
           set -euo pipefail
@@ -59,17 +68,32 @@ jobs:
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
 
-          CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}")"
+          echo "Policy scope patterns (docs/policy/scope.txt):"
+          sed -n '1,200p' docs/policy/scope.txt
+
           echo "Changed files:"
-          echo "$CHANGED"
+          git diff --name-only "${BASE_SHA}" "${HEAD_SHA}"
 
           NEED_EVIDENCE=0
-          echo "$CHANGED" | grep -Eq '^(python/|rust/|Makefile$|docs/policy/|policies/)' && NEED_EVIDENCE=1 || true
+          MATCHED_SCOPE=""
+
+          while IFS= read -r pat; do
+            pat="$(echo "$pat" | tr -d '\r' | sed 's/#.*$//')"
+            [ -z "$pat" ] && continue
+
+            if git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- "$pat" | grep -q .; then
+              NEED_EVIDENCE=1
+              MATCHED_SCOPE="$pat"
+              break
+            fi
+          done < docs/policy/scope.txt
 
           if [ "$NEED_EVIDENCE" -eq 0 ]; then
             echo "No policy relevant changes detected"
             exit 0
           fi
+
+          echo "Policy relevant change matched scope: $MATCHED_SCOPE"
 
           NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           echo "New reports:"
@@ -123,15 +147,22 @@ jobs:
 
           FAIL=0
 
-          # Enforce extensions (allowlist)
+          # Enforce extensions (allowlist) and naming convention (<run_id>.md|txt)
           for f in $NEW_REPORTS; do
             case "$f" in
               *.md|*.txt) : ;;
               *)
                 echo "Report must be .md or .txt: $f"
                 FAIL=1
+                continue
                 ;;
             esac
+
+            bn="$(basename "$f")"
+            if ! echo "$bn" | grep -Eq "^${UUID_RE}\.(md|txt)$"; then
+              echo "Report filename must be <run_id>.md or <run_id>.txt: $f"
+              FAIL=1
+            fi
           done
 
           for f in $NEW_AUDIT_OBJECTS; do
@@ -142,9 +173,15 @@ jobs:
                 FAIL=1
                 ;;
             esac
+
+            bn="$(basename "$f")"
+            if ! echo "$bn" | grep -Eq "^${UUID_RE}\.json$"; then
+              echo "Audit object filename must be <run_id>.json: $f"
+              FAIL=1
+            fi
           done
 
-          # Forbid modifications or deletions of existing evidence (history integrity)
+          # Forbid modifications, renames, or deletions of existing evidence (history integrity)
           MOD_REPORTS="$(git diff --name-only --diff-filter=MR "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           MOD_AUDIT="$(git diff --name-only --diff-filter=MR "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/audit/**' || true)"
           if [ -n "$MOD_REPORTS" ]; then
@@ -284,9 +321,9 @@ jobs:
             echo "Listing evidence pack contents: $ZIP"
             unzip -l "$ZIP" | head -n 200
 
-            # Minimal structure checks (tune names to your actual pack layout)
+            # Minimal structure checks (tune to your pack layout)
             unzip -l "$ZIP" | grep -Eq '\.json$' || { echo "Pack must contain at least one .json"; exit 2; }
-            unzip -l "$ZIP" | grep -Eq 'docs/reports/|report|\.md$|\.txt$' || true
+            unzip -l "$ZIP" | grep -Eq '\.(md|txt)$' || { echo "Pack must contain at least one .md or .txt"; exit 2; }
 
             echo "Evidence pack OK: $ZIP"
           done
