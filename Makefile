@@ -1,4 +1,4 @@
-.PHONY: audit run verify status bundle approve promote demo verify-log report report-template require-run full
+.PHONY: audit run verify status bundle approve promote demo verify-log report report-template require-run full evidence-pack audit-object
 
 # =========================================================
 # Core runtime
@@ -47,6 +47,10 @@ report: require-run
 	cd python && . .venv/bin/activate && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.report
 
+audit-object: require-run
+	cd python && . .venv/bin/activate && \
+	RUN_ID=$(RUN_ID) python -m aigov_py.audit_object
+
 report-template: require-run
 	@mkdir -p docs/reports
 	@echo "run_id=$(RUN_ID)" > docs/reports/$(RUN_ID).md
@@ -68,6 +72,15 @@ demo: require-run
 
 
 # =========================================================
+# Evidence pack
+# =========================================================
+
+evidence-pack: require-run
+	cd python && . .venv/bin/activate && \
+	RUN_ID=$(RUN_ID) python -m aigov_py.evidence_pack
+
+
+# =========================================================
 # One button compliance
 # =========================================================
 
@@ -79,4 +92,6 @@ full: run verify
 	@echo "RUN_ID=<run_id> make promote"
 	@echo "RUN_ID=<run_id> make bundle"
 	@echo "RUN_ID=<run_id> make report"
+	@echo "RUN_ID=<run_id> make audit-object"
+	@echo "RUN_ID=<run_id> make evidence-pack"
 	@echo ""
