@@ -1,4 +1,4 @@
-.PHONY: audit run verify status bundle approve promote demo verify-log report report-template require-run full evidence-pack audit-object new-run ensure-dirs
+.PHONY: audit run verify verify-cli status bundle approve promote demo verify-log report report-template require-run full evidence-pack audit-object new-run ensure-dirs
 
 # =========================================================
 # Core runtime
@@ -19,6 +19,10 @@ verify-log:
 status:
 	curl -sS http://127.0.0.1:8088/status ; echo
 
+verify-cli: require-run
+	cd python && . .venv/bin/activate && \
+	python -m aigov_py.verify $(RUN_ID)
+
 
 # =========================================================
 # Guards and dirs
@@ -34,8 +38,8 @@ ensure-dirs:
 	@mkdir -p docs/reports
 	@mkdir -p docs/audit
 	@mkdir -p docs/packs
+	@mkdir -p docs/evidence
 
-# Prints a new UUID (lowercase) you can copy into RUN_ID
 new-run:
 	@python3 -c 'import uuid; print(str(uuid.uuid4()))'
 
@@ -50,10 +54,12 @@ bundle: require-run
 
 approve: require-run verify-log
 	cd python && . .venv/bin/activate && \
+	RUN_ID=$(RUN_ID) python -m aigov_py.emit_event human_approved --actor human --payload '{}' && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.approve
 
 promote: require-run verify-log
 	cd python && . .venv/bin/activate && \
+	RUN_ID=$(RUN_ID) python -m aigov_py.emit_event promoted --actor system --payload '{}' && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.promote
 
 demo: require-run
@@ -64,15 +70,6 @@ demo: require-run
 # =========================================================
 # Report and audit object materialization (CI compatible paths)
 # =========================================================
-# Your python modules may currently write elsewhere. We run them and then
-# normalize outputs into:
-# - docs/reports/<run_id>.md
-# - docs/audit/<run_id>.json
-#
-# Assumptions (based on your earlier output):
-# - report module writes a report file (or prints) somewhere OR you have a template
-# - audit_object module writes: docs/audit/<run_id>.json OR docs/evidence/<run_id>.json
-# If the module already writes to the target location, the copy is a no-op.
 
 report-template: require-run ensure-dirs
 	@echo "run_id=$(RUN_ID)" > docs/reports/$(RUN_ID).md
@@ -145,4 +142,3 @@ evidence-pack: require-run ensure-dirs
 	@echo "evidence_pack did not produce docs/packs/$(RUN_ID).zip"
 	@echo "Expected docs/packs/$(RUN_ID).zip or docs/evidence/$(RUN_ID).zip"
 	@exit 2
-
