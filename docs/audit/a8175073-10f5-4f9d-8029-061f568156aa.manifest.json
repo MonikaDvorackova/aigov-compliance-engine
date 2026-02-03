@@ -1,0 +1,11 @@
+{
+  "artifacts": {
+    "audit/a8175073-10f5-4f9d-8029-061f568156aa.json": "10b9d8ed9f75bc27c6950d43384b46053d8f1b151fcca995f873a042175d03f2",
+    "evidence/a8175073-10f5-4f9d-8029-061f568156aa.json": "2bf069b528419185aab16701a5e5c163cfbca7bf1fd786fa52484527c82bf60b",
+    "reports/a8175073-10f5-4f9d-8029-061f568156aa.md": "580c091bc600fd303d077c54c2b88e86f32cacf41a6c3024119eb4e7d7aeac0e"
+  },
+  "engine_version": "aigov-0.1",
+  "policy_version": "",
+  "run_id": "a8175073-10f5-4f9d-8029-061f568156aa",
+  "signing_key": "human-approval-v1"
+}
