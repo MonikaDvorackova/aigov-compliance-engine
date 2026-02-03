@@ -1,0 +1,105 @@
+name: compliance gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  compliance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: setup rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: install python package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python -m venv python/.venv
+          source python/.venv/bin/activate
+          python -m pip install --upgrade pip
+
+          if [ -f python/pyproject.toml ]; then
+            python -m pip install -e python
+          elif [ -f python/requirements.txt ]; then
+            python -m pip install -r python/requirements.txt
+          else
+            python -m pip install -e python
+          fi
+
+      - name: build rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd rust
+          cargo build
+
+      - name: start audit service
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd rust
+          cargo run > ../audit_service.log 2>&1 &
+          echo $! > ../audit_service.pid
+          cd ..
+
+          for i in {1..60}; do
+            if curl -sS http://127.0.0.1:8088/status >/dev/null 2>&1; then
+              echo "audit service ready"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "audit service did not become ready"
+          echo "log follows"
+          cat audit_service.log || true
+          exit 1
+
+      - name: run compliance flow
+        shell: bash
+        env:
+          AIGOV_AUDIT_ENDPOINT: http://127.0.0.1:8088
+          AIGOV_ACTOR: ci
+          AIGOV_SYSTEM: aigov_ci
+          AIGOV_EVAL_METRIC: f1
+          AIGOV_EVAL_VALUE: "0.90"
+          AIGOV_EVAL_THRESHOLD: "0.85"
+          AIGOV_EVAL_PASSED: "true"
+        run: |
+          set -euo pipefail
+
+          RUN_ID="$(python -c 'import uuid; print(uuid.uuid4())')"
+          echo "RUN_ID=$RUN_ID"
+
+          make flow RUN_ID="$RUN_ID"
+
+      - name: stop audit service
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          if [ -f audit_service.pid ]; then
+            kill "$(cat audit_service.pid)" || true
+          fi
+
+      - name: upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit_service_log
+          path: audit_service.log
