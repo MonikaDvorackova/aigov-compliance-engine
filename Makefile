@@ -1,4 +1,6 @@
-.PHONY: audit run verify verify-cli status bundle approve promote demo verify-log report report-template require-run full evidence-pack audit-object new-run ensure-dirs
+.PHONY: audit run verify verify-cli status bundle approve evaluate promote demo verify-log \
+        report report-template require-run full evidence-pack audit-object new-run ensure-dirs \
+        check-audit flow
 
 # =========================================================
 # Core runtime
@@ -23,7 +25,6 @@ verify-cli: require-run
 	cd python && . .venv/bin/activate && \
 	python -m aigov_py.verify $(RUN_ID)
 
-
 # =========================================================
 # Guards and dirs
 # =========================================================
@@ -43,6 +44,16 @@ ensure-dirs:
 new-run:
 	@python3 -c 'import uuid; print(str(uuid.uuid4()))'
 
+# =========================================================
+# Service readiness
+# =========================================================
+
+check-audit:
+	@curl -sS http://127.0.0.1:8088/status >/dev/null || ( \
+		echo "Audit service not reachable on http://127.0.0.1:8088"; \
+		echo "Start it with: make audit"; \
+		exit 2; \
+	)
 
 # =========================================================
 # Compliance steps
@@ -52,23 +63,35 @@ bundle: require-run
 	cd python && . .venv/bin/activate && \
 	python -m aigov_py.export_bundle $(RUN_ID)
 
-approve: require-run verify-log
+approve: require-run check-audit
+	@$(MAKE) verify-log
 	cd python && . .venv/bin/activate && \
-	RUN_ID=$(RUN_ID) python -m aigov_py.emit_event human_approved --actor human --payload '{}' && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.approve
 
-promote: require-run verify-log
+evaluate: require-run check-audit
+	@$(MAKE) verify-log
 	cd python && . .venv/bin/activate && \
-	RUN_ID=$(RUN_ID) python -m aigov_py.emit_event promoted --actor system --payload '{}' && \
+	RUN_ID=$(RUN_ID) python -m aigov_py.evaluate
+
+promote: require-run check-audit
+	@$(MAKE) verify-log
+	cd python && . .venv/bin/activate && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.promote
 
 demo: require-run
 	cd python && . .venv/bin/activate && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.demo
 
+# Golden path: one command to run the whole compliance lifecycle
+flow: require-run
+	$(MAKE) approve RUN_ID=$(RUN_ID)
+	$(MAKE) evaluate RUN_ID=$(RUN_ID)
+	$(MAKE) promote RUN_ID=$(RUN_ID)
+	$(MAKE) bundle RUN_ID=$(RUN_ID)
+	$(MAKE) verify-cli RUN_ID=$(RUN_ID)
 
 # =========================================================
-# Report and audit object materialization (CI compatible paths)
+# Report and audit object materialization
 # =========================================================
 
 report-template: require-run ensure-dirs
@@ -94,7 +117,6 @@ report: require-run ensure-dirs
 		exit 0; \
 	fi; \
 	echo "report module did not materialize docs/reports/$(RUN_ID).md"; \
-	echo "Run: RUN_ID=$(RUN_ID) make report-template and fill bundle_sha256/policy_version."; \
 	exit 2
 
 audit-object: require-run ensure-dirs
@@ -109,15 +131,8 @@ audit-object: require-run ensure-dirs
 		echo "copied docs/evidence/$(RUN_ID).json -> docs/audit/$(RUN_ID).json"; \
 		exit 0; \
 	fi; \
-	if [ -f "docs/evidence/$(RUN_ID).audit.json" ]; then \
-		cp "docs/evidence/$(RUN_ID).audit.json" "docs/audit/$(RUN_ID).json"; \
-		echo "copied docs/evidence/$(RUN_ID).audit.json -> docs/audit/$(RUN_ID).json"; \
-		exit 0; \
-	fi; \
 	echo "audit_object did not produce docs/audit/$(RUN_ID).json"; \
-	echo "Expected either docs/audit/$(RUN_ID).json or docs/evidence/$(RUN_ID).json"; \
 	exit 2
-
 
 # =========================================================
 # Evidence pack (CI compatible path)
