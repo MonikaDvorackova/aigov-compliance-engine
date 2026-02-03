@@ -5,7 +5,7 @@
     "reports/a8175073-10f5-4f9d-8029-061f568156aa.md": "580c091bc600fd303d077c54c2b88e86f32cacf41a6c3024119eb4e7d7aeac0e"
   },
   "engine_version": "aigov-0.1",
-  "policy_version": "",
+  "policy_version": "v0.4_human_approval",
   "run_id": "a8175073-10f5-4f9d-8029-061f568156aa",
   "signing_key": "human-approval-v1"
 }
