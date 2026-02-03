@@ -6,37 +6,54 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .chain import build_chain
-from .crypto import canonical_json_bytes
 
-
-def _find_repo_root(start: Path) -> Path:
-    cur = start.resolve()
-    for _ in range(10):
-        if (cur / "docs").exists():
-            return cur
-        cur = cur.parent
-    raise FileNotFoundError("Could not locate repo root with docs directory")
-
-
-def _load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _write_json_canonical(path: Path, obj: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(canonical_json_bytes(obj))
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _ensure_evidence_object(x: Any) -> Dict[str, Any]:
-    if isinstance(x, dict):
-        return x
-    raise TypeError("Evidence JSON must be an object")
+def _evidence_path(run_id: str) -> Path:
+    return _repo_root() / "docs" / "evidence" / f"{run_id}.json"
+
+
+def _atomic_write_json(path: Path, obj: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + f".tmp.{uuid.uuid4()}")
+    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _load_or_init(run_id: str) -> Dict[str, Any]:
+    p = _evidence_path(run_id)
+    if not p.exists():
+        init: Dict[str, Any] = {
+            "run_id": run_id,
+            "created_ts_utc": _utc_now_iso(),
+            "events": [],
+            "chain": {
+                "head_sha256": None,
+                "count": 0,
+                "version": "v1",
+            },
+        }
+        _atomic_write_json(p, init)
+        return init
+
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        # If file is corrupted, fail loudly rather than silently overwriting evidence.
+        raise RuntimeError(f"Failed to parse evidence file: {p}")
+
+
+def _next_seq(evidence: Dict[str, Any]) -> int:
+    events = evidence.get("events")
+    if isinstance(events, list):
+        return len(events) + 1
+    return 1
 
 
 def emit_event(
@@ -45,39 +62,47 @@ def emit_event(
     *,
     actor: str = "system",
     payload: Optional[Dict[str, Any]] = None,
-    repo_root: Optional[Path] = None,
+    event_id: Optional[str] = None,
+    ts_utc: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Append an event to docs/evidence/<RUN_ID>.json and rebuild chain.
-    Returns the created event.
+    Append a local evidence event into docs/evidence/<run_id>.json.
+
+    This function is intentionally tolerant: it will create the evidence file
+    if it doesn't exist yet (first event for a new run_id).
     """
-    root = repo_root or _find_repo_root(Path.cwd())
-    docs = root / "docs"
-    evidence_path = docs / "evidence" / f"{run_id}.json"
+    run_id = (run_id or "").strip()
+    if not run_id:
+        raise ValueError("run_id is required")
 
-    if not evidence_path.exists():
-        raise FileNotFoundError(f"Missing evidence file: {evidence_path}")
+    evidence = _load_or_init(run_id)
 
-    evidence = _ensure_evidence_object(_load_json(evidence_path))
+    if not isinstance(evidence.get("events"), list):
+        evidence["events"] = []
 
-    events = evidence.get("events")
-    if events is None:
-        events = []
-    if not isinstance(events, list):
-        raise TypeError("Evidence field events must be a list")
-
-    ev: Dict[str, Any] = {
-        "id": str(uuid.uuid4()),
-        "ts": _utc_now_iso(),
-        "type": str(event_type),
-        "actor": str(actor),
+    evt: Dict[str, Any] = {
+        "id": event_id or str(uuid.uuid4()),
+        "type": event_type,
+        "ts_utc": ts_utc or _utc_now_iso(),
+        "actor": actor,
+        "seq": _next_seq(evidence),
         "payload": payload or {},
     }
 
-    events.append(ev)
-    evidence["events"] = events
+    evidence["events"].append(evt)
 
-    evidence["chain"] = build_chain(events)
+    # Keep a minimal chain metadata block present; actual chain hashing can be
+    # computed elsewhere (export_bundle / verify). This prevents null structure.
+    chain = evidence.get("chain")
+    if not isinstance(chain, dict):
+        chain = {}
+        evidence["chain"] = chain
+    if "count" in chain and isinstance(chain["count"], int):
+        chain["count"] = chain["count"] + 1
+    else:
+        chain["count"] = len(evidence["events"])
+    chain.setdefault("version", "v1")
+    chain.setdefault("head_sha256", chain.get("head_sha256"))
 
-    _write_json_canonical(evidence_path, evidence)
-    return ev
+    _atomic_write_json(_evidence_path(run_id), evidence)
+    return evt
