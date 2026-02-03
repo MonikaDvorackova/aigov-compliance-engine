@@ -1,41 +1,38 @@
-.PHONY: audit run verify verify-cli status bundle approve evaluate promote demo verify-log \
-        report-template require-run evidence-pack audit-object new-run ensure-dirs \
-        check-audit flow report-fill report-init
+.PHONY: \
+	help \
+	audit verify-log \
+	approve evaluate promote \
+	report-init report-fill \
+	bundle verify-cli evidence-pack \
+	flow
 
-audit:
-	cd rust && cargo run
+help:
+	@echo "AIGov Compliance Engine"
+	@echo ""
+	@echo "Required: RUN_ID=<uuid>"
+	@echo ""
+	@echo "Core:"
+	@echo "  make approve"
+	@echo "  make evaluate"
+	@echo "  make promote"
+	@echo "  make report-init"
+	@echo "  make report-fill"
+	@echo "  make bundle"
+	@echo "  make verify-cli"
+	@echo "  make evidence-pack"
+	@echo ""
+	@echo "Or full pipeline:"
+	@echo "  make flow RUN_ID=<uuid>"
 
-run:
-	cd python && . .venv/bin/activate && python -m aigov_py.pipeline_train
+###############################################################################
+# guards
+###############################################################################
 
-verify:
-	curl -sS http://127.0.0.1:8088/verify ; echo
-
-verify-log:
-	curl -sS http://127.0.0.1:8088/verify-log ; echo
-
-status:
-	curl -sS http://127.0.0.1:8088/status ; echo
-
-verify-cli: require-run
-	cd python && . .venv/bin/activate && \
-	python -m aigov_py.verify $(RUN_ID)
-
-require-run:
+guard:
 	@if [ -z "$(RUN_ID)" ]; then \
-		echo "RUN_ID is required. Usage: RUN_ID=<run_id> make <target>"; \
+		echo "RUN_ID is required. Usage: RUN_ID=<uuid> make <target>"; \
 		exit 2; \
 	fi
-
-ensure-dirs:
-	@mkdir -p docs/reports
-	@mkdir -p docs/audit
-	@mkdir -p docs/packs
-	@mkdir -p docs/evidence
-	@mkdir -p docs/policy
-
-new-run:
-	@python3 -c 'import uuid; print(str(uuid.uuid4()))'
 
 check-audit:
 	@curl -sS http://127.0.0.1:8088/status >/dev/null || ( \
@@ -44,55 +41,69 @@ check-audit:
 		exit 2; \
 	)
 
-bundle: require-run
-	cd python && . .venv/bin/activate && \
-	python -m aigov_py.export_bundle $(RUN_ID)
+verify-log:
+	@curl -sS http://127.0.0.1:8088/verify-log ; echo
 
-approve: require-run check-audit
-	@$(MAKE) verify-log
-	cd python && . .venv/bin/activate && \
-	RUN_ID=$(RUN_ID) python -m aigov_py.approve
+###############################################################################
+# python runner
+###############################################################################
 
-evaluate: require-run check-audit
-	@$(MAKE) verify-log
-	cd python && . .venv/bin/activate && \
-	RUN_ID=$(RUN_ID) python -m aigov_py.evaluate
+PY = cd python && . .venv/bin/activate &&
 
-promote: require-run check-audit
-	@$(MAKE) verify-log
-	cd python && . .venv/bin/activate && \
-	RUN_ID=$(RUN_ID) python -m aigov_py.promote
+###############################################################################
+# lifecycle
+###############################################################################
 
-report-init: require-run
-	cd python && . .venv/bin/activate && \
-	python -m aigov_py.report_init $(RUN_ID)
+approve: guard check-audit verify-log
+	$(PY) RUN_ID=$(RUN_ID) python -m aigov_py.approve
 
-report-fill: require-run
-	cd python && . .venv/bin/activate && \
-	python -m aigov_py.report_fill $(RUN_ID)
+evaluate: guard check-audit verify-log
+	$(PY) RUN_ID=$(RUN_ID) python -m aigov_py.evaluate
 
-evidence-pack: require-run ensure-dirs
-	cd python && . .venv/bin/activate && \
-	RUN_ID=$(RUN_ID) python -m aigov_py.evidence_pack
+promote: guard check-audit verify-log
+	$(PY) RUN_ID=$(RUN_ID) python -m aigov_py.promote
 
-demo: require-run
-	cd python && . .venv/bin/activate && \
-	RUN_ID=$(RUN_ID) python -m aigov_py.demo
+###############################################################################
+# reports
+###############################################################################
 
-report-template: require-run ensure-dirs
-	@echo "run_id=$(RUN_ID)" > docs/reports/$(RUN_ID).md
-	@echo "bundle_sha256=" >> docs/reports/$(RUN_ID).md
-	@echo "policy_version=" >> docs/reports/$(RUN_ID).md
-	@echo "" >> docs/reports/$(RUN_ID).md
-	@echo "# Audit report for run \`$(RUN_ID)\`" >> docs/reports/$(RUN_ID).md
-	@echo "" >> docs/reports/$(RUN_ID).md
-	@echo "saved docs/reports/$(RUN_ID).md"
+report-init: guard
+	$(PY) python -m aigov_py.report_init $(RUN_ID)
 
-flow: require-run
-	$(MAKE) approve RUN_ID=$(RUN_ID)
-	$(MAKE) evaluate RUN_ID=$(RUN_ID)
-	$(MAKE) promote RUN_ID=$(RUN_ID)
-	$(MAKE) report-init RUN_ID=$(RUN_ID)
-	$(MAKE) report-fill RUN_ID=$(RUN_ID)
-	$(MAKE) bundle RUN_ID=$(RUN_ID)
-	$(MAKE) verify-cli RUN_ID=$(RUN_ID)
+report-fill: guard
+	$(PY) python -m aigov_py.report_fill $(RUN_ID)
+
+###############################################################################
+# audit + verify
+###############################################################################
+
+bundle: guard
+	$(PY) python -m aigov_py.export_bundle $(RUN_ID)
+
+verify-cli: guard
+	$(PY) python -m aigov_py.verify $(RUN_ID)
+
+###############################################################################
+# pack
+###############################################################################
+
+evidence-pack: guard
+	mkdir -p docs/reports docs/audit docs/packs docs/evidence docs/policy
+	$(PY) RUN_ID=$(RUN_ID) python -m aigov_py.evidence_pack
+
+###############################################################################
+# full deterministic pipeline
+###############################################################################
+
+flow: guard \
+	approve \
+	evaluate \
+	promote \
+	report-init \
+	bundle \
+	report-fill \
+	verify-cli \
+	evidence-pack
+	@echo ""
+	@echo "AIGOV FLOW COMPLETED"
+	@echo "RUN_ID=$(RUN_ID)"
