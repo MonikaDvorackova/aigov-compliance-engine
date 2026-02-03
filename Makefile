@@ -1,6 +1,6 @@
 .PHONY: audit run verify verify-cli status bundle approve evaluate promote demo verify-log \
-        report report-template require-run full evidence-pack audit-object new-run ensure-dirs \
-        check-audit flow
+        report report-template require-run evidence-pack audit-object new-run ensure-dirs \
+        check-audit flow report-fill
 
 # =========================================================
 # Core runtime
@@ -40,6 +40,7 @@ ensure-dirs:
 	@mkdir -p docs/audit
 	@mkdir -p docs/packs
 	@mkdir -p docs/evidence
+	@mkdir -p docs/policy
 
 new-run:
 	@python3 -c 'import uuid; print(str(uuid.uuid4()))'
@@ -78,20 +79,24 @@ promote: require-run check-audit
 	cd python && . .venv/bin/activate && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.promote
 
+report-fill: require-run
+	cd python && . .venv/bin/activate && \
+	python -m aigov_py.report_fill $(RUN_ID)
+
 demo: require-run
 	cd python && . .venv/bin/activate && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.demo
 
-# Golden path: one command to run the whole compliance lifecycle
 flow: require-run
 	$(MAKE) approve RUN_ID=$(RUN_ID)
 	$(MAKE) evaluate RUN_ID=$(RUN_ID)
 	$(MAKE) promote RUN_ID=$(RUN_ID)
 	$(MAKE) bundle RUN_ID=$(RUN_ID)
+	$(MAKE) report-fill RUN_ID=$(RUN_ID)
 	$(MAKE) verify-cli RUN_ID=$(RUN_ID)
 
 # =========================================================
-# Report and audit object materialization
+# Report template (optional)
 # =========================================================
 
 report-template: require-run ensure-dirs
@@ -101,23 +106,11 @@ report-template: require-run ensure-dirs
 	@echo "" >> docs/reports/$(RUN_ID).md
 	@echo "# Audit report for run \`$(RUN_ID)\`" >> docs/reports/$(RUN_ID).md
 	@echo "" >> docs/reports/$(RUN_ID).md
-	@echo "Fill in the required header fields above and append narrative sections as needed." >> docs/reports/$(RUN_ID).md
 	@echo "saved docs/reports/$(RUN_ID).md"
 
-report: require-run ensure-dirs
-	@set -e; \
-	cd python && . .venv/bin/activate && RUN_ID=$(RUN_ID) python -m aigov_py.report; \
-	if [ -f "docs/reports/$(RUN_ID).md" ]; then \
-		echo "report OK: docs/reports/$(RUN_ID).md"; \
-		exit 0; \
-	fi; \
-	if [ -f "docs/reports/$(RUN_ID).txt" ]; then \
-		mv "docs/reports/$(RUN_ID).txt" "docs/reports/$(RUN_ID).md"; \
-		echo "normalized report .txt -> .md: docs/reports/$(RUN_ID).md"; \
-		exit 0; \
-	fi; \
-	echo "report module did not materialize docs/reports/$(RUN_ID).md"; \
-	exit 2
+# =========================================================
+# Audit object and evidence pack
+# =========================================================
 
 audit-object: require-run ensure-dirs
 	@set -e; \
@@ -134,10 +127,6 @@ audit-object: require-run ensure-dirs
 	echo "audit_object did not produce docs/audit/$(RUN_ID).json"; \
 	exit 2
 
-# =========================================================
-# Evidence pack (CI compatible path)
-# =========================================================
-
 evidence-pack: require-run ensure-dirs
 	cd python && . .venv/bin/activate && RUN_ID=$(RUN_ID) python -m aigov_py.evidence_pack
 	@if [ -f "docs/packs/$(RUN_ID).zip" ]; then \
@@ -149,11 +138,5 @@ evidence-pack: require-run ensure-dirs
 		echo "copied docs/evidence/$(RUN_ID).zip -> docs/packs/$(RUN_ID).zip"; \
 		exit 0; \
 	fi
-	@if [ -f "$(RUN_ID).zip" ]; then \
-		mv "$(RUN_ID).zip" "docs/packs/$(RUN_ID).zip"; \
-		echo "moved ./$(RUN_ID).zip -> docs/packs/$(RUN_ID).zip"; \
-		exit 0; \
-	fi
 	@echo "evidence_pack did not produce docs/packs/$(RUN_ID).zip"
-	@echo "Expected docs/packs/$(RUN_ID).zip or docs/evidence/$(RUN_ID).zip"
 	@exit 2
