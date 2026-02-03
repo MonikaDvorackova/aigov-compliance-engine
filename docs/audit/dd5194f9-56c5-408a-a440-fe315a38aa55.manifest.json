@@ -1,0 +1,16 @@
+{
+  "run_id": "dd5194f9-56c5-408a-a440-fe315a38aa55",
+  "generated_ts_utc": "2026-02-03T23:29:40.752128Z",
+  "audit_sha256": "502cdf245a3fda429b648cf16351d87ab2ced5d9657f7f09713902ec69da17e9",
+  "bundle_sha256": "85a70d946bc30bed41fad43fc06ea811de01fcd75c4f89b2ba53a6fba2048d81",
+  "policy_version": "v0.4_human_approval",
+  "hashes": {
+    "evidence_sha256": "85a70d946bc30bed41fad43fc06ea811de01fcd75c4f89b2ba53a6fba2048d81",
+    "report_sha256": "219e462e1d3a61ac2955ae5dbc39ff6c803573e4b1b81937cc297e1d5d76a772"
+  },
+  "files": {
+    "audit_json": "docs/audit/dd5194f9-56c5-408a-a440-fe315a38aa55.json",
+    "audit_sha256": "docs/audit/dd5194f9-56c5-408a-a440-fe315a38aa55.sha256",
+    "audit_manifest": "docs/audit/dd5194f9-56c5-408a-a440-fe315a38aa55.manifest.json"
+  }
+}
