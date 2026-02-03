@@ -1,6 +1,6 @@
 name: compliance
 
-"on":
+on:
   pull_request:
   push:
     branches: [main]
@@ -28,6 +28,7 @@ jobs:
           make -n promote RUN_ID=dummy >/dev/null
           make -n audit-object RUN_ID=dummy >/dev/null 2>&1 || true
           make -n evidence-pack RUN_ID=dummy >/dev/null 2>&1 || true
+          make -n flow RUN_ID=dummy >/dev/null 2>&1 || true
 
   reports-present:
     runs-on: ubuntu-latest
@@ -48,6 +49,9 @@ jobs:
   report-gate:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    outputs:
+      need_evidence: ${{ steps.scope.outputs.need_evidence }}
+      matched_scope: ${{ steps.scope.outputs.matched_scope }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -60,7 +64,8 @@ jobs:
           test -f docs/policy/scope.txt
           echo ok
 
-      - name: Require new audit report and audit object when scoped files change
+      - name: Determine whether evidence is required
+        id: scope
         shell: bash
         run: |
           set -euo pipefail
@@ -88,12 +93,34 @@ jobs:
             fi
           done < docs/policy/scope.txt
 
+          # Hard ignore typical non-policy changes unless explicitly scoped
+          if git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" | grep -Eq '^(\.github/|Makefile$)'; then
+            if [ "$NEED_EVIDENCE" -eq 1 ]; then
+              echo "Scope matched, but PR includes .github or Makefile changes. Evidence still required because scope matched."
+            else
+              echo "Only CI/Makefile changes detected (no scope match). Evidence not required."
+            fi
+          fi
+
           if [ "$NEED_EVIDENCE" -eq 0 ]; then
             echo "No policy relevant changes detected"
+            echo "need_evidence=false" >> "$GITHUB_OUTPUT"
+            echo "matched_scope=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           echo "Policy relevant change matched scope: $MATCHED_SCOPE"
+          echo "need_evidence=true" >> "$GITHUB_OUTPUT"
+          echo "matched_scope=$MATCHED_SCOPE" >> "$GITHUB_OUTPUT"
+
+      - name: Require new audit report and audit object when evidence is required
+        if: steps.scope.outputs.need_evidence == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
 
           NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           echo "New reports:"
@@ -114,7 +141,7 @@ jobs:
           echo "Evidence gate passed"
 
   report-content:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && needs.report-gate.outputs.need_evidence == 'true'
     runs-on: ubuntu-latest
     needs: [report-gate]
     steps:
@@ -258,9 +285,9 @@ jobs:
           echo "Evidence content validation passed"
 
   evidence-pack:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && needs.report-gate.outputs.need_evidence == 'true'
     runs-on: ubuntu-latest
-    needs: [report-content]
+    needs: [report-content, report-gate]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -303,9 +330,9 @@ jobs:
           echo "Evidence pack validation passed"
 
   upload-evidence-packs:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && needs.report-gate.outputs.need_evidence == 'true'
     runs-on: ubuntu-latest
-    needs: [evidence-pack]
+    needs: [evidence-pack, report-gate]
     steps:
       - uses: actions/checkout@v4
         with:
