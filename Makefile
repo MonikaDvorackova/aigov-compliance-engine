@@ -1,32 +1,13 @@
-.PHONY: \
-	help \
-	audit verify-log \
-	approve evaluate promote \
-	report-init report-fill \
-	bundle verify-cli evidence-pack \
-	flow
+SHELL := /bin/bash
+.ONESHELL:
 
-help:
-	@echo "AIGov Compliance Engine"
-	@echo ""
-	@echo "Required: RUN_ID=<uuid>"
-	@echo ""
-	@echo "Core:"
-	@echo "  make approve"
-	@echo "  make evaluate"
-	@echo "  make promote"
-	@echo "  make report-init"
-	@echo "  make report-fill"
-	@echo "  make bundle"
-	@echo "  make verify-cli"
-	@echo "  make evidence-pack"
-	@echo ""
-	@echo "Or full pipeline:"
-	@echo "  make flow RUN_ID=<uuid>"
+PY := cd python && . .venv/bin/activate &&
 
-###############################################################################
-# guards
-###############################################################################
+AIGOV_EVAL_METRIC ?= f1
+AIGOV_EVAL_THRESHOLD ?= 0.85
+AIGOV_EVAL_VALUE ?=
+
+.PHONY: guard check-audit verify-log approve evaluate promote report-init report-fill bundle verify-cli evidence-pack flow
 
 guard:
 	@if [ -z "$(RUN_ID)" ]; then \
@@ -44,28 +25,24 @@ check-audit:
 verify-log:
 	@curl -sS http://127.0.0.1:8088/verify-log ; echo
 
-###############################################################################
-# python runner
-###############################################################################
-
-PY = cd python && . .venv/bin/activate &&
-
-###############################################################################
-# lifecycle
-###############################################################################
-
 approve: guard check-audit verify-log
 	$(PY) RUN_ID=$(RUN_ID) python -m aigov_py.approve
 
 evaluate: guard check-audit verify-log
-	$(PY) RUN_ID=$(RUN_ID) python -m aigov_py.evaluate
+	@if [ -z "$(AIGOV_EVAL_VALUE)" ]; then \
+		echo "AIGOV_EVAL_VALUE is required"; \
+		echo "Example:"; \
+		echo "  make evaluate RUN_ID=$(RUN_ID) AIGOV_EVAL_VALUE=0.88"; \
+		exit 2; \
+	fi
+	$(PY) RUN_ID=$(RUN_ID) \
+		AIGOV_EVAL_METRIC=$(AIGOV_EVAL_METRIC) \
+		AIGOV_EVAL_VALUE=$(AIGOV_EVAL_VALUE) \
+		AIGOV_EVAL_THRESHOLD=$(AIGOV_EVAL_THRESHOLD) \
+		python -m aigov_py.evaluate
 
 promote: guard check-audit verify-log
 	$(PY) RUN_ID=$(RUN_ID) python -m aigov_py.promote
-
-###############################################################################
-# reports
-###############################################################################
 
 report-init: guard
 	$(PY) python -m aigov_py.report_init $(RUN_ID)
@@ -73,37 +50,14 @@ report-init: guard
 report-fill: guard
 	$(PY) python -m aigov_py.report_fill $(RUN_ID)
 
-###############################################################################
-# audit + verify
-###############################################################################
-
 bundle: guard
 	$(PY) python -m aigov_py.export_bundle $(RUN_ID)
 
 verify-cli: guard
 	$(PY) python -m aigov_py.verify $(RUN_ID)
 
-###############################################################################
-# pack
-###############################################################################
-
 evidence-pack: guard
 	mkdir -p docs/reports docs/audit docs/packs docs/evidence docs/policy
 	$(PY) RUN_ID=$(RUN_ID) python -m aigov_py.evidence_pack
 
-###############################################################################
-# full deterministic pipeline
-###############################################################################
-
-flow: guard \
-	approve \
-	evaluate \
-	promote \
-	report-init \
-	bundle \
-	report-fill \
-	verify-cli \
-	evidence-pack
-	@echo ""
-	@echo "AIGOV FLOW COMPLETED"
-	@echo "RUN_ID=$(RUN_ID)"
+flow: approve evaluate promote report-init report-fill bundle verify-cli evidence-pack
