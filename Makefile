@@ -44,6 +44,7 @@ check-audit:
 approve: require-run check-audit
 	@$(MAKE) verify-log
 	cd python && . .venv/bin/activate && \
+	RUN_ID=$(RUN_ID) python -m aigov_py.emit_event human_approved --actor human --payload '{"scope":"model_promoted","decision":"approve","approver":"human","justification":"manual approval for demo"}' && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.approve
 
 evaluate: require-run check-audit
@@ -58,6 +59,7 @@ evaluate: require-run check-audit
 promote: require-run check-audit
 	@$(MAKE) verify-log
 	cd python && . .venv/bin/activate && \
+	RUN_ID=$(RUN_ID) python -m aigov_py.emit_event promoted --actor system --payload '{}' && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.promote
 
 report-init: require-run ensure-dirs
@@ -94,8 +96,8 @@ flow: require-run
 	$(MAKE) evaluate RUN_ID=$(RUN_ID)
 	$(MAKE) promote RUN_ID=$(RUN_ID)
 	$(MAKE) report-init RUN_ID=$(RUN_ID)
+	$(MAKE) bundle RUN_ID=$(RUN_ID)
 	$(MAKE) report-fill RUN_ID=$(RUN_ID)
 	$(MAKE) bundle RUN_ID=$(RUN_ID)
 	$(MAKE) verify-cli RUN_ID=$(RUN_ID)
 	$(MAKE) evidence-pack RUN_ID=$(RUN_ID)
-
