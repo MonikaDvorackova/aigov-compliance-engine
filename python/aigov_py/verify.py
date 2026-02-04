@@ -4,7 +4,7 @@ import json
 import sys
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from .events import rebuild_chain_inplace
 
