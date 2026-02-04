@@ -1,6 +1,6 @@
-.PHONY: audit run verify verify-cli status bundle approve evaluate promote demo verify-log \
-        report-template require-run evidence-pack new-run ensure-dirs \
-        check-audit flow report-fill report-init
+.PHONY: audit run verify verify-cli status bundle approve evaluate promote verify-log \
+	report-template require-run evidence-pack new-run ensure-dirs \
+	check-audit flow flow-full report-fill report-init gate
 
 audit:
 	cd rust && cargo run
@@ -89,13 +89,36 @@ report-template: require-run ensure-dirs
 	@echo "" >> docs/reports/$(RUN_ID).md
 	@echo "saved docs/reports/$(RUN_ID).md"
 
+# Backward compatible flow target. Prefer flow-full.
 flow: require-run
 	$(MAKE) approve RUN_ID=$(RUN_ID)
 	$(MAKE) evaluate RUN_ID=$(RUN_ID)
 	$(MAKE) promote RUN_ID=$(RUN_ID)
-	$(MAKE) report-init RUN_ID=$(RUN_ID)
+	$(MAKE) report-template RUN_ID=$(RUN_ID)
+	$(MAKE) bundle RUN_ID=$(RUN_ID)
 	$(MAKE) report-fill RUN_ID=$(RUN_ID)
 	$(MAKE) bundle RUN_ID=$(RUN_ID)
 	$(MAKE) verify-cli RUN_ID=$(RUN_ID)
 	$(MAKE) evidence-pack RUN_ID=$(RUN_ID)
 
+# Deterministic strict full flow (requires RUN_ID)
+flow-full: require-run check-audit ensure-dirs
+	@echo "Running full AIGov flow for RUN_ID=$(RUN_ID)"
+	$(MAKE) approve RUN_ID=$(RUN_ID)
+	$(MAKE) evaluate RUN_ID=$(RUN_ID) AIGOV_EVAL_VALUE=$${AIGOV_EVAL_VALUE:-1.0}
+	$(MAKE) promote RUN_ID=$(RUN_ID)
+	$(MAKE) report-template RUN_ID=$(RUN_ID)
+	$(MAKE) bundle RUN_ID=$(RUN_ID)
+	$(MAKE) report-fill RUN_ID=$(RUN_ID)
+	$(MAKE) bundle RUN_ID=$(RUN_ID)
+	$(MAKE) verify-cli RUN_ID=$(RUN_ID)
+	$(MAKE) evidence-pack RUN_ID=$(RUN_ID)
+	@echo "AIGov flow complete for RUN_ID=$(RUN_ID)"
+
+# Local preflight gate
+gate:
+	@echo "Running local gate checks"
+	@rg -n "^(<<<<<<<|=======|>>>>>>>)" -S . || true
+	cd python && . .venv/bin/activate && python -m compileall aigov_py
+	cd rust && cargo check
+	@echo "Gate OK"
