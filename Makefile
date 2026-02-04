@@ -2,7 +2,8 @@ SHELL := /bin/bash
 
 .PHONY: \
 	audit audit_bg audit_stop audit_restart audit_logs \
-	run status verify verify_log \
+	status verify verify_log \
+	run \
 	require_run ensure_dirs new_run \
 	check_audit \
 	approve evaluate promote \
@@ -172,15 +173,7 @@ emit_event: require_run check_audit
 	cd python && . .venv/bin/activate && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.emit_event $(EVENT_TYPE) --system "aigov_make" --payload '$(PAYLOAD)'
 
-flow: require_run
-	$(MAKE) approve RUN_ID=$(RUN_ID)
-	$(MAKE) evaluate RUN_ID=$(RUN_ID)
-	$(MAKE) promote RUN_ID=$(RUN_ID)
-	$(MAKE) report_init RUN_ID=$(RUN_ID)
-	$(MAKE) report_fill RUN_ID=$(RUN_ID)
-	$(MAKE) bundle RUN_ID=$(RUN_ID)
-	$(MAKE) verify_cli RUN_ID=$(RUN_ID)
-	$(MAKE) evidence_pack RUN_ID=$(RUN_ID)
+flow: flow_full
 
 flow_full: require_run
 	@echo "Running full AIGov flow for RUN_ID=$(RUN_ID)"
