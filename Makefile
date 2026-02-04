@@ -168,7 +168,7 @@ emit_event emit-event: require_run check_audit
 		exit 2; \
 	fi
 	cd python && . .venv/bin/activate && \
-	RUN_ID=$(RUN_ID) python -m aigov_py.emit_event $(EVENT_TYPE) --system "aigov_make" --payload '$(PAYLOAD)'
+	RUN_ID=$(RUN_ID) python -m aigov_py.emit_event $(EVENT_TYPE) --system "aigov_make" --payload "$(PAYLOAD)"
 
 flow: require_run
 	$(MAKE) approve RUN_ID=$(RUN_ID)
@@ -197,4 +197,3 @@ gate:
 	@rg -n "^(<<<<<<<|=======|>>>>>>>)" -S . || true
 	cd python && . .venv/bin/activate && python -m compileall aigov_py
 	cd rust && cargo check
-
