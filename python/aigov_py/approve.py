@@ -37,18 +37,9 @@ def main() -> None:
 
     actor = os.getenv("AIGOV_ACTOR", "monika")
     system = os.getenv("AIGOV_SYSTEM", "aigov_poc")
-<<<<<<< HEAD
-
-    base = os.getenv("AIGOV_AUDIT_ENDPOINT", "http://127.0.0.1:8088").rstrip("/")
-    url = f"{base}/evidence"
-
-    ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    event_id = f"ha_{uuid.uuid4()}"
-=======
 
     endpoint = (os.getenv("AIGOV_AUDIT_ENDPOINT", "http://127.0.0.1:8088") or "").rstrip("/")
     url = f"{endpoint}/evidence"
->>>>>>> origin/main
 
     ts_utc = _utc_now_iso()
     remote_event_id = _eid("ha", run_id)
@@ -56,11 +47,7 @@ def main() -> None:
     event: Dict[str, Any] = {
         "event_id": remote_event_id,
         "event_type": "human_approved",
-<<<<<<< HEAD
-        "ts_utc": ts,
-=======
         "ts_utc": ts_utc,
->>>>>>> origin/main
         "actor": actor,
         "system": system,
         "run_id": run_id,
@@ -73,22 +60,6 @@ def main() -> None:
     }
 
     emit_event(
-<<<<<<< HEAD
-        run_id,
-        "approve_started",
-        actor=actor,
-        payload={"event_id": event_id, "ts_utc": ts, "system": system},
-    )
-
-    try:
-        out = _post_json(url, payload)
-    except Exception as e:
-        emit_event(
-            run_id,
-            "approve_failed",
-            actor=actor,
-            payload={"event_id": event_id, "ts_utc": ts, "system": system, "error": str(e)},
-=======
         run_id=run_id,
         event_id=_eid("approve_started", run_id),
         event_type="approve_started",
@@ -109,23 +80,10 @@ def main() -> None:
             system=system,
             payload={"approval_attempt_id": remote_event_id, "error": str(e)},
             ts_utc=_utc_now_iso(),
->>>>>>> origin/main
         )
         raise
 
     emit_event(
-<<<<<<< HEAD
-        run_id,
-        "human_approved",
-        actor=actor,
-        payload={
-            "event_id": event_id,
-            "ts_utc": ts,
-            "system": system,
-            "request": payload,
-            "response": out,
-        },
-=======
         run_id=run_id,
         event_id=_eid("human_approved", run_id),
         event_type="human_approved",
@@ -133,7 +91,6 @@ def main() -> None:
         system=system,
         payload={"approval_attempt_id": remote_event_id, "request": event, "response": out},
         ts_utc=_utc_now_iso(),
->>>>>>> origin/main
     )
 
     print(json.dumps(out, ensure_ascii=False))
