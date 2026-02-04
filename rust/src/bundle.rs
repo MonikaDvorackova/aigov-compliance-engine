@@ -4,6 +4,33 @@ use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use serde::Serialize;
+
+fn canonical_json_bytes<T: Serialize>(value: &T) -> Vec<u8> {
+    // serde_json keeps insertion order, but we need canonical ordering
+    // Convert to Value, sort keys recursively, then serialize
+    let v = serde_json::to_value(value).expect("to_value");
+    let sorted = sort_json_value(v);
+    serde_json::to_vec(&sorted).expect("to_vec")
+}
+
+fn sort_json_value(v: serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::Object(map) => {
+            let mut items: Vec<(String, serde_json::Value)> = map.into_iter().collect();
+            items.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut out = serde_json::Map::new();
+            for (k, vv) in items {
+                out.insert(k, sort_json_value(vv));
+            }
+            serde_json::Value::Object(out)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(sort_json_value).collect())
+        }
+        other => other,
+    }
+}
 
 pub fn collect_events_for_run(log_path: &str, run_id: &str) -> Result<Vec<EvidenceEvent>, String> {
     let f = File::open(log_path).map_err(|e| {
@@ -26,7 +53,7 @@ pub fn collect_events_for_run(log_path: &str, run_id: &str) -> Result<Vec<Eviden
 
         let rec: StoredRecord = serde_json::from_str(t).map_err(|e| e.to_string())?;
 
-        // Prefer the stored JSON to avoid re-serialization differences
+        // Prefer the stored JSON to avoid re serialization differences
         let ev: EvidenceEvent = serde_json::from_str(&rec.event_json).map_err(|e| e.to_string())?;
 
         if ev.run_id == run_id {
@@ -55,26 +82,25 @@ pub fn find_model_artifact_path(events: &[EvidenceEvent]) -> Option<String> {
 }
 
 fn stable_event_order(a: &EvidenceEvent, b: &EvidenceEvent) -> Ordering {
-    // primary: timestamp
+    // primary timestamp
     let t = a.ts_utc.cmp(&b.ts_utc);
     if t != Ordering::Equal {
         return t;
     }
 
-    // secondary: event_type (so ties are stable)
+    // secondary event_type
     let et = a.event_type.cmp(&b.event_type);
     if et != Ordering::Equal {
         return et;
     }
 
-    // tertiary: event_id
+    // tertiary event_id
     a.event_id.cmp(&b.event_id)
 }
 
 fn canonicalize_json(v: &mut serde_json::Value) {
     match v {
         serde_json::Value::Object(map) => {
-            // sort keys by re-creating the object in key order
             let mut keys: Vec<String> = map.keys().cloned().collect();
             keys.sort();
 
@@ -87,7 +113,7 @@ fn canonicalize_json(v: &mut serde_json::Value) {
             *map = new_map;
         }
         serde_json::Value::Array(arr) => {
-            // Keep array order as-is (events order is handled by stable_event_order)
+            // Keep array order as is, event order is handled separately
             for x in arr.iter_mut() {
                 canonicalize_json(x);
             }
@@ -131,8 +157,8 @@ pub fn bundle_sha256(
         events,
     );
 
-    // Serialize canonicalized Value for stable hashing
-    let bytes = serde_json::to_vec(&v).expect("serialize canonical bundle");
+    // Serialize with canonical key ordering
+    let bytes = canonical_json_bytes(&v);
 
     let mut h = Sha256::new();
     h.update(bytes);
