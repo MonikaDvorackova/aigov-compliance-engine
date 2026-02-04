@@ -1,0 +1,15 @@
+{
+  "run_id": "14483614-fd4a-40f2-ac83-548437d9b91c",
+  "bundle_sha256": "c3d1f3c029cf5fd136eb0bd498246b8f6605067f8e01244c28bf81516b56168e",
+  "policy_version": "unknown",
+  "generated_ts_utc": "2026-02-04T14:41:55.924473Z",
+  "evidence_chain_head_sha256": "94f4f26bc45a285560c74394a751dd2a3099fe49c6e2ea411debe80dd94b2f5d",
+  "hashes": {
+    "evidence_sha256": "8037fa1720b4c166b2947c42949089d533eeec41969dee8ae6654325804e652d",
+    "report_sha256": "9638659e70c3c93875728e9ffcbb00dce215d70a169bba4c730293e13d6b696e"
+  },
+  "paths": {
+    "evidence_json": "docs/evidence/14483614-fd4a-40f2-ac83-548437d9b91c.json",
+    "report_md": "docs/reports/14483614-fd4a-40f2-ac83-548437d9b91c.md"
+  }
+}

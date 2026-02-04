@@ -1,0 +1,15 @@
+{
+  "run_id": "9baab928-90d9-4ad8-a211-3dc18108371e",
+  "bundle_sha256": "f59be2112a7404f8a2dafac90417aa7a83354e5fc7465181f0f17bfce245a340",
+  "policy_version": "unknown",
+  "generated_ts_utc": "2026-02-04T14:38:39.070835Z",
+  "evidence_chain_head_sha256": "65084d2c12afb188391764d767bd84c423a3161671deb0b8fda123f8b28d4f35",
+  "hashes": {
+    "evidence_sha256": "59d0298c454724e8fb6df0def0f83528f04205904d37270e5db4314983c765fb",
+    "report_sha256": "b37b03af6e6c8756072d7565c2a707afc605e014f777c7e1353560dc1cfdbd72"
+  },
+  "paths": {
+    "evidence_json": "docs/evidence/9baab928-90d9-4ad8-a211-3dc18108371e.json",
+    "report_md": "docs/reports/9baab928-90d9-4ad8-a211-3dc18108371e.md"
+  }
+}
