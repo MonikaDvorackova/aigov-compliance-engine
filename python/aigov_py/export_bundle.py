@@ -49,17 +49,11 @@ def _policy_version_from_evidence(evidence: Dict[str, Any]) -> Optional[str]:
         for e in reversed(events):
             if not isinstance(e, dict):
                 continue
-            payload = e.get("payload")
-            if isinstance(payload, dict):
-                resp = payload.get("response")
-                if isinstance(resp, dict):
-                    pv2 = resp.get("policy_version")
-                    if isinstance(pv2, str) and pv2.strip():
-                        return pv2.strip()
-
-                pv3 = payload.get("policy_version")
-                if isinstance(pv3, str) and pv3.strip():
-                    return pv3.strip()
+            p = e.get("payload")
+            if isinstance(p, dict):
+                pv2 = p.get("policy_version")
+                if isinstance(pv2, str) and pv2.strip():
+                    return pv2.strip()
     return None
 
 
@@ -67,14 +61,17 @@ def _bundle_fingerprint(
     run_id: str,
     policy_version: str,
     evidence_sha256: str,
-    report_sha256: str,
     evidence_chain_head_sha256: Optional[str],
 ) -> str:
+    """
+    IMPORTANT: bundle_sha256 MUST NOT depend on the report bytes.
+    Otherwise the workflow requirement (report.bundle_sha256 == audit.bundle_sha256)
+    becomes cyclic and unstable.
+    """
     payload = {
         "run_id": run_id,
         "policy_version": policy_version,
         "evidence_sha256": evidence_sha256,
-        "report_sha256": report_sha256,
         "evidence_chain_head_sha256": evidence_chain_head_sha256,
     }
     raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -90,11 +87,8 @@ def export_bundle(run_id: str) -> None:
 
     evidence_path = root / "docs" / "evidence" / f"{run_id}.json"
     report_path = root / "docs" / "reports" / f"{run_id}.md"
-
     audit_dir = root / "docs" / "audit"
-    audit_meta_dir = root / "docs" / "audit_meta"
     audit_dir.mkdir(parents=True, exist_ok=True)
-    audit_meta_dir.mkdir(parents=True, exist_ok=True)
 
     if not evidence_path.exists():
         raise FileNotFoundError(f"Missing evidence file: {evidence_path}")
@@ -118,7 +112,6 @@ def export_bundle(run_id: str) -> None:
         run_id=run_id,
         policy_version=policy_version,
         evidence_sha256=evidence_sha256,
-        report_sha256=report_sha256,
         evidence_chain_head_sha256=chain_head,
     )
 
@@ -138,45 +131,12 @@ def export_bundle(run_id: str) -> None:
         },
     }
 
-    # CI gate constraint:
-    # - docs/audit/** may only contain <run_id>.json
-    # - any additional artifacts must live elsewhere (docs/audit_meta/**)
     audit_json_path = audit_dir / f"{run_id}.json"
     audit_bytes = json.dumps(audit_obj, ensure_ascii=False, indent=2).encode("utf-8")
     _atomic_write(audit_json_path, audit_bytes)
 
-    audit_sha256 = _sha256_bytes(audit_bytes)
-
-    sha_path = audit_meta_dir / f"{run_id}.sha256"
-    _atomic_write(sha_path, (audit_sha256 + "\n").encode("utf-8"))
-
-    manifest: Dict[str, Any] = {
-        "run_id": run_id,
-        "generated_ts_utc": _utc_now_iso(),
-        "policy_version": policy_version,
-        "bundle_sha256": bundle_sha256,
-        "audit_sha256": audit_sha256,
-        "evidence_sha256": evidence_sha256,
-        "report_sha256": report_sha256,
-        "files": {
-            "audit_json": f"docs/audit/{run_id}.json",
-            "audit_sha256": f"docs/audit_meta/{run_id}.sha256",
-            "audit_manifest": f"docs/audit_meta/{run_id}.manifest.json",
-            "evidence_json": f"docs/evidence/{run_id}.json",
-            "report_md": f"docs/reports/{run_id}.md",
-        },
-    }
-
-    manifest_path = audit_meta_dir / f"{run_id}.manifest.json"
-    _atomic_write(
-        manifest_path,
-        json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
-    )
-
     print(f"saved {audit_json_path}")
-    print(f"saved {sha_path}")
-    print(f"saved {manifest_path}")
-    print(f"audit_sha256={audit_sha256}")
+    print(f"bundle_sha256={bundle_sha256}")
 
 
 def main(argv: list[str]) -> None:

@@ -1,14 +1,8 @@
 from __future__ import annotations
 
-import json
-import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
-
-
-HEX64_RE = re.compile(r"^[a-f0-9]{64}$", re.IGNORECASE)
-POLICY_RE = re.compile(r"\bv\d+\.\d+(?:[A-Za-z0-9_]+)?\b")
+from typing import Dict, Any
 
 
 def _repo_root() -> Path:
@@ -25,109 +19,60 @@ def _write_text(p: Path, s: str) -> None:
 
 
 def _read_json(p: Path) -> Dict[str, Any]:
+    import json
     return json.loads(_read_text(p))
 
 
-def _find_first_str(obj: Any, predicate) -> Optional[str]:
-    if isinstance(obj, str):
-        return obj if predicate(obj) else None
-    if isinstance(obj, dict):
-        for v in obj.values():
-            hit = _find_first_str(v, predicate)
-            if hit:
-                return hit
-    if isinstance(obj, list):
-        for v in obj:
-            hit = _find_first_str(v, predicate)
-            if hit:
-                return hit
-    return None
+def _rewrite_header(report_text: str, run_id: str, bundle_sha256: str, policy_version: str) -> str:
+    lines = report_text.splitlines()
 
+    # Keep the body intact, only force the 3 header lines.
+    # If the file is shorter, pad it.
+    while len(lines) < 3:
+        lines.append("")
 
-def _extract_policy_version_from_evidence(evidence: Dict[str, Any]) -> Optional[str]:
-    events = evidence.get("events")
-    if not isinstance(events, list):
-        return None
+    lines[0] = f"run_id={run_id}"
+    lines[1] = f"bundle_sha256={bundle_sha256}"
+    lines[2] = f"policy_version={policy_version}"
 
-    for e in reversed(events):
-        if not isinstance(e, dict):
-            continue
-        payload = e.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        resp = payload.get("response")
-        if isinstance(resp, dict):
-            pv = resp.get("policy_version")
-            if isinstance(pv, str) and pv.strip():
-                return pv.strip()
+    # Ensure an empty line after header.
+    if len(lines) == 3:
+        lines.append("")
+    elif lines[3].strip() != "":
+        lines.insert(3, "")
 
-    return _find_first_str(evidence, lambda s: bool(POLICY_RE.search(s)))
-
-
-def _extract_bundle_sha256(run_id: str, root: Path) -> Optional[str]:
-    sha_path = root / "docs" / "audit" / f"{run_id}.sha256"
-    if sha_path.exists():
-        s = _read_text(sha_path).strip()
-        if HEX64_RE.match(s):
-            return s
-
-    audit_path = root / "docs" / "audit" / f"{run_id}.json"
-    if audit_path.exists():
-        audit = _read_json(audit_path)
-        hit = _find_first_str(audit, lambda x: bool(HEX64_RE.match(x.strip())))
-        if hit:
-            return hit.strip()
-
-    return None
-
-
-def _set_kv_line(lines: list[str], key: str, value: str) -> list[str]:
-    prefix = f"{key}="
-    out: list[str] = []
-    replaced = False
-    for line in lines:
-        if line.startswith(prefix):
-            out.append(f"{prefix}{value}")
-            replaced = True
-        else:
-            out.append(line)
-    if not replaced:
-        out.insert(0, f"{prefix}{value}")
-    return out
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def main(argv: list[str]) -> None:
     if len(argv) < 2:
-        raise SystemExit("usage: python -m aigov_py.report_fill <RUN_ID>")
+        raise SystemExit("Usage: python -m aigov_py.report_fill <run_id>")
 
     run_id = argv[1].strip()
     if not run_id:
-        raise SystemExit("RUN_ID is required")
+        raise SystemExit("run_id is required")
 
     root = _repo_root()
+    audit_path = root / "docs" / "audit" / f"{run_id}.json"
     report_path = root / "docs" / "reports" / f"{run_id}.md"
-    evidence_path = root / "docs" / "evidence" / f"{run_id}.json"
 
+    if not audit_path.exists():
+        raise FileNotFoundError(f"Missing audit object: {audit_path}")
     if not report_path.exists():
-        raise SystemExit(f"missing report: {report_path}")
-    if not evidence_path.exists():
-        raise SystemExit(f"missing evidence: {evidence_path}")
+        raise FileNotFoundError(f"Missing report: {report_path}")
 
-    evidence = _read_json(evidence_path)
+    audit = _read_json(audit_path)
+    bundle_sha256 = str(audit.get("bundle_sha256") or "").strip()
+    policy_version = str(audit.get("policy_version") or "").strip()
 
-    policy_version = _extract_policy_version_from_evidence(evidence) or ""
-    bundle_sha256 = _extract_bundle_sha256(run_id, root) or ""
+    if not bundle_sha256:
+        raise ValueError("audit object missing bundle_sha256")
+    if not policy_version:
+        raise ValueError("audit object missing policy_version")
 
-    content = _read_text(report_path)
-    lines = content.splitlines()
-
-    if policy_version:
-        lines = _set_kv_line(lines, "policy_version", policy_version)
-    if bundle_sha256:
-        lines = _set_kv_line(lines, "bundle_sha256", bundle_sha256)
-
-    filled = "\n".join(lines).rstrip() + "\n"
-    _write_text(report_path, filled)
+    report_text = _read_text(report_path)
+    updated = _rewrite_header(report_text, run_id, bundle_sha256, policy_version)
+    _write_text(report_path, updated)
 
     print(f"saved {report_path}")
 

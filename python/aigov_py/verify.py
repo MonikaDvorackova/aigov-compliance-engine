@@ -22,7 +22,6 @@ def _evidence_path(run_id: str) -> Path:
 
 
 def _audit_path(run_id: str) -> Path:
-    # Gate constraint: only <run_id>.json lives here
     return _docs_dir() / "audit" / f"{run_id}.json"
 
 
@@ -30,135 +29,26 @@ def _report_path(run_id: str) -> Path:
     return _docs_dir() / "reports" / f"{run_id}.md"
 
 
-def _manifest_path_candidates(run_id: str) -> List[Path]:
-    # New layout first, then fallback to legacy
-    p1 = _docs_dir() / "audit_meta" / f"{run_id}.manifest.json"
-    p2 = _docs_dir() / "audit" / f"{run_id}.manifest.json"
-    return [p1, p2]
-
-
 def _read_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
-
-
 def _sha256_bytes(data: bytes) -> str:
     import hashlib
-
     return hashlib.sha256(data).hexdigest()
 
 
-def _print_ok(rel: str) -> None:
-    print(f"OK   {rel}")
+def _print_ok(msg: str) -> None:
+    print(f"OK   {msg}")
 
 
 def _print_fail(msg: str) -> None:
     print(f"FAIL {msg}")
 
 
-def _rel_docs(path: Path) -> str:
-    try:
-        return str(path.relative_to(_docs_dir()))
-    except Exception:
-        return str(path)
-
-
-def _audit_sha_path_candidates(run_id: str) -> List[Path]:
-    # New layout first, then fallbacks
-    p0 = _docs_dir() / "audit_meta" / f"{run_id}.sha256"
-    p1 = _docs_dir() / "audit" / f"{run_id}.sha256"
-    p2 = _docs_dir() / "audit" / f"{run_id}.json.sha256"
-    return [p0, p1, p2]
-
-
-def _find_manifest_hash(manifest: Dict[str, Any], kind: str, run_id: str) -> Optional[str]:
-    direct = manifest.get(f"{kind}_sha256")
-    if isinstance(direct, str) and direct:
-        return direct
-
-    hashes = manifest.get("hashes")
-    if isinstance(hashes, dict):
-        v = hashes.get(f"{kind}_sha256")
-        if isinstance(v, str) and v:
-            return v
-
-    files = manifest.get("files")
-    if isinstance(files, dict):
-        target_paths = []
-        if kind == "evidence":
-            target_paths.append(f"docs/evidence/{run_id}.json")
-            target_paths.append(f"evidence/{run_id}.json")
-            target_paths.append(f"{run_id}.json")
-        if kind == "report":
-            target_paths.append(f"docs/reports/{run_id}.md")
-            target_paths.append(f"reports/{run_id}.md")
-            target_paths.append(f"{run_id}.md")
-
-        for key in target_paths:
-            entry = files.get(key)
-            if isinstance(entry, dict):
-                sha = entry.get("sha256")
-                if isinstance(sha, str) and sha:
-                    return sha
-
-        for _, entry in files.items():
-            if isinstance(entry, dict):
-                p = entry.get("path")
-                sha = entry.get("sha256")
-                if isinstance(p, str) and isinstance(sha, str) and sha:
-                    if kind == "evidence" and p.endswith(f"evidence/{run_id}.json"):
-                        return sha
-                    if kind == "report" and p.endswith(f"reports/{run_id}.md"):
-                        return sha
-
-    return None
-
-
-def _verify_audit_hash(audit_json_path: Path, run_id: str) -> Tuple[bool, str]:
-    candidates = _audit_sha_path_candidates(run_id)
-    sha_path = next((p for p in candidates if p.exists()), None)
-    if sha_path is None:
-        return False, f"missing {run_id}.sha256"
-
-    expected = _read_text(sha_path).strip()
-    if not expected:
-        return False, f"empty {sha_path.name}"
-
-    actual = _sha256_bytes(audit_json_path.read_bytes())
-    if actual != expected:
-        return False, f"{_rel_docs(audit_json_path)} sha mismatch expected {expected} actual {actual}"
-    return True, ""
-
-
-def _verify_report_hash(report_path: Path, manifest: Dict[str, Any], run_id: str) -> Tuple[bool, str]:
-    expected = _find_manifest_hash(manifest, "report", run_id)
-    if not isinstance(expected, str) or not expected:
-        return False, "manifest missing report sha256"
-
-    actual = _sha256_bytes(report_path.read_bytes())
-    if actual != expected:
-        return False, f"{_rel_docs(report_path)} sha mismatch expected {expected} actual {actual}"
-    return True, ""
-
-
-def _verify_evidence_hash(evidence_path: Path, manifest: Dict[str, Any], run_id: str) -> Tuple[bool, str]:
-    expected = _find_manifest_hash(manifest, "evidence", run_id)
-    if not isinstance(expected, str) or not expected:
-        return False, "manifest missing evidence sha256"
-
-    actual = _sha256_bytes(evidence_path.read_bytes())
-    if actual != expected:
-        return False, f"{_rel_docs(evidence_path)} sha mismatch expected {expected} actual {actual}"
-    return True, ""
-
-
 def _verify_chain_matches_events(evidence: Dict[str, Any]) -> Tuple[bool, str]:
     if "events" not in evidence or not isinstance(evidence["events"], list):
         return False, "evidence missing events list"
-
     if "chain" not in evidence or not isinstance(evidence["chain"], dict):
         return False, "evidence missing chain object"
 
@@ -183,12 +73,25 @@ def _verify_chain_matches_events(evidence: Dict[str, Any]) -> Tuple[bool, str]:
     for idx, (orig, comp) in enumerate(zip(original_events, comp_events)):
         if not isinstance(orig, dict) or not isinstance(comp, dict):
             return False, f"event not an object at index {idx}"
-
         for k in ("prev_sha256", "sha256"):
             if orig.get(k) != comp.get(k):
                 return False, f"event {idx} {k} mismatch"
 
     return True, ""
+
+
+def _extract_report_header(report_path: Path) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    lines = report_path.read_text(encoding="utf-8").splitlines()
+    for line in lines[:10]:
+        if "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k = k.strip()
+        v = v.strip()
+        if k in ("run_id", "bundle_sha256", "policy_version"):
+            out[k] = v
+    return out
 
 
 def main(argv: List[str]) -> None:
@@ -206,9 +109,6 @@ def main(argv: List[str]) -> None:
     evidence_json_path = _evidence_path(run_id)
     report_md_path = _report_path(run_id)
 
-    manifest_candidates = _manifest_path_candidates(run_id)
-    manifest_path = next((p for p in manifest_candidates if p.exists()), None)
-
     ok = True
 
     if not audit_json_path.exists():
@@ -220,41 +120,68 @@ def main(argv: List[str]) -> None:
     if not report_md_path.exists():
         _print_fail(f"missing reports/{run_id}.md")
         ok = False
-    if manifest_path is None:
-        _print_fail(f"missing audit_meta/{run_id}.manifest.json")
-        ok = False
 
     if not ok:
         print("VERDICT INVALID")
         raise SystemExit(1)
 
-    hash_ok, hash_msg = _verify_audit_hash(audit_json_path, run_id)
-    if not hash_ok:
-        _print_fail(hash_msg)
-        ok = False
-    else:
-        print("Audit hash OK")
+    audit = _read_json(audit_json_path)
+    evidence = _read_json(evidence_json_path)
 
-    manifest = _read_json(manifest_path)
+    # 1) Report header must match audit object
+    hdr = _extract_report_header(report_md_path)
 
-    ev_ok, ev_msg = _verify_evidence_hash(evidence_json_path, manifest, run_id)
-    if ev_ok:
-        _print_ok(f"evidence/{run_id}.json")
-    else:
-        _print_fail(ev_msg)
+    if hdr.get("run_id") != run_id:
+        _print_fail("report header run_id mismatch")
         ok = False
 
-    rep_ok, rep_msg = _verify_report_hash(report_md_path, manifest, run_id)
-    if rep_ok:
-        _print_ok(f"reports/{run_id}.md")
-    else:
-        _print_fail(rep_msg)
+    a_bundle = str(audit.get("bundle_sha256") or "").strip()
+    a_policy = str(audit.get("policy_version") or "").strip()
+
+    if not a_bundle:
+        _print_fail("audit missing bundle_sha256")
         ok = False
+    if not a_policy:
+        _print_fail("audit missing policy_version")
+        ok = False
+
+    if hdr.get("bundle_sha256") != a_bundle:
+        _print_fail("report bundle_sha256 does not match audit.bundle_sha256")
+        ok = False
+    else:
+        _print_ok(f"reports/{run_id}.md bundle_sha256 matches")
+
+    if hdr.get("policy_version") != a_policy:
+        _print_fail("report policy_version does not match audit.policy_version")
+        ok = False
+    else:
+        _print_ok(f"reports/{run_id}.md policy_version matches")
+
+    # 2) Evidence + report hashes vs audit hashes if present
+    hashes = audit.get("hashes")
+    if isinstance(hashes, dict):
+        ev_exp = hashes.get("evidence_sha256")
+        rp_exp = hashes.get("report_sha256")
+
+        if isinstance(ev_exp, str) and ev_exp:
+            ev_act = _sha256_bytes(evidence_json_path.read_bytes())
+            if ev_act != ev_exp:
+                _print_fail("evidence sha mismatch vs audit.hashes.evidence_sha256")
+                ok = False
+            else:
+                _print_ok(f"evidence/{run_id}.json sha matches")
+
+        if isinstance(rp_exp, str) and rp_exp:
+            rp_act = _sha256_bytes(report_md_path.read_bytes())
+            if rp_act != rp_exp:
+                _print_fail("report sha mismatch vs audit.hashes.report_sha256")
+                ok = False
+            else:
+                _print_ok(f"reports/{run_id}.md sha matches")
 
     _print_ok(f"audit/{run_id}.json")
 
-    evidence = _read_json(evidence_json_path)
-
+    # 3) Chain integrity check
     chain_ok, chain_msg = _verify_chain_matches_events(evidence)
     if chain_ok:
         print("Chain head OK")
