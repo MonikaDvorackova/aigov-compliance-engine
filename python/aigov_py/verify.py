@@ -22,6 +22,7 @@ def _evidence_path(run_id: str) -> Path:
 
 
 def _audit_path(run_id: str) -> Path:
+    # Gate constraint: only <run_id>.json lives here
     return _docs_dir() / "audit" / f"{run_id}.json"
 
 
@@ -29,8 +30,11 @@ def _report_path(run_id: str) -> Path:
     return _docs_dir() / "reports" / f"{run_id}.md"
 
 
-def _manifest_path(run_id: str) -> Path:
-    return _docs_dir() / "audit" / f"{run_id}.manifest.json"
+def _manifest_path_candidates(run_id: str) -> List[Path]:
+    # New layout first, then fallback to legacy
+    p1 = _docs_dir() / "audit_meta" / f"{run_id}.manifest.json"
+    p2 = _docs_dir() / "audit" / f"{run_id}.manifest.json"
+    return [p1, p2]
 
 
 def _read_json(path: Path) -> Dict[str, Any]:
@@ -43,6 +47,7 @@ def _read_text(path: Path) -> str:
 
 def _sha256_bytes(data: bytes) -> str:
     import hashlib
+
     return hashlib.sha256(data).hexdigest()
 
 
@@ -62,9 +67,11 @@ def _rel_docs(path: Path) -> str:
 
 
 def _audit_sha_path_candidates(run_id: str) -> List[Path]:
+    # New layout first, then fallbacks
+    p0 = _docs_dir() / "audit_meta" / f"{run_id}.sha256"
     p1 = _docs_dir() / "audit" / f"{run_id}.sha256"
     p2 = _docs_dir() / "audit" / f"{run_id}.json.sha256"
-    return [p1, p2]
+    return [p0, p1, p2]
 
 
 def _find_manifest_hash(manifest: Dict[str, Any], kind: str, run_id: str) -> Optional[str]:
@@ -198,7 +205,9 @@ def main(argv: List[str]) -> None:
     audit_json_path = _audit_path(run_id)
     evidence_json_path = _evidence_path(run_id)
     report_md_path = _report_path(run_id)
-    manifest_path = _manifest_path(run_id)
+
+    manifest_candidates = _manifest_path_candidates(run_id)
+    manifest_path = next((p for p in manifest_candidates if p.exists()), None)
 
     ok = True
 
@@ -211,8 +220,8 @@ def main(argv: List[str]) -> None:
     if not report_md_path.exists():
         _print_fail(f"missing reports/{run_id}.md")
         ok = False
-    if not manifest_path.exists():
-        _print_fail(f"missing audit/{run_id}.manifest.json")
+    if manifest_path is None:
+        _print_fail(f"missing audit_meta/{run_id}.manifest.json")
         ok = False
 
     if not ok:

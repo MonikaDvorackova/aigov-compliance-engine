@@ -26,6 +26,7 @@ require-run:
 ensure-dirs:
 	@mkdir -p docs/reports
 	@mkdir -p docs/audit
+	@mkdir -p docs/audit_meta
 	@mkdir -p docs/packs
 	@mkdir -p docs/evidence
 	@mkdir -p docs/policy
@@ -93,7 +94,8 @@ flow: require-run
 	$(MAKE) evaluate RUN_ID=$(RUN_ID)
 	$(MAKE) promote RUN_ID=$(RUN_ID)
 	$(MAKE) report-init RUN_ID=$(RUN_ID)
-	$(MAKE) bundle RUN_ID=$(RUN_ID)
 	$(MAKE) report-fill RUN_ID=$(RUN_ID)
+	$(MAKE) bundle RUN_ID=$(RUN_ID)
 	$(MAKE) verify-cli RUN_ID=$(RUN_ID)
 	$(MAKE) evidence-pack RUN_ID=$(RUN_ID)
+
