@@ -1,14 +1,16 @@
 SHELL := /bin/bash
 
 .PHONY: \
-	audit audit_bg audit-stop audit_stop audit_restart audit-restart audit_logs audit-logs \
-	run verify verify_log verify-log status \
+	audit audit_bg audit_stop audit_restart audit_logs \
+	run status verify verify_log \
+	require_run ensure_dirs new_run \
+	check_audit \
 	approve evaluate promote \
-	report_template report-template report_init report-init report_fill report-fill \
-	bundle verify_cli verify-cli evidence_pack evidence-pack \
-	require_run require-run ensure_dirs ensure-dirs new_run new-run \
-	emit_event emit-event \
-	flow flow_full flow-full gate
+	report_template report_init report_fill \
+	bundle verify_cli evidence_pack \
+	emit_event \
+	flow flow_full \
+	pr_prepare gate
 
 AUDIT_URL ?= http://127.0.0.1:8088
 AUDIT_PORT ?= 8088
@@ -45,7 +47,7 @@ audit_bg:
 	tail -n 120 "$(AUDIT_LOG)" || true; \
 	exit 1
 
-audit_stop audit-stop:
+audit_stop:
 	@set -euo pipefail; \
 	PID=""; \
 	if [ -f "$(AUDIT_PIDFILE)" ]; then \
@@ -70,11 +72,11 @@ audit_stop audit-stop:
 	rm -f "$(AUDIT_PIDFILE)"; \
 	echo "stopped"
 
-audit_restart audit-restart:
+audit_restart:
 	@$(MAKE) audit_stop
 	@$(MAKE) audit_bg
 
-audit_logs audit-logs:
+audit_logs:
 	@set -euo pipefail; \
 	if [ -f "$(AUDIT_LOG)" ]; then \
 		tail -n 200 "$(AUDIT_LOG)"; \
@@ -88,25 +90,25 @@ status:
 verify:
 	curl -sS $(AUDIT_URL)/verify ; echo
 
-verify_log verify-log:
+verify_log:
 	curl -sS $(AUDIT_URL)/verify-log ; echo
 
 run:
 	cd python && . .venv/bin/activate && python -m aigov_py.pipeline_train
 
-require_run require-run:
+require_run:
 	@if [ -z "$(RUN_ID)" ]; then \
 		echo "RUN_ID is required. Usage: RUN_ID=<run_id> make <target>"; \
 		exit 2; \
 	fi
 
-ensure_dirs ensure-dirs:
+ensure_dirs:
 	@mkdir -p docs/reports docs/audit docs/audit_meta docs/packs docs/evidence docs/policy
 
-new_run new-run:
+new_run:
 	@python3 -c 'import uuid; print(str(uuid.uuid4()))'
 
-check_audit check-audit:
+check_audit:
 	@curl -fsS --max-time 1 $(AUDIT_URL)/status >/dev/null 2>&1 || ( \
 		echo "Audit service not reachable on $(AUDIT_URL)"; \
 		echo "Start it with: make audit_bg"; \
@@ -132,7 +134,7 @@ promote: require_run check_audit
 	cd python && . .venv/bin/activate && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.promote
 
-report_template report-template: require_run ensure_dirs
+report_template: require_run ensure_dirs
 	@echo "run_id=$(RUN_ID)" > docs/reports/$(RUN_ID).md
 	@echo "bundle_sha256=" >> docs/reports/$(RUN_ID).md
 	@echo "policy_version=" >> docs/reports/$(RUN_ID).md
@@ -141,7 +143,7 @@ report_template report-template: require_run ensure_dirs
 	@echo "" >> docs/reports/$(RUN_ID).md
 	@echo "saved docs/reports/$(RUN_ID).md"
 
-report_init report-init: require_run ensure_dirs
+report_init: require_run ensure_dirs
 	cd python && . .venv/bin/activate && \
 	python -m aigov_py.report_init $(RUN_ID)
 
@@ -149,26 +151,26 @@ bundle: require_run ensure_dirs
 	cd python && . .venv/bin/activate && \
 	python -m aigov_py.export_bundle $(RUN_ID)
 
-report_fill report-fill: require_run ensure_dirs
+report_fill: require_run ensure_dirs
 	cd python && . .venv/bin/activate && \
 	python -m aigov_py.report_fill $(RUN_ID)
 
-verify_cli verify-cli: require_run
+verify_cli: require_run
 	cd python && . .venv/bin/activate && \
 	python -m aigov_py.verify $(RUN_ID)
 
-evidence_pack evidence-pack: require_run ensure_dirs
+evidence_pack: require_run ensure_dirs
 	cd python && . .venv/bin/activate && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.evidence_pack
 
-emit_event emit-event: require_run check_audit
+emit_event: require_run check_audit
 	@if [ -z "$(EVENT_TYPE)" ]; then \
 		echo "EVENT_TYPE is required. Example:"; \
 		echo "  make emit_event RUN_ID=<id> EVENT_TYPE=demo PAYLOAD='\{\"hello\":\"world\"\}'"; \
 		exit 2; \
 	fi
 	cd python && . .venv/bin/activate && \
-	RUN_ID=$(RUN_ID) python -m aigov_py.emit_event $(EVENT_TYPE) --system "aigov_make" --payload "$(PAYLOAD)"
+	RUN_ID=$(RUN_ID) python -m aigov_py.emit_event $(EVENT_TYPE) --system "aigov_make" --payload '$(PAYLOAD)'
 
 flow: require_run
 	$(MAKE) approve RUN_ID=$(RUN_ID)
@@ -180,7 +182,7 @@ flow: require_run
 	$(MAKE) verify_cli RUN_ID=$(RUN_ID)
 	$(MAKE) evidence_pack RUN_ID=$(RUN_ID)
 
-flow_full flow-full: require_run
+flow_full: require_run
 	@echo "Running full AIGov flow for RUN_ID=$(RUN_ID)"
 	$(MAKE) approve RUN_ID=$(RUN_ID)
 	$(MAKE) evaluate RUN_ID=$(RUN_ID) AIGOV_EVAL_VALUE=$${AIGOV_EVAL_VALUE:-1.0}
@@ -192,6 +194,9 @@ flow_full flow-full: require_run
 	$(MAKE) verify_cli RUN_ID=$(RUN_ID)
 	$(MAKE) evidence_pack RUN_ID=$(RUN_ID)
 	@echo "AIGov flow complete for RUN_ID=$(RUN_ID)"
+
+pr_prepare:
+	@bash scripts/aigov_pr_prepare.sh
 
 gate:
 	@rg -n "^(<<<<<<<|=======|>>>>>>>)" -S . || true
