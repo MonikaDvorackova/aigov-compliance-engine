@@ -185,7 +185,9 @@ jobs:
 
             cd python
             . .venv/bin/activate
-            python -m aigov_py.ci_fallback "${RUN_ID}"
+
+            python aigov_py/ci_fallback.py "${RUN_ID}"
+
             cd ..
 
             make verify_cli RUN_ID="${RUN_ID}"
