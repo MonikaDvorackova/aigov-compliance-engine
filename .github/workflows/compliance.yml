@@ -220,7 +220,7 @@ jobs:
             python aigov_py/ci_fallback.py "${RUN_ID}"
             cd "${GITHUB_WORKSPACE}"
 
-            make verify_cli RUN_ID="${RUN_ID}"
+            make report_prepare RUN_ID="${RUN_ID}"
             make evidence_pack RUN_ID="${RUN_ID}"
 
             cp "docs/reports/${RUN_ID}.md" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
@@ -253,6 +253,7 @@ jobs:
     name: upload_evidence_packs
     runs-on: ubuntu-latest
     needs: [evidence_pack]
+    if: ${{ needs.evidence_pack.result == 'success' }}
     steps:
       - name: Prepare download dir
         run: |
