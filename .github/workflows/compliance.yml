@@ -7,27 +7,28 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: compliance-${{ github.ref }}
+  group: compliance_${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  reports-present:
-    name: reports-present
+  reports_present:
+    name: reports_present
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Ensure reports dir exists
         run: |
           set -euo pipefail
           mkdir -p docs/reports
-          ls -la docs/reports
+          ls -la docs/reports | head -n 50
 
-  report-gate:
-    name: report-gate
+  report_gate:
+    name: report_gate
     runs-on: ubuntu-latest
-    needs: [reports-present]
+    needs: [reports_present]
     env:
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -40,20 +41,25 @@ jobs:
         run: |
           set -euo pipefail
 
-          NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/*.md' || true)"
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            exit 0
+          fi
+
+          NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
 
           if [ -z "${NEW_REPORTS}" ]; then
-            echo "Audit report required: add at least one docs/reports/<RUN_ID>.md"
+            echo "Audit report required in docs/reports"
+            git diff --name-status "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true
             exit 1
           fi
 
-          echo "New reports:"
-          echo "${NEW_REPORTS}"
+          echo "New reports detected"
+          printf '%s\n' "${NEW_REPORTS}"
 
-  report-content:
-    name: report-content
+  report_content:
+    name: report_content
     runs-on: ubuntu-latest
-    needs: [report-gate]
+    needs: [report_gate]
     env:
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -62,26 +68,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Enforce append-only reports
+      - name: Validate reports are additive only
         run: |
           set -euo pipefail
 
-          MOD="$(git diff --name-only --diff-filter=MR "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/*.md' || true)"
-          DEL="$(git diff --name-only --diff-filter=D "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/*.md' || true)"
+          NEW="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+          MOD="$(git diff --name-only --diff-filter=MR "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+          DEL="$(git diff --name-only --diff-filter=D "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
 
-          if [ -n "${MOD}" ] || [ -n "${DEL}" ]; then
-            echo "Reports must be append-only"
-            echo "Modified:"
-            echo "${MOD}"
-            echo "Deleted:"
-            echo "${DEL}"
-            exit 1
-          fi
+          [ -n "${NEW}" ] || (echo "No new report" && exit 1)
+          [ -z "${MOD}" ] || (echo "Modifying reports is forbidden" && exit 1)
+          [ -z "${DEL}" ] || (echo "Deleting reports is forbidden" && exit 1)
 
-          echo "Report immutability OK"
+          echo "Report changes valid"
 
-  make-verify:
-    name: make-verify
+  make_verify:
+    name: make_verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -101,50 +103,102 @@ jobs:
           pip install -U pip
           pip install -e .
 
+      - name: Add venv to PATH
+        run: |
+          set -euo pipefail
+          echo "$GITHUB_WORKSPACE/python/.venv/bin" >> "$GITHUB_PATH"
+
       - name: Gate
         run: |
           set -euo pipefail
           make gate
 
-  evidence-pack:
-    name: evidence-pack
+  evidence_pack:
+    name: evidence_pack
     runs-on: ubuntu-latest
-    needs: [report-content]
+    needs: [report_content]
     env:
+      AUDIT_URL: http://127.0.0.1:8088
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      LC_ALL: C
+      LANG: C
+      TZ: UTC
+      PYTHONHASHSEED: "0"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Validate evidence packs exist
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install python package
+        working-directory: python
         run: |
           set -euo pipefail
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install -U pip
+          pip install -e .
 
-          NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/*.md' || true)"
+      - name: Add venv to PATH
+        run: |
+          set -euo pipefail
+          echo "$GITHUB_WORKSPACE/python/.venv/bin" >> "$GITHUB_PATH"
 
-          for r in ${NEW_REPORTS}; do
-            RUN_ID="$(basename "${r}" .md)"
-            ZIP="docs/packs/${RUN_ID}.zip"
-
-            if [ ! -f "${ZIP}" ]; then
-              echo "Missing evidence pack for ${RUN_ID}"
-              echo "Expected ${ZIP}"
-              exit 1
+      - name: Start audit service
+        run: |
+          set -euo pipefail
+          nohup bash -lc 'cd rust && cargo run' > .aigov_ci_audit.log 2>&1 &
+          for i in {1..30}; do
+            if curl -fsS "${AUDIT_URL}/status" >/dev/null; then
+              echo "Audit service is up"
+              exit 0
             fi
+            sleep 0.5
           done
+          echo "Audit service failed to start"
+          tail -n 200 .aigov_ci_audit.log
+          exit 1
 
-          echo "Evidence packs present"
+      - name: Verify report and build evidence pack
+        run: |
+          set -euo pipefail
+          mkdir -p .aigov_ci_artifacts
 
-  upload-evidence-packs:
-    name: upload-evidence-packs
-    runs-on: ubuntu-latest
-    needs: [evidence-pack]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/upload-artifact@v4
+          NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+
+          if [ -z "${NEW_REPORTS}" ]; then
+            echo "No new reports found for evidence pack build"
+            exit 1
+          fi
+
+          while IFS= read -r report; do
+            [ -n "${report}" ] || continue
+            RUN_ID="$(basename "${report}" .md)"
+            echo "RUN_ID=${RUN_ID}"
+
+            make verify_cli RUN_ID="${RUN_ID}"
+            make evidence_pack RUN_ID="${RUN_ID}"
+
+            cp "docs/reports/${RUN_ID}.md" ".aigov_ci_artifacts/"
+            cp "docs/packs/${RUN_ID}.zip" ".aigov_ci_artifacts/"
+          done <<< "${NEW_REPORTS}"
+
+      - name: Upload evidence artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: evidence-packs
-          path: docs/packs/*.zip
-          if-no-files-found: ignore
+          name: evidence_packs
+          path: .aigov_ci_artifacts
+          if-no-files-found: error
+
+      - name: Dump audit log on failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          echo "Last 300 lines of audit log"
+          tail -n 300 .aigov_ci_audit.log || true
