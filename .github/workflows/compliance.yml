@@ -132,7 +132,8 @@ jobs:
   make_verify:
     name: make_verify
     runs-on: ubuntu-latest
-    needs: [report_content]
+    needs: [changes, report_content]
+    if: ${{ needs.changes.outputs.needs_report == 'true' || needs.changes.outputs.reports_changed == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -160,11 +161,11 @@ jobs:
     name: evidence_pack
     runs-on: ubuntu-latest
     needs: [changes, make_verify]
+    if: ${{ needs.changes.outputs.reports_changed == 'true' }}
     env:
       AUDIT_URL: http://127.0.0.1:8088
       BASE_SHA: ${{ needs.changes.outputs.base_sha }}
       HEAD_SHA: ${{ needs.changes.outputs.head_sha }}
-      REPORTS_CHANGED_FLAG: ${{ needs.changes.outputs.reports_changed }}
       TZ: UTC
       LC_ALL: C
       LANG: C
@@ -190,7 +191,6 @@ jobs:
           pip install -e .
 
       - name: Start audit service
-        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
         run: |
           set -euo pipefail
           nohup bash -lc 'cd rust && cargo run --locked' > "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" 2>&1 &
@@ -204,7 +204,6 @@ jobs:
           exit 1
 
       - name: Build evidence packs
-        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
         run: |
           set -euo pipefail
           mkdir -p docs/audit docs/evidence docs/packs
@@ -253,6 +252,7 @@ jobs:
     name: upload_evidence_packs
     runs-on: ubuntu-latest
     needs: [evidence_pack]
+    if: always()
     steps:
       - name: Prepare download dir
         run: |
