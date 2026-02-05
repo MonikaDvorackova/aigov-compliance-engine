@@ -36,21 +36,12 @@ jobs:
       - name: Require report change in PR
         run: |
           set -euo pipefail
-
-          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
-            exit 0
-          fi
-
           REPORTS_CHANGED="$(git diff --name-only --diff-filter=AM "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
-
           if [ -z "${REPORTS_CHANGED}" ]; then
             echo "Audit report required (docs/reports/*.md)"
             git diff --name-status "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true
             exit 1
           fi
-
-          echo "Reports changed:"
-          printf '%s\n' "${REPORTS_CHANGED}"
 
   report-content:
     name: report-content
@@ -67,29 +58,22 @@ jobs:
       - name: Validate reports are not deleted or renamed
         run: |
           set -euo pipefail
-
           CHANGED="$(git diff --name-only --diff-filter=AM "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           DEL="$(git diff --name-only --diff-filter=D "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           REN="$(git diff --name-only --diff-filter=R "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
-
           test -n "${CHANGED}" || (echo "No report changes found" && exit 1)
           test -z "${DEL}" || (echo "Deleting reports forbidden" && exit 1)
           test -z "${REN}" || (echo "Renaming reports forbidden" && exit 1)
-
-          echo "Report changes valid"
 
   make-verify:
     name: make-verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-
       - name: Install python package
         working-directory: python
         run: |
@@ -98,7 +82,6 @@ jobs:
           . .venv/bin/activate
           pip install -U pip
           pip install -e .
-
       - name: Gate
         run: |
           set -euo pipefail
@@ -112,10 +95,7 @@ jobs:
       AUDIT_URL: http://127.0.0.1:8088
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      LC_ALL: C
-      LANG: C
       TZ: UTC
-      PYTHONHASHSEED: "0"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -139,14 +119,15 @@ jobs:
       - name: Prepare artifacts dir
         run: |
           set -euo pipefail
-          rm -rf .aigov_ci_artifacts
-          mkdir -p .aigov_ci_artifacts
-          printf "keep\n" > .aigov_ci_artifacts/.keep
+          rm -rf "${GITHUB_WORKSPACE}/.aigov_ci_artifacts"
+          mkdir -p "${GITHUB_WORKSPACE}/.aigov_ci_artifacts"
+          printf "keep\n" > "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/.keep"
+          ls -la "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" | head -n 50
 
       - name: Start audit service
         run: |
           set -euo pipefail
-          nohup bash -lc 'cd rust && cargo run --locked' > .aigov_ci_audit.log 2>&1 &
+          nohup bash -lc 'cd rust && cargo run --locked' > "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" 2>&1 &
           for i in {1..240}; do
             if curl -fsS "${AUDIT_URL}/status" >/dev/null; then
               exit 0
@@ -154,7 +135,7 @@ jobs:
             sleep 0.5
           done
           echo "Audit service failed to start"
-          tail -n 300 .aigov_ci_audit.log || true
+          tail -n 300 "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" || true
           exit 1
 
       - name: Verify report and build evidence packs
@@ -176,31 +157,38 @@ jobs:
             cd python
             . .venv/bin/activate
             python aigov_py/ci_fallback.py "${RUN_ID}"
-            cd ..
+            cd "${GITHUB_WORKSPACE}"
 
             make verify_cli RUN_ID="${RUN_ID}"
             make evidence_pack RUN_ID="${RUN_ID}"
 
-            cp "docs/reports/${RUN_ID}.md" ".aigov_ci_artifacts/" || true
-            cp "docs/audit/${RUN_ID}.json" ".aigov_ci_artifacts/" || true
-            cp "docs/evidence/${RUN_ID}.json" ".aigov_ci_artifacts/" || true
-            cp "docs/packs/${RUN_ID}.zip" ".aigov_ci_artifacts/" || true
+            cp "docs/reports/${RUN_ID}.md" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
+            cp "docs/audit/${RUN_ID}.json" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
+            cp "docs/evidence/${RUN_ID}.json" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
+            cp "docs/packs/${RUN_ID}.zip" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
           done <<< "${REPORTS_CHANGED}"
 
-          ls -la .aigov_ci_artifacts | head -n 200
+      - name: Debug artifacts dir
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "PWD=$(pwd)"
+          echo "Workspace=${GITHUB_WORKSPACE}"
+          ls -la "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" || true
+          find "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" -maxdepth 1 -type f -print || true
 
       - name: Upload evidence artifacts
         uses: actions/upload-artifact@v4
         with:
           name: evidence-packs
-          path: .aigov_ci_artifacts
+          path: ${{ github.workspace }}/.aigov_ci_artifacts
           if-no-files-found: error
 
       - name: Dump audit log on failure
         if: failure()
         run: |
           set -euo pipefail
-          tail -n 300 .aigov_ci_audit.log || true
+          tail -n 300 "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" || true
 
   upload-evidence-packs:
     name: upload-evidence-packs
@@ -211,17 +199,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: evidence-packs
-          path: .aigov_ci_artifacts
+          path: ${{ github.workspace }}/.aigov_ci_artifacts
 
       - name: Verify artifacts are present
         run: |
           set -euo pipefail
-          ls -la .aigov_ci_artifacts | head -n 200
-          test -f .aigov_ci_artifacts/.keep
+          ls -la "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" || true
+          test -f "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/.keep"
 
       - name: Upload evidence artifacts final
         uses: actions/upload-artifact@v4
         with:
           name: evidence-packs-final
-          path: .aigov_ci_artifacts
+          path: ${{ github.workspace }}/.aigov_ci_artifacts
           if-no-files-found: error
