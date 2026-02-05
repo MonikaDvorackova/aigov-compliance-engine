@@ -26,12 +26,6 @@ def utc_now() -> str:
 
 
 def parse_report_kv(report_path: str) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Extracts:
-      bundle_sha256=<hex>
-      policy_version=<string>
-    from the report markdown. Lines may contain extra whitespace.
-    """
     if not os.path.exists(report_path):
         return None, None
 
@@ -65,13 +59,8 @@ def ensure_docs(repo_root: str, run_id: str) -> None:
 
     ts = utc_now()
     report_sha = sha256_file(report_path)
-
     bundle_sha256, policy_version = parse_report_kv(report_path)
 
-    # Minimal audit schema required by verify:
-    # - bundle_sha256
-    # - policy_version
-    # plus whatever else your project already tolerates.
     if not os.path.exists(audit_path):
         with open(audit_path, "w", encoding="utf-8") as f:
             json.dump(
@@ -89,7 +78,6 @@ def ensure_docs(repo_root: str, run_id: str) -> None:
                 indent=2,
             )
     else:
-        # If it exists but misses required keys, patch it in place.
         with open(audit_path, "r", encoding="utf-8") as f:
             try:
                 data = json.load(f)
@@ -114,8 +102,11 @@ def ensure_docs(repo_root: str, run_id: str) -> None:
             with open(audit_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
-    # Minimal evidence schema required by verify:
+    # Evidence: required keys from verify:
     # - events: []
+    # - chain: { ... } (object)
+    minimal_chain = {"events": []}
+
     if not os.path.exists(evidence_path):
         with open(evidence_path, "w", encoding="utf-8") as f:
             json.dump(
@@ -124,6 +115,7 @@ def ensure_docs(repo_root: str, run_id: str) -> None:
                     "ts_utc": ts,
                     "source": "ci_fallback",
                     "events": [],
+                    "chain": minimal_chain,
                     "version": 1,
                 },
                 f,
@@ -141,6 +133,15 @@ def ensure_docs(repo_root: str, run_id: str) -> None:
         if "events" not in data:
             data["events"] = []
             changed = True
+        if "chain" not in data or not isinstance(data.get("chain"), dict):
+            data["chain"] = minimal_chain
+            changed = True
+        else:
+            # keep existing chain, but ensure it has events list at least
+            if "events" not in data["chain"]:
+                data["chain"]["events"] = []
+                changed = True
+
         if "run_id" not in data:
             data["run_id"] = run_id
             changed = True
