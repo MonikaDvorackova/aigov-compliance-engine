@@ -7,12 +7,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: compliance_${{ github.ref }}
+  group: compliance-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  reports_present:
-    name: reports_present
+  reports-present:
+    name: reports-present
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,10 +25,10 @@ jobs:
           mkdir -p docs/reports
           ls -la docs/reports | head -n 50
 
-  report_gate:
-    name: report_gate
+  report-gate:
+    name: report-gate
     runs-on: ubuntu-latest
-    needs: [reports_present]
+    needs: [reports-present]
     env:
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -48,18 +48,18 @@ jobs:
           NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
 
           if [ -z "${NEW_REPORTS}" ]; then
-            echo "Audit report required in docs/reports"
+            echo "Audit report required (docs/reports/*.md)"
             git diff --name-status "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true
             exit 1
           fi
 
-          echo "New reports detected"
+          echo "New reports:"
           printf '%s\n' "${NEW_REPORTS}"
 
-  report_content:
-    name: report_content
+  report-content:
+    name: report-content
     runs-on: ubuntu-latest
-    needs: [report_gate]
+    needs: [report-gate]
     env:
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -77,13 +77,13 @@ jobs:
           DEL="$(git diff --name-only --diff-filter=D "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
 
           [ -n "${NEW}" ] || (echo "No new report" && exit 1)
-          [ -z "${MOD}" ] || (echo "Modifying reports is forbidden" && exit 1)
-          [ -z "${DEL}" ] || (echo "Deleting reports is forbidden" && exit 1)
+          [ -z "${MOD}" ] || (echo "Modifying reports forbidden" && exit 1)
+          [ -z "${DEL}" ] || (echo "Deleting reports forbidden" && exit 1)
 
           echo "Report changes valid"
 
-  make_verify:
-    name: make_verify
+  make-verify:
+    name: make-verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -113,10 +113,10 @@ jobs:
           set -euo pipefail
           make gate
 
-  evidence_pack:
-    name: evidence_pack
+  evidence-pack:
+    name: evidence-pack
     runs-on: ubuntu-latest
-    needs: [report_content]
+    needs: [report-content]
     env:
       AUDIT_URL: http://127.0.0.1:8088
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -192,7 +192,7 @@ jobs:
       - name: Upload evidence artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: evidence_packs
+          name: evidence-packs
           path: .aigov_ci_artifacts
           if-no-files-found: error
 
