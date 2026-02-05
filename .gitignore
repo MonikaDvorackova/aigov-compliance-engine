@@ -1,39 +1,40 @@
-# Python
-docs/evidence/*.json
-!docs/evidence/demo_bundle.json
-python/.venv/
-python/__pycache__/
-python/**/*.pyc
-python/**/*.pyo
-python/**/*.pyd
-python/.pytest_cache/
-python/.mypy_cache/
-python/.ruff_cache/
-python/dist/
-python/build/
-python/*.egg-info/
-
-# Rust
-rust/target/
-
-# OS
+# macOS
 .DS_Store
 
-# Logs
-*.log
-*.jsonl
-
-# IDE
+# Editors
 .vscode/
 .idea/
 
-python/.venv/
-python/artifacts/
-rust/target/
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.env
 
-docs/evidence/*.json
-!docs/evidence/45cf8bfe-b32f-40b5-9b99-be6ff35f1a85.json
+# Rust
+target/
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+
+# Logs
+*.log
+
+# AIGOV generated artifacts, Variant A contract
 docs/audit/
 docs/evidence/
 docs/packs/
-
+.aigov_ci_artifacts/
+.aigov_ci_audit.log
