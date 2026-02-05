@@ -132,17 +132,6 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
@@ -161,19 +150,10 @@ jobs:
           set -euo pipefail
           echo "$GITHUB_WORKSPACE/python/.venv/bin" >> "$GITHUB_PATH"
 
-      - name: Build audit service
-        run: |
-          set -euo pipefail
-          cd rust
-          cargo build --locked
-
       - name: Start audit service
         run: |
           set -euo pipefail
-
-          echo "AUDIT_URL=${AUDIT_URL}"
           nohup bash -lc 'cd rust && cargo run --locked' > .aigov_ci_audit.log 2>&1 &
-
           for i in {1..600}; do
             if curl -fsS "${AUDIT_URL}/status" >/dev/null; then
               echo "Audit service is up"
@@ -181,7 +161,6 @@ jobs:
             fi
             sleep 0.5
           done
-
           echo "Audit service failed to start"
           tail -n 300 .aigov_ci_audit.log || true
           exit 1
@@ -193,7 +172,6 @@ jobs:
           mkdir -p .aigov_ci_artifacts
 
           NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
-
           if [ -z "${NEW_REPORTS}" ]; then
             echo "No new reports found for evidence pack build"
             exit 1
@@ -204,14 +182,25 @@ jobs:
             RUN_ID="$(basename "${report}" .md)"
             echo "RUN_ID=${RUN_ID}"
 
+            mkdir -p docs/audit docs/evidence docs/packs
+
+            cd python
+            . .venv/bin/activate
+
+            python -m aigov_py.report_init "${RUN_ID}"
+            python -m aigov_py.emit_evidence "${RUN_ID}"
+
+            cd ..
             make verify_cli RUN_ID="${RUN_ID}"
             make evidence_pack RUN_ID="${RUN_ID}"
 
             cp "docs/reports/${RUN_ID}.md" ".aigov_ci_artifacts/"
+            cp "docs/audit/${RUN_ID}.json" ".aigov_ci_artifacts/"
+            cp "docs/evidence/${RUN_ID}.json" ".aigov_ci_artifacts/"
             cp "docs/packs/${RUN_ID}.zip" ".aigov_ci_artifacts/"
           done <<< "${NEW_REPORTS}"
 
-      - name: Upload evidence artifacts (job local)
+      - name: Upload evidence artifacts
         uses: actions/upload-artifact@v4
         with:
           name: evidence-packs
@@ -240,6 +229,7 @@ jobs:
           set -euo pipefail
           ls -la .aigov_ci_artifacts | head -n 200
           test -n "$(ls -1 .aigov_ci_artifacts/*.md 2>/dev/null || true)" || (echo "Missing report artifact" && exit 1)
+          test -n "$(ls -1 .aigov_ci_artifacts/*.json 2>/dev/null || true)" || (echo "Missing json artifacts" && exit 1)
           test -n "$(ls -1 .aigov_ci_artifacts/*.zip 2>/dev/null || true)" || (echo "Missing pack artifact" && exit 1)
 
       - name: Upload evidence artifacts (final)
