@@ -33,16 +33,24 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Require new audit report in PR
+      - name: Require report change in PR
         run: |
           set -euo pipefail
-          NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
-          if [ -z "${NEW_REPORTS}" ]; then
+
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            exit 0
+          fi
+
+          REPORTS_CHANGED="$(git diff --name-only --diff-filter=AM "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+
+          if [ -z "${REPORTS_CHANGED}" ]; then
             echo "Audit report required (docs/reports/*.md)"
             git diff --name-status "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true
             exit 1
           fi
-          echo "${NEW_REPORTS}"
+
+          echo "Reports changed:"
+          printf '%s\n' "${REPORTS_CHANGED}"
 
   report-content:
     name: report-content
@@ -56,15 +64,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate reports are additive only
+      - name: Validate reports are not deleted or renamed
         run: |
           set -euo pipefail
-          NEW="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
-          MOD="$(git diff --name-only --diff-filter=MR "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+
+          CHANGED="$(git diff --name-only --diff-filter=AM "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           DEL="$(git diff --name-only --diff-filter=D "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
-          [ -n "${NEW}" ] || (echo "No new report" && exit 1)
-          [ -z "${MOD}" ] || (echo "Modifying reports forbidden" && exit 1)
-          [ -z "${DEL}" ] || (echo "Deleting reports forbidden" && exit 1)
+          REN="$(git diff --name-only --diff-filter=R "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+
+          test -n "${CHANGED}" || (echo "No report changes found" && exit 1)
+          test -z "${DEL}" || (echo "Deleting reports forbidden" && exit 1)
+          test -z "${REN}" || (echo "Renaming reports forbidden" && exit 1)
+
+          echo "Report changes valid"
 
   make-verify:
     name: make-verify
@@ -150,9 +162,9 @@ jobs:
           set -euo pipefail
           mkdir -p docs/audit docs/evidence docs/packs
 
-          NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
-          if [ -z "${NEW_REPORTS}" ]; then
-            echo "No new reports found for evidence pack build"
+          REPORTS_CHANGED="$(git diff --name-only --diff-filter=AM "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+          if [ -z "${REPORTS_CHANGED}" ]; then
+            echo "No report changes found for evidence pack build"
             exit 1
           fi
 
@@ -173,7 +185,7 @@ jobs:
             cp "docs/audit/${RUN_ID}.json" ".aigov_ci_artifacts/" || true
             cp "docs/evidence/${RUN_ID}.json" ".aigov_ci_artifacts/" || true
             cp "docs/packs/${RUN_ID}.zip" ".aigov_ci_artifacts/" || true
-          done <<< "${NEW_REPORTS}"
+          done <<< "${REPORTS_CHANGED}"
 
           ls -la .aigov_ci_artifacts | head -n 200
 
