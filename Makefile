@@ -4,7 +4,7 @@ SHELL := /bin/bash
 	audit audit_bg audit_stop audit_restart audit_logs \
 	status verify verify_log \
 	run \
-	require_run ensure_dirs ensure_reports_dir new_run report_new report_prepare report_prepare_new \
+	require_run ensure_dirs ensure_reports_dir new_run report_new report_prepare report_prepare_new ensure_evidence \
 	check_audit \
 	approve evaluate promote \
 	report_template report_init report_fill \
@@ -194,9 +194,23 @@ flow_full: require_run
 	$(MAKE) evidence_pack RUN_ID=$(RUN_ID)
 	@echo "AIGov flow complete for RUN_ID=$(RUN_ID)"
 
+ensure_evidence: require_run ensure_dirs
+	@set -euo pipefail; \
+	if [ -f "docs/evidence/$(RUN_ID).json" ]; then \
+		echo "evidence exists: docs/evidence/$(RUN_ID).json"; \
+		exit 0; \
+	fi; \
+	echo "missing evidence, generating fallback: docs/evidence/$(RUN_ID).json"; \
+	cd python && . .venv/bin/activate && \
+	python aigov_py/ci_fallback.py "$(RUN_ID)"
+
 report_prepare: require_run
 	@echo "Preparing Variant A report for RUN_ID=$(RUN_ID)"
+	$(MAKE) ensure_evidence RUN_ID=$(RUN_ID)
 	$(MAKE) report_init RUN_ID=$(RUN_ID)
+	$(MAKE) bundle RUN_ID=$(RUN_ID)
+	$(MAKE) report_fill RUN_ID=$(RUN_ID)
+	$(MAKE) bundle RUN_ID=$(RUN_ID)
 	$(MAKE) verify_cli RUN_ID=$(RUN_ID)
 
 report_prepare_new:
