@@ -165,9 +165,10 @@ jobs:
           tail -n 200 .aigov_ci_audit.log
           exit 1
 
-      - name: Verify report and build evidence pack
+      - name: Verify report and build evidence pack artifacts
         run: |
           set -euo pipefail
+          rm -rf .aigov_ci_artifacts
           mkdir -p .aigov_ci_artifacts
 
           NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
@@ -189,7 +190,7 @@ jobs:
             cp "docs/packs/${RUN_ID}.zip" ".aigov_ci_artifacts/"
           done <<< "${NEW_REPORTS}"
 
-      - name: Upload evidence artifacts
+      - name: Upload evidence artifacts (job local)
         uses: actions/upload-artifact@v4
         with:
           name: evidence-packs
@@ -200,5 +201,29 @@ jobs:
         if: failure()
         run: |
           set -euo pipefail
-          echo "Last 300 lines of audit log"
           tail -n 300 .aigov_ci_audit.log || true
+
+  upload-evidence-packs:
+    name: upload-evidence-packs
+    runs-on: ubuntu-latest
+    needs: [evidence-pack]
+    steps:
+      - name: Download evidence artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: evidence-packs
+          path: .aigov_ci_artifacts
+
+      - name: Verify artifacts are present
+        run: |
+          set -euo pipefail
+          ls -la .aigov_ci_artifacts | head -n 200
+          test -n "$(ls -1 .aigov_ci_artifacts/*.md 2>/dev/null || true)" || (echo "Missing report artifact" && exit 1)
+          test -n "$(ls -1 .aigov_ci_artifacts/*.zip 2>/dev/null || true)" || (echo "Missing pack artifact" && exit 1)
+
+      - name: Upload evidence artifacts (final)
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-packs-final
+          path: .aigov_ci_artifacts
+          if-no-files-found: error
