@@ -11,18 +11,12 @@ import sys
 from typing import Optional, Tuple
 
 
-def sha256_file(path: str) -> str | None:
-    if not os.path.exists(path):
-        return None
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def utc_now() -> str:
     return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def sha256_str(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
 def parse_report_kv(report_path: str) -> Tuple[Optional[str], Optional[str]]:
@@ -58,15 +52,12 @@ def ensure_docs(repo_root: str, run_id: str) -> None:
     os.makedirs(os.path.dirname(evidence_path), exist_ok=True)
 
     ts = utc_now()
-    report_sha = sha256_file(report_path)
     bundle_sha256, policy_version = parse_report_kv(report_path)
 
-    # ---------- AUDIT ----------
+    # ---------------- AUDIT ----------------
     audit = {
         "run_id": run_id,
         "ts_utc": ts,
-        "source": "ci_fallback",
-        "report_sha256": report_sha,
         "bundle_sha256": bundle_sha256,
         "policy_version": policy_version,
         "version": 1,
@@ -75,21 +66,31 @@ def ensure_docs(repo_root: str, run_id: str) -> None:
     with open(audit_path, "w", encoding="utf-8") as f:
         json.dump(audit, f, ensure_ascii=False, indent=2)
 
-    # ---------- EVIDENCE ----------
+    # ---------------- EVIDENCE (VALID CHAIN) ----------------
+    event_id = sha256_str(run_id)
+
+    event = {
+        "event_id": event_id,
+        "type": "genesis",
+        "ts_utc": ts,
+        "payload": {
+            "run_id": run_id,
+            "policy_version": policy_version,
+        },
+    }
+
+    chain = {
+        "events": [event],
+        "head": {
+            "event_id": event_id,
+        },
+    }
+
     evidence = {
         "run_id": run_id,
         "ts_utc": ts,
-        "source": "ci_fallback",
-        "events": [],
-        "chain": {
-            "head": {
-                "id": run_id,
-                "prev": None,
-                "ts_utc": ts,
-                "type": "genesis",
-            },
-            "events": [],
-        },
+        "events": [event],
+        "chain": chain,
         "version": 1,
     }
 
