@@ -202,12 +202,25 @@ jobs:
           ls -la "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" | head -n 200
           find "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" -maxdepth 1 -type f -print || true
 
+      - name: Ensure sentinel exists before upload
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "${GITHUB_WORKSPACE}/.aigov_ci_artifacts"
+          printf "keep\n" > "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/keep.txt"
+          ls -la "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" | head -n 200
+
       - name: Upload evidence artifacts
         uses: actions/upload-artifact@v4
         with:
           name: evidence_packs
-          path: ${{ github.workspace }}/.aigov_ci_artifacts
+          path: |
+            ${{ github.workspace }}/.aigov_ci_artifacts/keep.txt
+            ${{ github.workspace }}/.aigov_ci_artifacts/*.md
+            ${{ github.workspace }}/.aigov_ci_artifacts/*.json
+            ${{ github.workspace }}/.aigov_ci_artifacts/*.zip
           if-no-files-found: error
+          include-hidden-files: true
 
       - name: Dump audit log on failure
         if: failure()
@@ -244,3 +257,4 @@ jobs:
           name: evidence_packs_final
           path: ${{ github.workspace }}/.aigov_ci_artifacts
           if-no-files-found: error
+          include-hidden-files: true
