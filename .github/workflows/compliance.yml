@@ -7,14 +7,63 @@ on:
   workflow_dispatch:
 
 jobs:
-  reports_present:
-    name: reports_present
+  changes:
+    name: changes
     runs-on: ubuntu-latest
+    outputs:
+      reports_changed: ${{ steps.diff.outputs.reports_changed }}
+      needs_report: ${{ steps.diff.outputs.needs_report }}
+      base_sha: ${{ steps.diff.outputs.base_sha }}
+      head_sha: ${{ steps.diff.outputs.head_sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - id: diff
+        name: Compute change flags
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE_SHA="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+            HEAD_SHA="$(git rev-parse HEAD)"
+          fi
+
+          echo "base_sha=${BASE_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "head_sha=${HEAD_SHA}" >> "${GITHUB_OUTPUT}"
+
+          REPORTS_CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+
+          CORE_CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- \
+            'python/**' \
+            'rust/**' \
+            'Makefile' \
+            || true)"
+
+          if [ -n "${REPORTS_CHANGED}" ]; then
+            echo "reports_changed=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "reports_changed=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+          if [ -n "${CORE_CHANGED}" ]; then
+            echo "needs_report=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "needs_report=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+  reports_present:
+    name: reports_present
+    runs-on: ubuntu-latest
+    needs: [changes]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Ensure reports dir exists
         run: |
           set -euo pipefail
@@ -24,41 +73,40 @@ jobs:
   report_gate:
     name: report_gate
     runs-on: ubuntu-latest
-    needs: [reports_present]
+    needs: [changes, reports_present]
     env:
-      BASE_SHA: ${{ github.event.pull_request.base.sha }}
-      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      BASE_SHA: ${{ needs.changes.outputs.base_sha }}
+      HEAD_SHA: ${{ needs.changes.outputs.head_sha }}
+      NEEDS_REPORT: ${{ needs.changes.outputs.needs_report }}
+      REPORTS_CHANGED_FLAG: ${{ needs.changes.outputs.reports_changed }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Require report change in PR
+      - name: Require audit report only for core changes
         run: |
           set -euo pipefail
 
-          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+          if [ "${NEEDS_REPORT}" != "true" ]; then
             exit 0
           fi
 
-          REPORTS_CHANGED="$(git diff --name-only --diff-filter=AM "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
-
-          if [ -z "${REPORTS_CHANGED}" ]; then
-            echo "Audit report required (docs/reports/*.md)"
-            git diff --name-status "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true
-            exit 1
+          if [ "${REPORTS_CHANGED_FLAG}" = "true" ]; then
+            exit 0
           fi
 
-          echo "Reports changed:"
-          printf '%s\n' "${REPORTS_CHANGED}"
+          echo "Audit report required (docs/reports/*.md)"
+          git diff --name-status "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true
+          exit 1
 
   report_content:
     name: report_content
     runs-on: ubuntu-latest
-    needs: [report_gate]
+    needs: [changes, report_gate]
     env:
-      BASE_SHA: ${{ github.event.pull_request.base.sha }}
-      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      BASE_SHA: ${{ needs.changes.outputs.base_sha }}
+      HEAD_SHA: ${{ needs.changes.outputs.head_sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -68,19 +116,23 @@ jobs:
         run: |
           set -euo pipefail
 
-          CHANGED="$(git diff --name-only --diff-filter=AM "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           DEL="$(git diff --name-only --diff-filter=D "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           REN="$(git diff --name-only --diff-filter=R "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
 
-          test -n "${CHANGED}" || (echo "No report changes found" && exit 1)
-          test -z "${DEL}" || (echo "Deleting reports forbidden" && exit 1)
-          test -z "${REN}" || (echo "Renaming reports forbidden" && exit 1)
+          if [ -n "${DEL}" ]; then
+            exit 1
+          fi
 
-          echo "Report changes valid"
+          if [ -n "${REN}" ]; then
+            exit 1
+          fi
+
+          exit 0
 
   make_verify:
     name: make_verify
     runs-on: ubuntu-latest
+    needs: [report_content]
     steps:
       - uses: actions/checkout@v4
 
@@ -107,14 +159,15 @@ jobs:
   evidence_pack:
     name: evidence_pack
     runs-on: ubuntu-latest
-    needs: [report_content, make_verify]
+    needs: [changes, make_verify]
     env:
       AUDIT_URL: http://127.0.0.1:8088
-      BASE_SHA: ${{ github.event.pull_request.base.sha }}
-      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      BASE_SHA: ${{ needs.changes.outputs.base_sha }}
+      HEAD_SHA: ${{ needs.changes.outputs.head_sha }}
+      REPORTS_CHANGED_FLAG: ${{ needs.changes.outputs.reports_changed }}
+      TZ: UTC
       LC_ALL: C
       LANG: C
-      TZ: UTC
       PYTHONHASHSEED: "0"
     steps:
       - uses: actions/checkout@v4
@@ -136,15 +189,8 @@ jobs:
           pip install -U pip
           pip install -e .
 
-      - name: Prepare artifacts dir
-        run: |
-          set -euo pipefail
-          rm -rf "${GITHUB_WORKSPACE}/.aigov_ci_artifacts"
-          mkdir -p "${GITHUB_WORKSPACE}/.aigov_ci_artifacts"
-          printf "keep\n" > "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/keep.txt"
-          ls -la "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" | head -n 50
-
       - name: Start audit service
+        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
         run: |
           set -euo pipefail
           nohup bash -lc 'cd rust && cargo run --locked' > "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" 2>&1 &
@@ -154,25 +200,20 @@ jobs:
             fi
             sleep 0.5
           done
-          echo "Audit service failed to start"
           tail -n 300 "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" || true
           exit 1
 
-      - name: Verify report and build evidence packs
+      - name: Build evidence packs
+        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
         run: |
           set -euo pipefail
           mkdir -p docs/audit docs/evidence docs/packs
+          mkdir -p "${GITHUB_WORKSPACE}/.aigov_ci_artifacts"
 
-          REPORTS_CHANGED="$(git diff --name-only --diff-filter=AM "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
-          if [ -z "${REPORTS_CHANGED}" ]; then
-            echo "No report changes found for evidence pack build"
-            exit 1
-          fi
-
+          REPORTS_CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           printf '%s\n' "${REPORTS_CHANGED}" | while IFS= read -r report; do
             [ -n "${report}" ] || continue
             RUN_ID="$(basename "${report}" .md)"
-            echo "RUN_ID=${RUN_ID}"
 
             cd python
             . .venv/bin/activate
@@ -182,27 +223,13 @@ jobs:
             make verify_cli RUN_ID="${RUN_ID}"
             make evidence_pack RUN_ID="${RUN_ID}"
 
-            test -f "docs/reports/${RUN_ID}.md"
-            test -f "docs/audit/${RUN_ID}.json"
-            test -f "docs/evidence/${RUN_ID}.json"
-            test -f "docs/packs/${RUN_ID}.zip"
-
-            cp "docs/reports/${RUN_ID}.md" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/"
-            cp "docs/audit/${RUN_ID}.json" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/"
-            cp "docs/evidence/${RUN_ID}.json" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/"
-            cp "docs/packs/${RUN_ID}.zip" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/"
+            cp "docs/reports/${RUN_ID}.md" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
+            cp "docs/audit/${RUN_ID}.json" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
+            cp "docs/evidence/${RUN_ID}.json" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
+            cp "docs/packs/${RUN_ID}.zip" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
           done
 
-      - name: Debug artifacts dir
-        if: always()
-        run: |
-          set -euo pipefail
-          echo "PWD=$(pwd)"
-          echo "Workspace=${GITHUB_WORKSPACE}"
-          ls -la "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" | head -n 200
-          find "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" -maxdepth 1 -type f -print || true
-
-      - name: Ensure sentinel exists before upload
+      - name: Ensure artifacts exist
         if: always()
         run: |
           set -euo pipefail
@@ -221,12 +248,6 @@ jobs:
             ${{ github.workspace }}/.aigov_ci_artifacts/*.zip
           if-no-files-found: error
           include-hidden-files: true
-
-      - name: Dump audit log on failure
-        if: failure()
-        run: |
-          set -euo pipefail
-          tail -n 300 "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" || true
 
   upload_evidence_packs:
     name: upload_evidence_packs
