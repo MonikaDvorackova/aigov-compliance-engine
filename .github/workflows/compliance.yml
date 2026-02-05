@@ -54,7 +54,7 @@ jobs:
           fi
 
           echo "New reports:"
-          echo "${NEW_REPORTS}"
+          printf '%s\n' "${NEW_REPORTS}"
 
   report-content:
     name: report-content
@@ -154,16 +154,18 @@ jobs:
           tail -n 300 .aigov_ci_audit.log || true
           exit 1
 
-      - name: Verify report and build evidence pack artifacts
+      - name: Build evidence pack and stage artifacts
         run: |
           set -euo pipefail
+
           rm -rf .aigov_ci_artifacts
           mkdir -p .aigov_ci_artifacts
           mkdir -p docs/audit docs/evidence docs/packs
 
           NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           if [ -z "${NEW_REPORTS}" ]; then
-            echo "No new reports found for evidence pack build"
+            echo "No new reports found between ${BASE_SHA} and ${HEAD_SHA}"
+            git diff --name-status "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true
             exit 1
           fi
 
@@ -180,11 +182,19 @@ jobs:
             make verify_cli RUN_ID="${RUN_ID}"
             make evidence_pack RUN_ID="${RUN_ID}"
 
+            test -f "docs/reports/${RUN_ID}.md" || (echo "Missing docs/reports/${RUN_ID}.md" && exit 1)
+            test -f "docs/audit/${RUN_ID}.json" || (echo "Missing docs/audit/${RUN_ID}.json" && exit 1)
+            test -f "docs/evidence/${RUN_ID}.json" || (echo "Missing docs/evidence/${RUN_ID}.json" && exit 1)
+            test -f "docs/packs/${RUN_ID}.zip" || (echo "Missing docs/packs/${RUN_ID}.zip" && exit 1)
+
             cp "docs/reports/${RUN_ID}.md" ".aigov_ci_artifacts/"
             cp "docs/audit/${RUN_ID}.json" ".aigov_ci_artifacts/"
             cp "docs/evidence/${RUN_ID}.json" ".aigov_ci_artifacts/"
             cp "docs/packs/${RUN_ID}.zip" ".aigov_ci_artifacts/"
           done <<< "${NEW_REPORTS}"
+
+          echo "Staged artifacts:"
+          ls -la .aigov_ci_artifacts | head -n 200
 
       - name: Upload evidence artifacts
         uses: actions/upload-artifact@v4
