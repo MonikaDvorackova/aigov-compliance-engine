@@ -187,8 +187,8 @@ jobs:
             cd python
             . .venv/bin/activate
 
-            python -m aigov_py.report_init "${RUN_ID}"
             python -m aigov_py.emit_evidence "${RUN_ID}"
+            python -m aigov_py.report_init "${RUN_ID}"
 
             cd ..
             make verify_cli RUN_ID="${RUN_ID}"
