@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import json
 import os
 import re
@@ -13,10 +12,6 @@ from typing import Optional, Tuple
 
 def utc_now() -> str:
     return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-
-
-def sha256_str(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
 def parse_report_kv(report_path: str) -> Tuple[Optional[str], Optional[str]]:
@@ -66,31 +61,25 @@ def ensure_docs(repo_root: str, run_id: str) -> None:
     with open(audit_path, "w", encoding="utf-8") as f:
         json.dump(audit, f, ensure_ascii=False, indent=2)
 
-    # ---------------- EVIDENCE (VALID CHAIN) ----------------
-    event_id = sha256_str(run_id)
+    # ---------------- EVIDENCE ----------------
+    # IMPORTANT:
+    # verify expects chain.head to be a FULL NODE, not a reference
 
-    event = {
-        "event_id": event_id,
-        "type": "genesis",
+    head_node = {
+        "id": run_id,
+        "prev": None,
         "ts_utc": ts,
-        "payload": {
-            "run_id": run_id,
-            "policy_version": policy_version,
-        },
-    }
-
-    chain = {
-        "events": [event],
-        "head": {
-            "event_id": event_id,
-        },
+        "type": "genesis",
     }
 
     evidence = {
         "run_id": run_id,
         "ts_utc": ts,
-        "events": [event],
-        "chain": chain,
+        "events": [],
+        "chain": {
+            "head": head_node,
+            "events": [],
+        },
         "version": 1,
     }
 
