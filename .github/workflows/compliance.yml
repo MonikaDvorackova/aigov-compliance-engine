@@ -170,6 +170,7 @@ jobs:
           set -euo pipefail
           rm -rf .aigov_ci_artifacts
           mkdir -p .aigov_ci_artifacts
+          mkdir -p docs/audit docs/evidence docs/packs
 
           NEW_REPORTS="$(git diff --name-only --diff-filter=A "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           if [ -z "${NEW_REPORTS}" ]; then
@@ -182,15 +183,11 @@ jobs:
             RUN_ID="$(basename "${report}" .md)"
             echo "RUN_ID=${RUN_ID}"
 
-            mkdir -p docs/audit docs/evidence docs/packs
-
             cd python
             . .venv/bin/activate
-
-            python -m aigov_py.emit_evidence "${RUN_ID}"
-            python -m aigov_py.report_init "${RUN_ID}"
-
+            python -m aigov_py.ci_fallback "${RUN_ID}"
             cd ..
+
             make verify_cli RUN_ID="${RUN_ID}"
             make evidence_pack RUN_ID="${RUN_ID}"
 
