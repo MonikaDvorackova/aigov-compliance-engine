@@ -4,7 +4,7 @@ SHELL := /bin/bash
 	audit audit_bg audit_stop audit_restart audit_logs \
 	status verify verify_log \
 	run \
-	require_run ensure_dirs new_run \
+	require_run ensure_dirs ensure_reports_dir new_run report_new report_prepare report_prepare_new \
 	check_audit \
 	approve evaluate promote \
 	report_template report_init report_fill \
@@ -106,8 +106,14 @@ require_run:
 ensure_dirs:
 	@mkdir -p docs/reports docs/audit docs/audit_meta docs/packs docs/evidence docs/policy
 
+ensure_reports_dir:
+	@mkdir -p docs/reports
+
 new_run:
 	@python3 -c 'import uuid; print(str(uuid.uuid4()))'
+
+report_new:
+	@$(MAKE) new_run
 
 check_audit:
 	@curl -fsS --max-time 1 $(AUDIT_URL)/status >/dev/null 2>&1 || ( \
@@ -135,7 +141,7 @@ promote: require_run check_audit
 	cd python && . .venv/bin/activate && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.promote
 
-report_template: require_run ensure_dirs
+report_template: require_run ensure_reports_dir
 	@echo "run_id=$(RUN_ID)" > docs/reports/$(RUN_ID).md
 	@echo "bundle_sha256=" >> docs/reports/$(RUN_ID).md
 	@echo "policy_version=" >> docs/reports/$(RUN_ID).md
@@ -144,17 +150,17 @@ report_template: require_run ensure_dirs
 	@echo "" >> docs/reports/$(RUN_ID).md
 	@echo "saved docs/reports/$(RUN_ID).md"
 
-report_init: require_run ensure_dirs
+report_init: require_run ensure_reports_dir
 	cd python && . .venv/bin/activate && \
 	python -m aigov_py.report_init $(RUN_ID)
+
+report_fill: require_run ensure_reports_dir
+	cd python && . .venv/bin/activate && \
+	python -m aigov_py.report_fill $(RUN_ID)
 
 bundle: require_run ensure_dirs
 	cd python && . .venv/bin/activate && \
 	python -m aigov_py.export_bundle $(RUN_ID)
-
-report_fill: require_run ensure_dirs
-	cd python && . .venv/bin/activate && \
-	python -m aigov_py.report_fill $(RUN_ID)
 
 verify_cli: require_run
 	cd python && . .venv/bin/activate && \
@@ -187,6 +193,17 @@ flow_full: require_run
 	$(MAKE) verify_cli RUN_ID=$(RUN_ID)
 	$(MAKE) evidence_pack RUN_ID=$(RUN_ID)
 	@echo "AIGov flow complete for RUN_ID=$(RUN_ID)"
+
+report_prepare: require_run
+	@echo "Preparing Variant A report for RUN_ID=$(RUN_ID)"
+	$(MAKE) report_init RUN_ID=$(RUN_ID)
+	$(MAKE) verify_cli RUN_ID=$(RUN_ID)
+
+report_prepare_new:
+	@set -euo pipefail; \
+	RUN_ID="$$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"; \
+	echo "$$RUN_ID"; \
+	$(MAKE) report_prepare RUN_ID="$$RUN_ID"
 
 pr_prepare:
 	@bash scripts/aigov_pr_prepare.sh
