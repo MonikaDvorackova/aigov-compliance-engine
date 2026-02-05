@@ -61,94 +61,40 @@ def ensure_docs(repo_root: str, run_id: str) -> None:
     report_sha = sha256_file(report_path)
     bundle_sha256, policy_version = parse_report_kv(report_path)
 
-    if not os.path.exists(audit_path):
-        with open(audit_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "run_id": run_id,
-                    "ts_utc": ts,
-                    "source": "ci_fallback",
-                    "report_sha256": report_sha,
-                    "bundle_sha256": bundle_sha256,
-                    "policy_version": policy_version,
-                    "version": 1,
-                },
-                f,
-                ensure_ascii=False,
-                indent=2,
-            )
-    else:
-        with open(audit_path, "r", encoding="utf-8") as f:
-            try:
-                data = json.load(f)
-            except Exception:
-                data = {}
+    # ---------- AUDIT ----------
+    audit = {
+        "run_id": run_id,
+        "ts_utc": ts,
+        "source": "ci_fallback",
+        "report_sha256": report_sha,
+        "bundle_sha256": bundle_sha256,
+        "policy_version": policy_version,
+        "version": 1,
+    }
 
-        changed = False
-        if "bundle_sha256" not in data:
-            data["bundle_sha256"] = bundle_sha256
-            changed = True
-        if "policy_version" not in data:
-            data["policy_version"] = policy_version
-            changed = True
-        if "report_sha256" not in data:
-            data["report_sha256"] = report_sha
-            changed = True
-        if "run_id" not in data:
-            data["run_id"] = run_id
-            changed = True
+    with open(audit_path, "w", encoding="utf-8") as f:
+        json.dump(audit, f, ensure_ascii=False, indent=2)
 
-        if changed:
-            with open(audit_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+    # ---------- EVIDENCE ----------
+    evidence = {
+        "run_id": run_id,
+        "ts_utc": ts,
+        "source": "ci_fallback",
+        "events": [],
+        "chain": {
+            "head": {
+                "id": run_id,
+                "prev": None,
+                "ts_utc": ts,
+                "type": "genesis",
+            },
+            "events": [],
+        },
+        "version": 1,
+    }
 
-    # Evidence: required keys from verify:
-    # - events: []
-    # - chain: { ... } (object)
-    minimal_chain = {"events": []}
-
-    if not os.path.exists(evidence_path):
-        with open(evidence_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "run_id": run_id,
-                    "ts_utc": ts,
-                    "source": "ci_fallback",
-                    "events": [],
-                    "chain": minimal_chain,
-                    "version": 1,
-                },
-                f,
-                ensure_ascii=False,
-                indent=2,
-            )
-    else:
-        with open(evidence_path, "r", encoding="utf-8") as f:
-            try:
-                data = json.load(f)
-            except Exception:
-                data = {}
-
-        changed = False
-        if "events" not in data:
-            data["events"] = []
-            changed = True
-        if "chain" not in data or not isinstance(data.get("chain"), dict):
-            data["chain"] = minimal_chain
-            changed = True
-        else:
-            # keep existing chain, but ensure it has events list at least
-            if "events" not in data["chain"]:
-                data["chain"]["events"] = []
-                changed = True
-
-        if "run_id" not in data:
-            data["run_id"] = run_id
-            changed = True
-
-        if changed:
-            with open(evidence_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+    with open(evidence_path, "w", encoding="utf-8") as f:
+        json.dump(evidence, f, ensure_ascii=False, indent=2)
 
 
 def main(argv: list[str]) -> int:
