@@ -8,6 +8,18 @@ import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 
+def _repo_root() -> str:
+    # python/aigov_py/verify.py -> repo root is two levels up from python/
+    here = os.path.abspath(os.path.dirname(__file__))              # .../python/aigov_py
+    python_dir = os.path.abspath(os.path.join(here, ".."))         # .../python
+    root = os.path.abspath(os.path.join(python_dir, ".."))         # repo root
+    return root
+
+
+def _p(*parts: str) -> str:
+    return os.path.join(_repo_root(), *parts)
+
+
 def _load_json(path: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     if not os.path.exists(path):
         return None, f"missing file: {path}"
@@ -63,52 +75,34 @@ def _has_events(evidence: Dict[str, Any]) -> bool:
 
 
 def _head_present_even_if_empty(chain: Dict[str, Any]) -> bool:
-    # Some generators may set head to {}, "", 0, or None but still intend it as present.
-    # Treat the presence of the key as "present".
-    if "head" in chain:
-        return True
-    if "head_node" in chain:
-        return True
-    if "head_id" in chain:
-        return True
-    if "headId" in chain:
-        return True
+    # Treat presence of head key as present even if its value is empty.
+    for k in ("head", "head_node", "head_id", "headId", "tip", "root", "head_hash", "head_sha256", "headHash"):
+        if k in chain:
+            return True
     return False
 
 
 def _find_chain_head_any(evidence: Dict[str, Any]) -> Optional[Any]:
-    """
-    Try to find any plausible "head" representation.
-    Returns a non-None value if found.
-    """
     chain = _as_dict(evidence.get("chain"))
     if chain is not None:
-        # Accept explicit head or head-like keys even if value is empty.
         if _head_present_even_if_empty(chain):
-            return chain.get("head") or chain.get("head_node") or chain.get("head_id") or chain.get("headId") or True
+            return True
 
-        # Alternative common keys
-        for k in ("tip", "root", "head_hash", "head_sha256", "headHash"):
-            if k in chain:
-                return chain.get(k) or True
-
-        # Nodes map present means we can infer a head
         nodes = _as_dict(chain.get("nodes"))
         if nodes and len(nodes) > 0:
             return True
 
-    # Top level alternates
     for k in ("chain_head", "chainHead", "chain_head_node", "chainHeadNode"):
         if k in evidence:
-            return evidence.get(k) or True
+            return True
 
     return None
 
 
 def verify(run_id: str) -> int:
-    audit_path = os.path.join("docs", "audit", f"{run_id}.json")
-    evidence_path = os.path.join("docs", "evidence", f"{run_id}.json")
-    report_path = os.path.join("docs", "reports", f"{run_id}.md")
+    audit_path = _p("docs", "audit", f"{run_id}.json")
+    evidence_path = _p("docs", "evidence", f"{run_id}.json")
+    report_path = _p("docs", "reports", f"{run_id}.md")
 
     print("AIGOV VERIFICATION REPORT")
     print(f"Audit ID: {run_id}")
@@ -162,17 +156,14 @@ def verify(run_id: str) -> int:
         print(f"FAIL missing audit/{run_id}.json")
         ok = False
 
-    # Evidence must at least have events list (top level or chain)
     if not _has_events(evidence):
         print("FAIL evidence missing events list")
         ok = False
 
-    # Head rule: prefer explicit head, but allow inferred head if chain exists and events exist.
     head = _find_chain_head_any(evidence)
     if not head:
         chain = _as_dict(evidence.get("chain"))
         if chain is not None and _has_events(evidence):
-            # Infer head from presence of chain + events. This avoids blocking PR on a single schema variant.
             head = True
 
     if not head:
