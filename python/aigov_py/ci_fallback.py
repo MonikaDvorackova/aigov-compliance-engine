@@ -1,5 +1,3 @@
-# python/aigov_py/ci_fallback.py
-
 from __future__ import annotations
 
 import datetime as dt
@@ -18,6 +16,13 @@ def now_utc_iso() -> str:
     )
 
 
+def repo_root_from_file() -> str:
+    # File path: <repo>/python/aigov_py/ci_fallback.py
+    # Repo root is two levels up from this file directory.
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.abspath(os.path.join(here, "..", ".."))
+
+
 def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
@@ -31,7 +36,7 @@ def write_json(path: str, payload: Dict[str, Any]) -> None:
 
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
-        print("usage: python aigov_py/ci_fallback.py <run_id>", file=sys.stderr)
+        print("usage: python python/aigov_py/ci_fallback.py <run_id>", file=sys.stderr)
         return 2
 
     run_id = argv[1].strip()
@@ -39,7 +44,7 @@ def main(argv: list[str]) -> int:
         print("run_id is empty", file=sys.stderr)
         return 2
 
-    repo_root = os.getcwd()
+    repo_root = repo_root_from_file()
     evidence_dir = os.path.join(repo_root, "docs", "evidence")
     ensure_dir(evidence_dir)
 

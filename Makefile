@@ -201,8 +201,8 @@ ensure_evidence: require_run ensure_dirs
 		exit 0; \
 	fi; \
 	echo "missing evidence, generating fallback: docs/evidence/$(RUN_ID).json"; \
-	cd python && . .venv/bin/activate && \
-	python aigov_py/ci_fallback.py "$(RUN_ID)"
+	. python/.venv/bin/activate && \
+	python python/aigov_py/ci_fallback.py "$(RUN_ID)"
 
 report_prepare: require_run
 	@echo "Preparing Variant A report for RUN_ID=$(RUN_ID)"
