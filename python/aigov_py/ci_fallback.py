@@ -5,7 +5,7 @@ import hashlib
 import json
 import os
 import sys
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 
 def now_utc_iso() -> str:
@@ -43,25 +43,28 @@ def build_minimal_evidence(run_id: str, mode: str) -> Dict[str, Any]:
 
     genesis = {
         "id": "genesis",
+        "event_id": "genesis",
         "run_id": run_id,
         "ts_utc": ts,
         "type": "evidence_genesis",
         "system": "ci_fallback",
         "payload": {"source": "ci_fallback"},
-        "prev": None,
+        "prev_event_id": None,
     }
 
     head = {
         "id": "ci_fallback_used",
+        "event_id": "ci_fallback_used",
         "run_id": run_id,
         "ts_utc": ts,
         "type": "ci_fallback_used",
         "system": "ci_fallback",
         "payload": {"source": "ci_fallback"},
-        "prev": "genesis",
+        "prev_event_id": "genesis",
     }
 
-    events = [genesis, head]
+    events: List[Dict[str, Any]] = [genesis, head]
+
     for e in events:
         e["hash"] = stable_hash(e)
 
@@ -71,6 +74,7 @@ def build_minimal_evidence(run_id: str, mode: str) -> Dict[str, Any]:
         "kind": "evidence",
         "system": "ci_fallback",
         "mode": mode,
+        "policy_version": "v0.4_ci",
         "events": events,
         "chain": {
             "head": head["id"],
@@ -80,16 +84,14 @@ def build_minimal_evidence(run_id: str, mode: str) -> Dict[str, Any]:
         "meta": {
             "aigov_mode": mode,
             "source": "ci_fallback",
-            "warning": "CI fallback evidence. Not allowed in prod.",
+            "warning": "CI fallback evidence. Forbidden in PROD.",
         },
     }
 
 
 def main(argv: list[str]) -> int:
-    if os.environ.get("AIGOV_MODE") == "prod":
-        raise SystemExit("ci_fallback forbidden in prod mode")
-
     if len(argv) < 2:
+        print("usage: python ci_fallback.py <run_id>", file=sys.stderr)
         return 2
 
     run_id = argv[1].strip()
@@ -97,6 +99,9 @@ def main(argv: list[str]) -> int:
         return 2
 
     mode = os.environ.get("AIGOV_MODE", "ci")
+    if mode == "prod":
+        print("ci_fallback is forbidden in PROD", file=sys.stderr)
+        return 2
 
     root = repo_root_from_file()
     out_dir = os.path.join(root, "docs", "evidence")

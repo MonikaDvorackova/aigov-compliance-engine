@@ -47,8 +47,12 @@ def main(argv: list[str]) -> None:
         return
 
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+
+    policy_version = evidence.get("policy_version")
+    if not policy_version:
+        raise SystemExit("policy_version missing in evidence")
+
     bundle_sha256 = sha256_file(evidence_path)
-    policy_version = evidence.get("policy_version") or "v0.4"
 
     content = "\n".join(
         [
