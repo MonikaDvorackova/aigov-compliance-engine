@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import os
 import sys
-import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 
 def now_utc_iso() -> str:
@@ -18,8 +18,6 @@ def now_utc_iso() -> str:
 
 
 def repo_root_from_file() -> str:
-    # File path: <repo>/python/aigov_py/ci_fallback.py
-    # Repo root is two levels up from this file directory.
     here = os.path.dirname(os.path.abspath(__file__))
     return os.path.abspath(os.path.join(here, "..", ".."))
 
@@ -35,67 +33,79 @@ def write_json(path: str, payload: Dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def build_minimal_evidence(run_id: str) -> Dict[str, Any]:
-    ts = now_utc_iso()
-    eid = str(uuid.uuid4())
+def stable_hash(obj: Any) -> str:
+    raw = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-    event: Dict[str, Any] = {
-        "id": eid,
-        "event_id": eid,
+
+def build_minimal_evidence(run_id: str, mode: str) -> Dict[str, Any]:
+    ts = now_utc_iso()
+
+    genesis = {
+        "id": "genesis",
         "run_id": run_id,
         "ts_utc": ts,
-        "type": "evidence_stub",
+        "type": "evidence_genesis",
         "system": "ci_fallback",
-        "payload": {
-            "notes": "Auto generated stub so report_init/verify can run. Replace with real evidence events.",
-        },
+        "payload": {"source": "ci_fallback"},
         "prev": None,
     }
 
-    events: List[Dict[str, Any]] = [event]
-
-    # Provide multiple possible “head” fields for compatibility with different verify implementations.
-    chain_head = {
-        "head": eid,
-        "head_event_id": eid,
-        "head_id": eid,
-        "hash_alg": "sha256",
-    }
-
-    evidence: Dict[str, Any] = {
+    head = {
+        "id": "ci_fallback_used",
         "run_id": run_id,
         "ts_utc": ts,
+        "type": "ci_fallback_used",
         "system": "ci_fallback",
-        "kind": "evidence",
-        "events": events,
-        "chain": chain_head,
-        "chain_head": eid,
-        "head": eid,
-        "head_event_id": eid,
+        "payload": {"source": "ci_fallback"},
+        "prev": "genesis",
     }
 
-    return evidence
+    events = [genesis, head]
+    for e in events:
+        e["hash"] = stable_hash(e)
+
+    return {
+        "run_id": run_id,
+        "ts_utc": ts,
+        "kind": "evidence",
+        "system": "ci_fallback",
+        "mode": mode,
+        "events": events,
+        "chain": {
+            "head": head["id"],
+            "hash_alg": "sha256",
+        },
+        "chain_head": head["id"],
+        "meta": {
+            "aigov_mode": mode,
+            "source": "ci_fallback",
+            "warning": "CI fallback evidence. Not allowed in prod.",
+        },
+    }
 
 
 def main(argv: list[str]) -> int:
+    if os.environ.get("AIGOV_MODE") == "prod":
+        raise SystemExit("ci_fallback forbidden in prod mode")
+
     if len(argv) < 2:
-        print("usage: python python/aigov_py/ci_fallback.py <run_id>", file=sys.stderr)
         return 2
 
     run_id = argv[1].strip()
     if not run_id:
-        print("run_id is empty", file=sys.stderr)
         return 2
 
-    repo_root = repo_root_from_file()
-    evidence_dir = os.path.join(repo_root, "docs", "evidence")
-    ensure_dir(evidence_dir)
+    mode = os.environ.get("AIGOV_MODE", "ci")
 
-    evidence_path = os.path.join(evidence_dir, f"{run_id}.json")
+    root = repo_root_from_file()
+    out_dir = os.path.join(root, "docs", "evidence")
+    ensure_dir(out_dir)
 
-    payload = build_minimal_evidence(run_id)
-    write_json(evidence_path, payload)
-    print(f"saved {evidence_path}")
+    payload = build_minimal_evidence(run_id, mode)
+    path = os.path.join(out_dir, f"{run_id}.json")
+    write_json(path, payload)
+    print(f"saved {path}")
     return 0
 
 
