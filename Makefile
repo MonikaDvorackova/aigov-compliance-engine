@@ -4,7 +4,7 @@ SHELL := /bin/bash
 	audit audit_bg audit_stop audit_restart audit_logs \
 	status verify verify_log \
 	run \
-	require_run ensure_dirs ensure_reports_dir new_run report_new report_prepare report_prepare_new ensure_evidence pr_report \
+	require_run ensure_dirs ensure_reports_dir new_run report_new report_prepare report_prepare_new ensure_evidence pr_report pr_report_commit \
 	check_audit \
 	approve evaluate promote \
 	report_template report_init report_fill \
@@ -226,6 +226,21 @@ pr_report:
 	$(MAKE) report_prepare RUN_ID="$$RUN_ID"; \
 	git add "docs/reports/$$RUN_ID.md"; \
 	echo "staged docs/reports/$$RUN_ID.md"
+
+pr_report_commit:
+	@set -euo pipefail; \
+	RUN_ID="$$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"; \
+	echo "$$RUN_ID"; \
+	$(MAKE) report_prepare RUN_ID="$$RUN_ID"; \
+	test -f "docs/reports/$$RUN_ID.md"; \
+	git add "docs/reports/$$RUN_ID.md"; \
+	if git diff --cached --quiet; then \
+		echo "nothing staged, refusing to commit"; \
+		exit 2; \
+	fi; \
+	git commit -m "docs: add audit report ($$RUN_ID)"; \
+	git push; \
+	echo "pushed audit report $$RUN_ID"
 
 pr_prepare:
 	@bash scripts/aigov_pr_prepare.sh
