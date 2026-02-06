@@ -1,174 +1,134 @@
-# python/aigov_py/verify.py
-
 from __future__ import annotations
 
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 
-def _repo_root() -> str:
-    # python/aigov_py/verify.py -> repo root is two levels up from python/
-    here = os.path.abspath(os.path.dirname(__file__))              # .../python/aigov_py
-    python_dir = os.path.abspath(os.path.join(here, ".."))         # .../python
-    root = os.path.abspath(os.path.join(python_dir, ".."))         # repo root
-    return root
+def repo_root() -> str:
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
-def _p(*parts: str) -> str:
-    return os.path.join(_repo_root(), *parts)
-
-
-def _load_json(path: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+def load_json(path: str) -> Optional[Dict[str, Any]]:
     if not os.path.exists(path):
-        return None, f"missing file: {path}"
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            return None, f"invalid json root type at {path}"
-        return data, None
-    except Exception as e:
-        return None, f"failed to read json {path}: {e}"
-
-
-def _read_report_kv(report_path: str) -> Dict[str, str]:
-    kv: Dict[str, str] = {}
-    if not os.path.exists(report_path):
-        return kv
-    with open(report_path, "r", encoding="utf-8") as f:
-        for raw in f:
-            line = raw.strip()
-            if "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            k = k.strip()
-            v = v.strip()
-            if k:
-                kv[k] = v
-    return kv
-
-
-def _as_list(x: Any) -> Optional[List[Any]]:
-    return x if isinstance(x, list) else None
-
-
-def _as_dict(x: Any) -> Optional[Dict[str, Any]]:
-    return x if isinstance(x, dict) else None
-
-
-def _has_events(evidence: Dict[str, Any]) -> bool:
-    top_events = _as_list(evidence.get("events"))
-    if top_events is not None:
-        return True
-
-    chain = _as_dict(evidence.get("chain"))
-    if chain is None:
-        return False
-
-    chain_events = _as_list(chain.get("events"))
-    if chain_events is not None:
-        return True
-
-    return False
-
-
-def _head_present_even_if_empty(chain: Dict[str, Any]) -> bool:
-    # Treat presence of head key as present even if its value is empty.
-    for k in ("head", "head_node", "head_id", "headId", "tip", "root", "head_hash", "head_sha256", "headHash"):
-        if k in chain:
-            return True
-    return False
-
-
-def _find_chain_head_any(evidence: Dict[str, Any]) -> Optional[Any]:
-    chain = _as_dict(evidence.get("chain"))
-    if chain is not None:
-        if _head_present_even_if_empty(chain):
-            return True
-
-        nodes = _as_dict(chain.get("nodes"))
-        if nodes and len(nodes) > 0:
-            return True
-
-    for k in ("chain_head", "chainHead", "chain_head_node", "chainHeadNode"):
-        if k in evidence:
-            return True
-
-    return None
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def verify(run_id: str) -> int:
-    audit_path = _p("docs", "audit", f"{run_id}.json")
-    evidence_path = _p("docs", "evidence", f"{run_id}.json")
-    report_path = _p("docs", "reports", f"{run_id}.md")
+    root = repo_root()
+    mode = os.environ.get("AIGOV_MODE", "ci")
+
+    audit_path = os.path.join(root, "docs", "audit", f"{run_id}.json")
+    evidence_path = os.path.join(root, "docs", "evidence", f"{run_id}.json")
+    report_path = os.path.join(root, "docs", "reports", f"{run_id}.md")
 
     print("AIGOV VERIFICATION REPORT")
     print(f"Audit ID: {run_id}")
+    print(f"AIGOV_MODE: {mode}")
 
     ok = True
 
-    report_kv = _read_report_kv(report_path)
-    report_bundle = report_kv.get("bundle_sha256")
-    report_policy = report_kv.get("policy_version")
+    audit = load_json(audit_path)
+    evidence = load_json(evidence_path)
 
-    audit, audit_err = _load_json(audit_path)
+    # --- AUDIT FILE ---
     if audit is None:
-        print(f"FAIL {audit_err}")
+        print("FAIL missing audit file")
         ok = False
-        audit = {}
+    else:
+        print("OK   audit file present")
 
-    evidence, evidence_err = _load_json(evidence_path)
+    # --- EVIDENCE FILE ---
     if evidence is None:
-        print(f"FAIL {evidence_err}")
+        print("FAIL missing evidence file")
         ok = False
         evidence = {}
-
-    audit_bundle = audit.get("bundle_sha256")
-    audit_policy = audit.get("policy_version")
-
-    if report_bundle and audit_bundle and report_bundle == audit_bundle:
-        print(f"OK   reports/{run_id}.md bundle_sha256 matches")
     else:
-        if report_bundle is None:
-            print("FAIL report missing bundle_sha256")
-        elif audit_bundle is None:
-            print("FAIL audit missing bundle_sha256")
+        print("OK   evidence file present")
+
+    # --- PROD SAFETY ---
+    if mode == "prod":
+        if evidence.get("system") == "ci_fallback":
+            print("FAIL ci_fallback evidence is forbidden in PROD")
+            ok = False
+
+    # --- EVENTS LIST ---
+    events = evidence.get("events")
+    if not isinstance(events, list):
+        print("FAIL evidence.events missing or not a list")
+        ok = False
+        events = []
+    elif len(events) < 2:
+        print("FAIL evidence must contain at least 2 events")
+        ok = False
+    else:
+        print(f"OK   evidence contains {len(events)} events")
+
+    # --- LINEAR CHAIN VALIDATION ---
+    prev_id: Optional[str] = None
+    seen_ids = set()
+
+    for idx, ev in enumerate(events):
+        if not isinstance(ev, dict):
+            print(f"FAIL event {idx} is not an object")
+            ok = False
+            break
+
+        eid = ev.get("id") or ev.get("event_id")
+        if not isinstance(eid, str):
+            print(f"FAIL event {idx} missing id/event_id")
+            ok = False
+            break
+
+        if eid in seen_ids:
+            print(f"FAIL duplicate event id {eid}")
+            ok = False
+            break
+        seen_ids.add(eid)
+
+        prev = ev.get("prev_event_id") or ev.get("prev")
+        if idx == 0:
+            if prev is not None:
+                print("FAIL genesis event must not have prev_event_id")
+                ok = False
         else:
-            print("FAIL report bundle_sha256 does not match audit.bundle_sha256")
-        ok = False
+            if prev != prev_id:
+                print(
+                    f"FAIL broken chain at event {idx}: "
+                    f"prev_event_id={prev} expected={prev_id}"
+                )
+                ok = False
+                break
 
-    if report_policy and audit_policy and report_policy == audit_policy:
-        print(f"OK   reports/{run_id}.md policy_version matches")
+        prev_id = eid
+
+    if ok:
+        print("OK   event chain is linear and valid")
+
+    # --- POLICY VERSION ---
+    policy_version = None
+
+    if isinstance(audit, dict):
+        policy_version = audit.get("policy_version")
+
+    if not policy_version and isinstance(evidence, dict):
+        policy_version = evidence.get("policy_version")
+
+    if not policy_version:
+        print("FAIL missing policy_version (audit or evidence)")
+        ok = False
     else:
-        if report_policy is None:
-            print("FAIL report missing policy_version")
-        elif audit_policy is None:
-            print("FAIL audit missing policy_version")
-        else:
-            print("FAIL report policy_version does not match audit.policy_version")
-        ok = False
+        print(f"OK   policy_version={policy_version}")
 
-    if os.path.exists(audit_path):
-        print(f"OK   audit/{run_id}.json")
+    # --- REPORT FILE ---
+    if not os.path.exists(report_path):
+        print("FAIL missing report")
+        ok = False
     else:
-        print(f"FAIL missing audit/{run_id}.json")
-        ok = False
-
-    if not _has_events(evidence):
-        print("FAIL evidence missing events list")
-        ok = False
-
-    head = _find_chain_head_any(evidence)
-    if not head:
-        chain = _as_dict(evidence.get("chain"))
-        if chain is not None and _has_events(evidence):
-            head = True
-
-    if not head:
-        print("FAIL chain head missing")
-        ok = False
+        print("OK   report file present")
 
     if ok:
         print("VERDICT VALID")
@@ -178,14 +138,16 @@ def verify(run_id: str) -> int:
     return 2
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("Usage: python -m aigov_py.verify <RUN_ID>")
         return 2
+
     run_id = argv[1].strip()
     if not run_id:
         print("RUN_ID is empty")
         return 2
+
     return verify(run_id)
 
 

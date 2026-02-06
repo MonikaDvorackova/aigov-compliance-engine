@@ -1,5 +1,7 @@
 SHELL := /bin/bash
 
+AIGOV_MODE ?= ci
+
 .PHONY: \
 	audit audit_bg audit_stop audit_restart audit_logs \
 	status verify verify_log \
@@ -8,7 +10,7 @@ SHELL := /bin/bash
 	check_audit \
 	approve evaluate promote \
 	report_template report_init report_fill \
-	bundle verify_cli evidence_pack \
+	bundle verify_cli evidence_pack audit_close \
 	emit_event \
 	flow flow_full \
 	pr_prepare gate
@@ -152,23 +154,27 @@ report_template: require_run ensure_reports_dir
 
 report_init: require_run ensure_reports_dir
 	cd python && . .venv/bin/activate && \
-	python -m aigov_py.report_init $(RUN_ID)
+	AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.report_init $(RUN_ID)
 
 report_fill: require_run ensure_reports_dir
 	cd python && . .venv/bin/activate && \
-	python -m aigov_py.report_fill $(RUN_ID)
+	AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.report_fill $(RUN_ID)
 
 bundle: require_run ensure_dirs
 	cd python && . .venv/bin/activate && \
-	python -m aigov_py.export_bundle $(RUN_ID)
+	AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.export_bundle $(RUN_ID)
 
 verify_cli: require_run
 	cd python && . .venv/bin/activate && \
-	python -m aigov_py.verify $(RUN_ID)
+	AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.verify $(RUN_ID)
 
 evidence_pack: require_run ensure_dirs
 	cd python && . .venv/bin/activate && \
 	RUN_ID=$(RUN_ID) python -m aigov_py.evidence_pack
+
+audit_close: require_run
+	cd python && . .venv/bin/activate && \
+	AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.audit_close $(RUN_ID)
 
 emit_event: require_run check_audit
 	@if [ -z "$(EVENT_TYPE)" ]; then \
@@ -192,6 +198,7 @@ flow_full: require_run
 	$(MAKE) bundle RUN_ID=$(RUN_ID)
 	$(MAKE) verify_cli RUN_ID=$(RUN_ID)
 	$(MAKE) evidence_pack RUN_ID=$(RUN_ID)
+	$(MAKE) audit_close RUN_ID=$(RUN_ID)
 	@echo "AIGov flow complete for RUN_ID=$(RUN_ID)"
 
 ensure_evidence: require_run ensure_dirs
@@ -202,7 +209,7 @@ ensure_evidence: require_run ensure_dirs
 	fi; \
 	echo "missing evidence, generating fallback: docs/evidence/$(RUN_ID).json"; \
 	. python/.venv/bin/activate && \
-	python python/aigov_py/ci_fallback.py "$(RUN_ID)"
+	AIGOV_MODE=$(AIGOV_MODE) python python/aigov_py/ci_fallback.py "$(RUN_ID)"
 
 report_prepare: require_run
 	@echo "Preparing Variant A report for RUN_ID=$(RUN_ID)"
@@ -212,6 +219,7 @@ report_prepare: require_run
 	$(MAKE) report_fill RUN_ID=$(RUN_ID)
 	$(MAKE) bundle RUN_ID=$(RUN_ID)
 	$(MAKE) verify_cli RUN_ID=$(RUN_ID)
+	$(MAKE) audit_close RUN_ID=$(RUN_ID)
 
 report_prepare_new:
 	@set -euo pipefail; \

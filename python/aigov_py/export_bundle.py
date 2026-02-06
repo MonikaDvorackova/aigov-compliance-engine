@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -63,18 +64,18 @@ def _bundle_fingerprint(
     evidence_sha256: str,
     evidence_chain_head_sha256: Optional[str],
 ) -> str:
-    """
-    IMPORTANT: bundle_sha256 MUST NOT depend on the report bytes.
-    Otherwise the workflow requirement (report.bundle_sha256 == audit.bundle_sha256)
-    becomes cyclic and unstable.
-    """
     payload = {
         "run_id": run_id,
         "policy_version": policy_version,
         "evidence_sha256": evidence_sha256,
         "evidence_chain_head_sha256": evidence_chain_head_sha256,
     }
-    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    raw = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
     return _sha256_bytes(raw)
 
 
@@ -87,8 +88,12 @@ def export_bundle(run_id: str) -> None:
 
     evidence_path = root / "docs" / "evidence" / f"{run_id}.json"
     report_path = root / "docs" / "reports" / f"{run_id}.md"
+
     audit_dir = root / "docs" / "audit"
+    packs_dir = root / "docs" / "packs"
+
     audit_dir.mkdir(parents=True, exist_ok=True)
+    packs_dir.mkdir(parents=True, exist_ok=True)
 
     if not evidence_path.exists():
         raise FileNotFoundError(f"Missing evidence file: {evidence_path}")
@@ -135,7 +140,17 @@ def export_bundle(run_id: str) -> None:
     audit_bytes = json.dumps(audit_obj, ensure_ascii=False, indent=2).encode("utf-8")
     _atomic_write(audit_json_path, audit_bytes)
 
+    # ----------------------------
+    # CREATE FINAL PACK ZIP
+    # ----------------------------
+    zip_path = packs_dir / f"{run_id}.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(evidence_path, arcname=f"evidence/{run_id}.json")
+        z.write(report_path, arcname=f"reports/{run_id}.md")
+        z.write(audit_json_path, arcname=f"audit/{run_id}.json")
+
     print(f"saved {audit_json_path}")
+    print(f"saved {zip_path}")
     print(f"bundle_sha256={bundle_sha256}")
 
 
