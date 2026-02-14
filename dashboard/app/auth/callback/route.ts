@@ -4,11 +4,24 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
+function safeNextPath(raw: string | null, fallback: string = "/runs"): string {
+  if (!raw) return fallback;
+
+  const v = raw.trim();
+  if (!v) return fallback;
+
+  // Only allow internal paths
+  if (v.startsWith("/")) return v;
+
+  // If someone passes an absolute URL, ignore it
+  return fallback;
+}
+
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
 
   const code = url.searchParams.get("code");
-  const next = url.searchParams.get("next") ?? "/runs";
+  const next = safeNextPath(url.searchParams.get("next"), "/runs");
 
   if (!code) {
     const redirectUrl = new URL("/login", url.origin);

@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 function createSupabaseBrowserClient(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -58,19 +58,24 @@ function IconGitHub({ size = 18, color = "#1D4ED8" }: { size?: number; color?: s
   );
 }
 
-function cx(...xs: Array<string | false | null | undefined>) {
-  return xs.filter(Boolean).join(" ");
+function useInitialMessage(): string | null {
+  const sp = useSearchParams();
+  const v = sp.get("message");
+  return v && v.trim() ? v.trim() : null;
 }
 
 export default function LoginPage() {
   const router = useRouter();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const initialMessage = useInitialMessage();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(initialMessage);
+
+  const blue = "#1D4ED8";
 
   async function signInEmailPassword(e: React.FormEvent) {
     e.preventDefault();
@@ -119,46 +124,104 @@ export default function LoginPage() {
     }
   }
 
-  const blue = "#1D4ED8";
+  const shellBg =
+    "radial-gradient(1200px 520px at 50% 6%, rgba(255,255,255,0.08), rgba(0,0,0,0) 60%), radial-gradient(900px 520px at 20% 30%, rgba(29,78,216,0.10), rgba(0,0,0,0) 55%), radial-gradient(900px 520px at 82% 44%, rgba(255,255,255,0.06), rgba(0,0,0,0) 55%)";
+
+  const cardBorder = "1px solid rgba(255,255,255,0.14)";
+  const cardBg = "rgba(255,255,255,0.03)";
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    height: 48,
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.16)",
+    background: "rgba(0,0,0,0.25)",
+    color: "white",
+    fontSize: 16,
+    padding: "0 14px",
+    outline: "none",
+  };
+
+  const buttonStyle: React.CSSProperties = {
+    width: "100%",
+    height: 48,
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.18)",
+    background: "rgba(255,255,255,0.04)",
+    color: "white",
+    fontSize: 16,
+    cursor: busy ? "not-allowed" : "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
+    transition: "transform 120ms ease, background 120ms ease, border-color 120ms ease",
+  };
+
+  const linkStyle: React.CSSProperties = {
+    color: "rgba(255,255,255,0.80)",
+    textDecoration: "underline",
+    textUnderlineOffset: 4,
+    textDecorationColor: "rgba(29,78,216,0.65)",
+    fontSize: 13,
+  };
 
   return (
     <main
       style={{
         minHeight: "100vh",
+        background: shellBg,
         padding: 24,
-        display: "grid",
-        placeItems: "center",
-        background:
-          "radial-gradient(1100px 520px at 50% 8%, rgba(255,255,255,0.08), rgba(0,0,0,0))",
       }}
     >
-      <div style={{ width: "100%", maxWidth: 980 }}>
-        <h1 style={{ margin: 0, fontSize: 56, letterSpacing: "-0.02em" }}>
-          AIGov Dashboard Login
-        </h1>
+      <div style={{ maxWidth: 980, margin: "0 auto" }}>
+        <div style={{ paddingTop: 18, paddingBottom: 10 }}>
+          <div style={{ opacity: 0.75, fontSize: 13, letterSpacing: "0.02em" }}>AIGov</div>
+          <h1
+            style={{
+              margin: 0,
+              marginTop: 10,
+              fontSize: 44,
+              letterSpacing: "-0.02em",
+              lineHeight: 1.05,
+            }}
+          >
+            Dashboard Login
+          </h1>
 
-        <p style={{ marginTop: 12, marginBottom: 22, opacity: 0.78, fontSize: 18 }}>
-          Sign in to load runs from the database.
-        </p>
+          <p style={{ marginTop: 10, marginBottom: 0, opacity: 0.78, fontSize: 16, maxWidth: 720 }}>
+            Sign in to load runs from the database.
+          </p>
+        </div>
 
         <div
           style={{
+            marginTop: 18,
             borderRadius: 18,
-            border: "1px solid rgba(255,255,255,0.14)",
-            background: "rgba(255,255,255,0.03)",
+            border: cardBorder,
+            background: cardBg,
             boxShadow: "0 18px 60px rgba(0,0,0,0.40)",
             padding: 18,
+            maxWidth: 720,
           }}
         >
+          <style>{`
+            button[data-btn="1"]:hover { transform: translateY(-1px); background: rgba(255,255,255,0.055); border-color: rgba(255,255,255,0.22); }
+            button[data-btn="1"]:active { transform: translateY(0px); background: rgba(255,255,255,0.045); }
+            input:focus { border-color: rgba(29,78,216,0.55); box-shadow: 0 0 0 3px rgba(29,78,216,0.18); }
+            a:hover { color: rgba(255,255,255,0.92); text-decoration-color: rgba(29,78,216,0.9); }
+          `}</style>
+
           {message ? (
             <div
               style={{
                 marginBottom: 12,
-                padding: 12,
+                padding: "10px 12px",
                 borderRadius: 14,
                 border: "1px solid rgba(255,255,255,0.16)",
                 background: "rgba(255,255,255,0.05)",
-                fontSize: 14,
+                fontSize: 13,
                 opacity: 0.95,
               }}
             >
@@ -166,26 +229,13 @@ export default function LoginPage() {
             </div>
           ) : null}
 
-          <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ display: "grid", gap: 10 }}>
             <button
               type="button"
+              data-btn="1"
               onClick={() => signInOAuth("google")}
               disabled={busy}
-              style={{
-                width: "100%",
-                height: 56,
-                borderRadius: 16,
-                border: "1px solid rgba(255,255,255,0.20)",
-                background: "rgba(255,255,255,0.04)",
-                color: "white",
-                fontSize: 20,
-                cursor: busy ? "not-allowed" : "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 12,
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
-              }}
+              style={buttonStyle}
             >
               <IconGoogle color={blue} />
               Continue with Google
@@ -193,32 +243,19 @@ export default function LoginPage() {
 
             <button
               type="button"
+              data-btn="1"
               onClick={() => signInOAuth("github")}
               disabled={busy}
-              style={{
-                width: "100%",
-                height: 56,
-                borderRadius: 16,
-                border: "1px solid rgba(255,255,255,0.20)",
-                background: "rgba(255,255,255,0.04)",
-                color: "white",
-                fontSize: 20,
-                cursor: busy ? "not-allowed" : "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 12,
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
-              }}
+              style={buttonStyle}
             >
               <IconGitHub color={blue} />
               Continue with GitHub
             </button>
           </div>
 
-          <div style={{ marginTop: 18, opacity: 0.65, fontSize: 16 }}>Or email and password</div>
+          <div style={{ marginTop: 16, opacity: 0.65, fontSize: 13 }}>Or email and password</div>
 
-          <form onSubmit={signInEmailPassword} style={{ marginTop: 10, display: "grid", gap: 12 }}>
+          <form onSubmit={signInEmailPassword} style={{ marginTop: 10, display: "grid", gap: 10 }}>
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -226,17 +263,7 @@ export default function LoginPage() {
               inputMode="email"
               autoComplete="email"
               disabled={busy}
-              style={{
-                width: "100%",
-                height: 56,
-                borderRadius: 16,
-                border: "1px solid rgba(255,255,255,0.18)",
-                background: "rgba(0,0,0,0.25)",
-                color: "white",
-                fontSize: 22,
-                padding: "0 18px",
-                outline: "none",
-              }}
+              style={inputStyle}
             />
 
             <input
@@ -246,39 +273,21 @@ export default function LoginPage() {
               type="password"
               autoComplete="current-password"
               disabled={busy}
-              style={{
-                width: "100%",
-                height: 56,
-                borderRadius: 16,
-                border: "1px solid rgba(255,255,255,0.18)",
-                background: "rgba(0,0,0,0.25)",
-                color: "white",
-                fontSize: 22,
-                padding: "0 18px",
-                outline: "none",
-              }}
+              style={inputStyle}
             />
 
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-              <button
-                type="submit"
-                disabled={busy || !email.trim() || !password}
-                style={{
-                  width: "100%",
-                  height: 56,
-                  borderRadius: 16,
-                  border: "1px solid rgba(255,255,255,0.20)",
-                  background:
-                    busy || !email.trim() || !password ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.06)",
-                  color: "white",
-                  fontSize: 22,
-                  cursor: busy || !email.trim() || !password ? "not-allowed" : "pointer",
-                  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
-                }}
-              >
-                Sign in
-              </button>
-            </div>
+            <button
+              type="submit"
+              data-btn="1"
+              disabled={busy || !email.trim() || !password}
+              style={{
+                ...buttonStyle,
+                background:
+                  busy || !email.trim() || !password ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.06)",
+              }}
+            >
+              Sign in
+            </button>
 
             <div
               style={{
@@ -287,37 +296,22 @@ export default function LoginPage() {
                 gap: 12,
                 marginTop: 2,
                 fontSize: 13,
-                opacity: 0.75,
+                opacity: 0.78,
               }}
             >
-              <a
-                href="/"
-                style={{
-                  color: "rgba(255,255,255,0.78)",
-                  textDecoration: "underline",
-                  textUnderlineOffset: 4,
-                  textDecorationColor: "rgba(29,78,216,0.65)",
-                }}
-              >
+              <a href="/" style={linkStyle}>
                 Back to home
               </a>
 
-              <a
-                href="/runs"
-                style={{
-                  color: "rgba(255,255,255,0.78)",
-                  textDecoration: "underline",
-                  textUnderlineOffset: 4,
-                  textDecorationColor: "rgba(29,78,216,0.65)",
-                }}
-              >
+              <a href="/runs" style={linkStyle}>
                 Open runs
               </a>
             </div>
           </form>
 
-          <div style={{ marginTop: 14, opacity: 0.55, fontSize: 12 }}>
-            OAuth redirects to <span style={{ color: "rgba(255,255,255,0.75)" }}>/auth/callback</span>
+          <div style={{ marginTop: 12, opacity: 0.55, fontSize: 12 }}>
+            OAuth redirects to{" "}
+            <span style={{ color: "rgba(255,255,255,0.75)" }}>/auth/callback</span>
           </div>
         </div>
       </div>
