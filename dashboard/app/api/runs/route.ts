@@ -16,10 +16,7 @@ type RunRow = {
   closed_at: string | null;
 };
 
-export async function GET(
-  _req: Request,
-  ctx: { params: { id: string } }
-) {
+export async function GET(_request: Request) {
   const supabase = await createSupabaseServerClient();
 
   const {
@@ -46,18 +43,15 @@ export async function GET(
     .select(
       "id,created_at,mode,status,policy_version,bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at"
     )
-    .eq("id", ctx.params.id)
-    .single();
+    .order("created_at", { ascending: false })
+    .limit(50);
 
   if (error) {
     return NextResponse.json(
       { ok: false, error: "db_error", message: error.message },
-      { status: 404 }
+      { status: 500 }
     );
   }
 
-  return NextResponse.json(
-    { ok: true, run: (data as RunRow) ?? null },
-    { status: 200 }
-  );
+  return NextResponse.json({ ok: true, runs: (data ?? []) as RunRow[] }, { status: 200 });
 }
