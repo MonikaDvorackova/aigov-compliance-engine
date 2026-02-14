@@ -1,4 +1,6 @@
 SHELL := /bin/bash
+-include .env
+export
 
 AIGOV_MODE ?= ci
 
@@ -14,7 +16,9 @@ AIGOV_MODE ?= ci
 	emit_event \
 	flow flow_full \
 	pr_prepare gate \
-	audit_close
+	audit_close \
+	demo demo_new \
+	env_check
 
 FORCE:
 
@@ -23,6 +27,16 @@ AUDIT_PORT ?= 8088
 
 AUDIT_PIDFILE ?= .aigov_audit.pid
 AUDIT_LOG ?= .aigov_audit.log
+
+# ================================
+# Env debug
+# ================================
+
+env_check:
+	@echo "PWD=$$(pwd)"
+	@echo "SUPABASE_URL=$(SUPABASE_URL)"
+	@echo "SUPABASE_SERVICE_ROLE_KEY=$$(if [ -n "$(SUPABASE_SERVICE_ROLE_KEY)" ]; then echo "SET"; else echo "MISSING"; fi)"
+	@ls -la .env 2>/dev/null || true
 
 # ================================
 # Audit service
@@ -215,6 +229,29 @@ db_ingest: require_run
 	AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.ingest_run $(RUN_ID)
 
 # ================================
+# Demo
+# ================================
+# demo: end to end run that generates artifacts and ingests a row to Supabase
+# demo_new: same but generates RUN_ID automatically and prints it for dashboard usage
+
+demo: require_run check_audit
+	@set -euo pipefail; \
+	echo "DEMO: RUN_ID=$(RUN_ID) AIGOV_MODE=$(AIGOV_MODE)"; \
+	$(MAKE) report_prepare RUN_ID="$(RUN_ID)"; \
+	$(MAKE) db_ingest RUN_ID="$(RUN_ID)"; \
+	echo "OK: demo completed RUN_ID=$(RUN_ID)"; \
+	echo "Dashboard: /runs/$(RUN_ID)"
+
+demo_new: check_audit
+	@set -euo pipefail; \
+	RUN_ID="$$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"; \
+	echo "DEMO: generated RUN_ID=$$RUN_ID AIGOV_MODE=$(AIGOV_MODE)"; \
+	$(MAKE) report_prepare RUN_ID="$$RUN_ID"; \
+	$(MAKE) db_ingest RUN_ID="$$RUN_ID"; \
+	echo "OK: demo completed RUN_ID=$$RUN_ID"; \
+	echo "Dashboard: /runs/$$RUN_ID"
+
+# ================================
 # PR helpers
 # ================================
 
@@ -222,39 +259,4 @@ pr_report:
 	@set -euo pipefail; \
 	RUN_ID="$$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"; \
 	echo "Generated RUN_ID=$$RUN_ID"; \
-	$(MAKE) report_prepare RUN_ID="$$RUN_ID"; \
-	git add "docs/reports/$$RUN_ID.md"; \
-	echo "staged docs/reports/$$RUN_ID.md"
-
-pr_report_commit: FORCE
-	@set -euo pipefail; \
-	BRANCH="$$(git rev-parse --abbrev-ref HEAD)"; \
-	if [ "$$BRANCH" = "main" ]; then \
-		echo "ERROR: do not run on main branch"; \
-		exit 2; \
-	fi; \
-	if ! git diff --quiet || ! git diff --cached --quiet; then \
-		echo "ERROR: working tree not clean. Commit or stash first."; \
-		exit 2; \
-	fi; \
-	RUN_ID="$$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"; \
-	echo "Generated RUN_ID=$$RUN_ID"; \
-	$(MAKE) report_prepare RUN_ID="$$RUN_ID"; \
-	git add "docs/reports/$$RUN_ID.md"; \
-	if git diff --cached --quiet; then \
-		echo "ERROR: nothing staged (report not generated?)"; \
-		exit 2; \
-	fi; \
-	git commit -m "docs: add audit report ($$RUN_ID)"; \
-	git push
-
-pr_prepare:
-	@bash scripts/aigov_pr_prepare.sh
-
-# ================================
-# Gate
-# ================================
-
-gate:
-	cd python && . .venv/bin/activate && python -m compileall aigov_py
-	cd rust && cargo check
+	$(MAKE) report_prepare RUN_ID="$$RUN
