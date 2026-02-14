@@ -1,152 +1,265 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
-from aigov_py.supabase_db import upsert_run_row
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+from aigov_py.supabase_db import create_supabase_client, upsert_run_row
+from aigov_py.storage_upload import upload_artifacts_for_run
 
 
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+@dataclass(frozen=True)
+class ArtifactPaths:
+    repo_root: Path
+    audit_json: Path
+    evidence_json: Path
+    report_md: Path
+    pack_zip: Path
 
 
 def _utc_now_iso() -> str:
-    return _utc_now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
-def _load_json(path: Path) -> Dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+def _repo_root_from_here() -> Path:
+    p = Path(__file__).resolve()
+    return p.parents[2]
 
 
-def _read_report_kv(report_path: Path) -> Dict[str, str]:
-    kv: Dict[str, str] = {}
-    if not report_path.exists():
-        return kv
-    for raw in report_path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        k = k.strip()
-        v = v.strip()
-        if k:
-            kv[k] = v
-    return kv
+def _norm(s: Optional[str]) -> str:
+    return (s or "").strip().lower()
 
 
-def _detect_mode() -> str:
-    mode = os.environ.get("AIGOV_MODE", "ci").strip().lower()
-    if mode not in ("ci", "prod"):
-        mode = "ci"
-    return mode
+def _sha256_file(path: Path) -> Optional[str]:
+    try:
+        h = hashlib.sha256()
+        with path.open("rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except FileNotFoundError:
+        return None
 
 
-def _evidence_source(evidence: Dict[str, Any]) -> str:
-    system = evidence.get("system")
-    if isinstance(system, str) and system.strip() == "ci_fallback":
+def _read_json(path: Path) -> Optional[Dict[str, Any]]:
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+    except json.JSONDecodeError:
+        return None
+
+
+def _get_mode() -> str:
+    v = os.environ.get("AIGOV_MODE", "").strip().lower()
+    return v or "ci"
+
+
+def _artifact_paths(run_id: str) -> ArtifactPaths:
+    root = _repo_root_from_here()
+    return ArtifactPaths(
+        repo_root=root,
+        audit_json=root / "docs" / "audit" / f"{run_id}.json",
+        evidence_json=root / "docs" / "evidence" / f"{run_id}.json",
+        report_md=root / "docs" / "reports" / f"{run_id}.md",
+        pack_zip=root / "docs" / "packs" / f"{run_id}.zip",
+    )
+
+
+def _extract_bundle_sha256(audit_obj: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not audit_obj:
+        return None
+
+    for k in ("bundle_sha256", "bundleSha256"):
+        v = audit_obj.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+
+    bundle = audit_obj.get("bundle")
+    if isinstance(bundle, dict):
+        for k in ("sha256", "bundle_sha256", "bundleSha256", "hash"):
+            v = bundle.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+
+    meta = audit_obj.get("meta")
+    if isinstance(meta, dict):
+        for k in ("bundle_sha256", "bundleSha256"):
+            v = meta.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+
+    return None
+
+
+def _extract_policy_version(audit_obj: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not audit_obj:
+        return None
+
+    for k in ("policy_version", "policyVersion"):
+        v = audit_obj.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+
+    policy = audit_obj.get("policy")
+    if isinstance(policy, dict):
+        for k in ("version", "policy_version", "policyVersion"):
+            v = policy.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+
+    meta = audit_obj.get("meta")
+    if isinstance(meta, dict):
+        for k in ("policy_version", "policyVersion"):
+            v = meta.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+
+    verification = audit_obj.get("verification")
+    if isinstance(verification, dict):
+        for k in ("policy_version", "policyVersion"):
+            v = verification.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+
+    return None
+
+
+def _extract_verdict_status(audit_obj: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not audit_obj:
+        return None
+
+    for k in ("verdict", "status", "verification_status", "verificationStatus"):
+        v = audit_obj.get(k)
+        if isinstance(v, str) and v.strip():
+            vv = _norm(v)
+            if vv in ("valid", "invalid", "pending"):
+                return vv
+
+    result = audit_obj.get("result")
+    if isinstance(result, dict):
+        v = result.get("verdict") or result.get("status")
+        if isinstance(v, str) and v.strip():
+            vv = _norm(v)
+            if vv in ("valid", "invalid", "pending"):
+                return vv
+
+    return None
+
+
+def _evidence_source(mode: str) -> str:
+    m = _norm(mode)
+    if m == "ci":
         return "ci_fallback"
-    return "real"
+    if m == "prod":
+        return "prod"
+    return m or "ci"
 
 
-def _status_from_env_or_default() -> str:
-    """
-    IMPORTANT:
-    DB has a CHECK constraint (runs_status_check).
-    Do NOT emit values outside allowed set.
+def _should_upload_to_storage(mode: str) -> bool:
+    raw = os.environ.get("AIGOV_STORAGE_UPLOAD", "").strip().lower()
+    if raw in ("1", "true", "yes", "y", "on"):
+        return True
+    if raw in ("0", "false", "no", "n", "off"):
+        return False
 
-    Default here is "valid" because db_ingest is intended to be executed
-    for already verified runs.
-    """
-    v = os.environ.get("AIGOV_VERDICT", "").strip().lower()
-    if v in ("valid", "invalid"):
-        return v
-    return "valid"
+    m = _norm(mode)
+    return m in ("ci", "prod")
 
 
-def build_run_row(run_id: str) -> Tuple[Dict[str, Any], Optional[str]]:
-    run_id = run_id.strip()
-    if not run_id:
-        return {}, "run_id is empty"
+def build_run_row(run_id: str) -> Dict[str, Any]:
+    mode = _get_mode()
+    paths = _artifact_paths(run_id)
 
-    root = _repo_root()
+    audit_obj = _read_json(paths.audit_json)
 
-    audit_path = root / "docs" / "audit" / f"{run_id}.json"
-    evidence_path = root / "docs" / "evidence" / f"{run_id}.json"
-    report_path = root / "docs" / "reports" / f"{run_id}.md"
+    bundle_sha = _extract_bundle_sha256(audit_obj)
+    policy_version = _extract_policy_version(audit_obj)
+    status = _extract_verdict_status(audit_obj)
 
-    if not audit_path.exists():
-        return {}, f"missing audit file: {audit_path}"
-    if not evidence_path.exists():
-        return {}, f"missing evidence file: {evidence_path}"
-    if not report_path.exists():
-        return {}, f"missing report file: {report_path}"
+    evidence_sha = _sha256_file(paths.evidence_json)
+    report_sha = _sha256_file(paths.report_md)
 
-    audit = _load_json(audit_path)
-    evidence = _load_json(evidence_path)
-    report_kv = _read_report_kv(report_path)
+    if not bundle_sha:
+        bundle_sha = _sha256_file(paths.pack_zip)
 
-    mode = _detect_mode()
+    if not policy_version:
+        m = _norm(mode)
+        policy_version = "v0.4_prod" if m == "prod" else "v0.4_ci"
 
-    policy_version: str = "unknown"
-    if isinstance(audit.get("policy_version"), str) and audit["policy_version"].strip():
-        policy_version = audit["policy_version"].strip()
-    elif isinstance(report_kv.get("policy_version"), str) and report_kv["policy_version"].strip():
-        policy_version = report_kv["policy_version"].strip()
-
-    bundle_sha256: str = "unknown"
-    if isinstance(audit.get("bundle_sha256"), str) and audit["bundle_sha256"].strip():
-        bundle_sha256 = audit["bundle_sha256"].strip()
-    elif isinstance(report_kv.get("bundle_sha256"), str) and report_kv["bundle_sha256"].strip():
-        bundle_sha256 = report_kv["bundle_sha256"].strip()
-
-    hashes = audit.get("hashes") if isinstance(audit.get("hashes"), dict) else {}
-    evidence_sha256 = hashes.get("evidence_sha256") if isinstance(hashes.get("evidence_sha256"), str) else None
-    report_sha256 = hashes.get("report_sha256") if isinstance(hashes.get("report_sha256"), str) else None
+    if not status:
+        status = "valid" if _norm(mode) == "ci" else "pending"
 
     row: Dict[str, Any] = {
         "id": run_id,
         "created_at": _utc_now_iso(),
         "mode": mode,
-        "status": _status_from_env_or_default(),
+        "status": status,
         "policy_version": policy_version,
-        "bundle_sha256": bundle_sha256,
-        "evidence_sha256": evidence_sha256,
-        "report_sha256": report_sha256,
-        "evidence_source": _evidence_source(evidence),
+        "bundle_sha256": bundle_sha,
+        "evidence_sha256": evidence_sha,
+        "report_sha256": report_sha,
+        "evidence_source": _evidence_source(mode),
         "closed_at": _utc_now_iso(),
     }
 
-    if row["evidence_sha256"] is None:
-        row.pop("evidence_sha256", None)
-    if row["report_sha256"] is None:
-        row.pop("report_sha256", None)
+    return row
 
-    return row, None
+
+def upload_run_artifacts(run_id: str, mode: str) -> None:
+    if not _should_upload_to_storage(mode):
+        print("storage upload skipped")
+        return
+
+    client = create_supabase_client(strict=True)
+    paths = _artifact_paths(run_id)
+
+    results = upload_artifacts_for_run(
+        client,
+        run_id=run_id,
+        pack_zip=paths.pack_zip,
+        audit_json=paths.audit_json,
+        evidence_json=paths.evidence_json,
+    )
+
+    ok_all = True
+    for r in results:
+        if r.ok:
+            print(f"storage upload ok bucket={r.bucket} object={r.object_name}")
+        else:
+            ok_all = False
+            print(f"storage upload failed bucket={r.bucket} object={r.object_name} error={r.message}")
+
+    if not ok_all:
+        raise RuntimeError("storage upload failed for one or more artifacts")
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
+    if len(argv) < 2:
         print("Usage: python -m aigov_py.ingest_run <RUN_ID>", file=sys.stderr)
         return 2
 
     run_id = argv[1].strip()
-    row, err = build_run_row(run_id)
-    if err:
-        print(f"ERROR: {err}", file=sys.stderr)
+    if not run_id:
+        print("RUN_ID is required", file=sys.stderr)
         return 2
+
+    row = build_run_row(run_id)
 
     print("ROW BEING UPSERTED:")
     print(row)
 
     upsert_run_row(row)
+
+    mode = str(row.get("mode") or _get_mode())
+    upload_run_artifacts(run_id, mode)
+
     print(f"ingested run {run_id} into Supabase")
     return 0
 
