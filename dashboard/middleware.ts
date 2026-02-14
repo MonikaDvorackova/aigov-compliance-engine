@@ -8,30 +8,38 @@ export async function middleware(req: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  if (!url) return res;
-  if (!anon) return res;
+  // Fail open: nikdy nerozbíjej request kvůli auth klientovi
+  if (!url || !anon) return res;
 
-  const supabase = createServerClient(url, anon, {
-    cookies: {
-      get(name: string) {
-        return req.cookies.get(name)?.value;
+  try {
+    const supabase = createServerClient(url, anon, {
+      cookies: {
+        get(name: string) {
+          return req.cookies.get(name)?.value;
+        },
+        set(name: string, value: string, options: any) {
+          // Next cookies API v middleware je citlivé na tvar options
+          res.cookies.set(name, value, options);
+        },
+        remove(name: string, options: any) {
+          res.cookies.set(name, "", { ...options, maxAge: 0 });
+        },
       },
-      set(name: string, value: string, options: any) {
-        res.cookies.set({ name, value, ...options });
-      },
-      remove(name: string, options: any) {
-        res.cookies.set({ name, value: "", ...options, maxAge: 0 });
-      },
-    },
-  });
+    });
 
-  await supabase.auth.getUser();
+    // Tohle stačí pouze pro "refresh session" flow
+    await supabase.auth.getUser();
+  } catch {
+    // Fail open: ignoruj chybu a pusť request dál
+    return res;
+  }
 
   return res;
 }
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    // Vylouč interní assets + API + auth callbacky
+    "/((?!_next/static|_next/image|favicon.ico|api|auth).*)",
   ],
 };
