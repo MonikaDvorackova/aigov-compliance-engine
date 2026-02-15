@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseRouteClient } from "@/lib/supabase/route";
 
 export const dynamic = "force-dynamic";
 
@@ -10,10 +10,8 @@ function safeNextPath(raw: string | null, fallback: string = "/runs"): string {
   const v = raw.trim();
   if (!v) return fallback;
 
-  // Only allow internal paths
   if (v.startsWith("/")) return v;
 
-  // If someone passes an absolute URL, ignore it
   return fallback;
 }
 
@@ -29,7 +27,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  const supabase = await createSupabaseServerClient();
+  // Vytvoříme redirect response jako první
+  const res = NextResponse.redirect(new URL(next, url.origin));
+
+  const supabase = createSupabaseRouteClient(request, res);
 
   const { error } = await supabase.auth.exchangeCodeForSession(code);
 
@@ -39,5 +40,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  return NextResponse.redirect(new URL(next, url.origin));
+  // Vracíme tu samou response, do které se zapisovaly cookies
+  return res;
 }
