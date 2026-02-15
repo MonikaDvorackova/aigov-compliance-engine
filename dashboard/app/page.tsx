@@ -1,300 +1,344 @@
 import Link from "next/link";
 
-export const dynamic = "force-dynamic";
+function IconList({ size = 20, color = "#1D4ED8" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill={color}
+        d="M4 6.5h14a1 1 0 0 0 0-2H4a1 1 0 0 0 0 2Zm0 6h14a1 1 0 0 0 0-2H4a1 1 0 0 0 0 2Zm0 6h14a1 1 0 0 0 0-2H4a1 1 0 0 0 0 2Z"
+      />
+    </svg>
+  );
+}
 
-export default function DashboardHomePage() {
-  const blue = "#1D4ED8";
-  const iconGlow =
-    "drop-shadow(0 0 8px rgba(59,130,246,0.90)) drop-shadow(0 0 18px rgba(59,130,246,0.65)) drop-shadow(0 0 40px rgba(29,78,216,0.45))";
+function IconShield({ size = 20, color = "#1D4ED8" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill={color}
+        d="M12 2.25c.18 0 .36.04.53.12l7 3.2c.52.24.85.76.85 1.33v5.72c0 4.54-2.86 8.66-7.13 10.27a1.6 1.6 0 0 1-1.1 0C7.88 21.28 5 17.16 5 12.62V6.9c0-.57.33-1.09.85-1.33l7-3.2c.17-.08.35-.12.53-.12Zm0 2.06L7 6.55v6.07c0 3.7 2.32 7.04 5.84 8.38a.4.4 0 0 0 .32 0C16.68 19.66 19 16.32 19 12.62V6.55l-7-2.24Z"
+      />
+    </svg>
+  );
+}
 
-  const shellBg =
-    "radial-gradient(1200px 520px at 50% 8%, rgba(255,255,255,0.08), rgba(0,0,0,0) 60%), radial-gradient(900px 520px at 20% 28%, rgba(29,78,216,0.10), rgba(0,0,0,0) 55%), radial-gradient(900px 520px at 82% 42%, rgba(255,255,255,0.06), rgba(0,0,0,0) 55%)";
+function IconBolt({ size = 20, color = "#1D4ED8" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill={color}
+        d="M13 2a1 1 0 0 1 .95 1.32L12.53 8H18a1 1 0 0 1 .78 1.63l-8 10A1 1 0 0 1 9 19l1.42-6H6a1 1 0 0 1-.78-1.63l7-9A1 1 0 0 1 13 2Z"
+      />
+    </svg>
+  );
+}
 
-  const cardBorder = "1px solid rgba(255,255,255,0.14)";
-  const cardBg = "rgba(255,255,255,0.03)";
+function IconDownload({ size = 20, color = "#1D4ED8" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill={color}
+        d="M12 3a1 1 0 0 1 1 1v8.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42l2.3 2.3V4a1 1 0 0 1 1-1Zm-7 16a1 1 0 0 1 1-1h12a1 1 0 0 1 0 2H6a1 1 0 0 1-1-1Z"
+      />
+    </svg>
+  );
+}
 
-  function IconShield({ size = 18, color = blue }: { size?: number; color?: string }) {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          fill={color}
-          d="M12 2.5 20 6v7.2c0 5.02-3.45 8.83-8 10.3-4.55-1.47-8-5.28-8-10.3V6l8-3.5Zm0 2.2L6 7.3v5.9c0 3.86 2.49 7.02 6 8.32 3.51-1.3 6-4.46 6-8.32V7.3l-6-2.6Zm-1.1 12.2 6.2-6.2 1.4 1.4-7.6 7.6-3.9-3.9 1.4-1.4 2.5 2.5Z"
-        />
-      </svg>
-    );
-  }
+function GlowIcon({
+  children,
+  glow = "rgba(29,78,216,0.55)",
+}: {
+  children: React.ReactNode;
+  glow?: string;
+}) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 44,
+        height: 44,
+        borderRadius: 14,
+        background: "rgba(255,255,255,0.06)",
+        border: "1px solid rgba(255,255,255,0.14)",
+        boxShadow: `0 0 0 1px rgba(255,255,255,0.03), 0 12px 38px rgba(0,0,0,0.35), 0 0 22px ${glow}`,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
 
-  function IconList({ size = 18, color = blue }: { size?: number; color?: string }) {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          fill={color}
-          d="M4 6.5h2v2H4v-2Zm4 0h12v2H8v-2ZM4 11h2v2H4v-2Zm4 0h12v2H8v-2ZM4 15.5h2v2H4v-2Zm4 0h12v2H8v-2Z"
-        />
-      </svg>
-    );
-  }
-
-  function IconBolt({ size = 18, color = blue }: { size?: number; color?: string }) {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          fill={color}
-          d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"
-        />
-      </svg>
-    );
-  }
-
-  function IconUpload({ size = 18, color = blue }: { size?: number; color?: string }) {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          fill={color}
-          d="M12 3 7 8h3v6h4V8h3l-5-5Zm-7 15h14v2H5v-2Z"
-        />
-      </svg>
-    );
-  }
-
-  function CTAButton({
-    href,
-    title,
-    subtitle,
-    icon,
-    primary = false,
-  }: {
-    href: string;
-    title: string;
-    subtitle: string;
-    icon: React.ReactNode;
-    primary?: boolean;
-  }) {
-    return (
-      <Link
-        href={href}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          padding: "12px 12px",
-          borderRadius: 14,
-          border: primary ? "1px solid rgba(59,130,246,0.38)" : "1px solid rgba(255,255,255,0.16)",
-          background: primary ? "rgba(59,130,246,0.10)" : "rgba(255,255,255,0.04)",
-          textDecoration: "none",
-          color: "white",
-          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
-          transition: "transform 120ms ease, background 120ms ease, border-color 120ms ease",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ display: "inline-flex", filter: iconGlow }}>{icon}</span>
-          <div style={{ display: "grid", gap: 2 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em" }}>{title}</div>
-            <div style={{ fontSize: 12, opacity: 0.72 }}>{subtitle}</div>
-          </div>
+function FeatureCard({
+  title,
+  description,
+  icon,
+  href,
+}: {
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+  href?: string;
+}) {
+  const Inner = (
+    <div
+      style={{
+        height: "100%",
+        padding: 16,
+        borderRadius: 18,
+        border: "1px solid rgba(255,255,255,0.16)",
+        background: "rgba(255,255,255,0.05)",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
+        display: "grid",
+        gridTemplateColumns: "52px 1fr",
+        gap: 12,
+        alignItems: "start",
+      }}
+    >
+      <div style={{ marginTop: 2 }}>{icon}</div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 18, fontWeight: 650, letterSpacing: "-0.01em" }}>{title}</div>
+        <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.45, opacity: 0.78 }}>
+          {description}
         </div>
-        <span style={{ opacity: 0.7, fontSize: 14 }}>→</span>
-      </Link>
-    );
-  }
+      </div>
+    </div>
+  );
+
+  if (!href) return Inner;
+
+  return (
+    <Link
+      href={href}
+      style={{
+        display: "block",
+        textDecoration: "none",
+        color: "inherit",
+      }}
+    >
+      {Inner}
+    </Link>
+  );
+}
+
+export default function HomePage() {
+  const blue = "#1D4ED8";
 
   return (
     <main
       style={{
         minHeight: "100vh",
-        background: shellBg,
-        padding: 18,
-        display: "grid",
-        placeItems: "center",
+        background:
+          "radial-gradient(900px 520px at 50% 0%, rgba(29,78,216,0.16), rgba(0,0,0,0)), radial-gradient(900px 520px at 50% 28%, rgba(255,255,255,0.10), rgba(0,0,0,0))",
+        padding: "clamp(18px, 4vw, 40px)",
       }}
     >
-      <style>{`
-        a[data-cta="1"]:hover { transform: translateY(-1px); background: rgba(255,255,255,0.055); border-color: rgba(255,255,255,0.22); }
-        a[data-cta="1"]:active { transform: translateY(0px); background: rgba(255,255,255,0.045); }
-        a:hover { color: rgba(255,255,255,0.96); }
-      `}</style>
+      <div
+        style={{
+          maxWidth: 1080,
+          margin: "0 auto",
+          display: "grid",
+          gap: "clamp(14px, 2.5vw, 26px)",
+          justifyItems: "center",
+          textAlign: "center",
+        }}
+      >
+        <div style={{ marginTop: "clamp(18px, 4vw, 44px)" }}>
+          <div
+            style={{
+              fontSize: 12,
+              letterSpacing: "0.18em",
+              opacity: 0.7,
+              textTransform: "uppercase",
+            }}
+          >
+            AIGOV
+          </div>
 
-      <div style={{ width: "100%", maxWidth: 980, textAlign: "center" }}>
-        <div style={{ opacity: 0.75, fontSize: 12, letterSpacing: "0.08em" }}>AIGOV</div>
+          <h1
+            style={{
+              margin: "12px 0 0 0",
+              fontSize: "clamp(34px, 7.5vw, 72px)",
+              letterSpacing: "-0.03em",
+              lineHeight: 1.03,
+            }}
+          >
+            Compliance Evidence
+            <br />
+            Dashboard
+          </h1>
 
-        <h1
-          style={{
-            margin: 0,
-            marginTop: 10,
-            fontSize: 42,
-            letterSpacing: "-0.03em",
-            lineHeight: 1.05,
-          }}
-        >
-          Compliance Evidence Dashboard
-        </h1>
+          <p
+            style={{
+              margin: "clamp(12px, 2.4vw, 18px) auto 0 auto",
+              maxWidth: 760,
+              fontSize: "clamp(14px, 2.6vw, 18px)",
+              lineHeight: 1.5,
+              opacity: 0.78,
+            }}
+          >
+            Generate runs, verify integrity, and ship auditable evidence bundles.
+          </p>
 
-        <p style={{ marginTop: 12, marginBottom: 18, opacity: 0.78, fontSize: 14 }}>
-          Generate runs, verify integrity, and ship auditable evidence bundles.
-        </p>
+          <div
+            style={{
+              marginTop: "clamp(16px, 3vw, 22px)",
+              display: "flex",
+              gap: 12,
+              justifyContent: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <Link
+              href="/runs"
+              style={{
+                textDecoration: "none",
+                color: "white",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                height: 48,
+                padding: "0 18px",
+                borderRadius: 16,
+                border: "1px solid rgba(255,255,255,0.20)",
+                background: "rgba(255,255,255,0.06)",
+                boxShadow: `0 0 24px rgba(29,78,216,0.22), inset 0 1px 0 rgba(255,255,255,0.08)`,
+                fontSize: 16,
+                fontWeight: 650,
+              }}
+            >
+              Open runs
+            </Link>
+
+            <Link
+              href="/login"
+              style={{
+                textDecoration: "none",
+                color: "rgba(255,255,255,0.90)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                height: 48,
+                padding: "0 18px",
+                borderRadius: 16,
+                border: "1px solid rgba(255,255,255,0.16)",
+                background: "rgba(0,0,0,0.20)",
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
+                fontSize: 16,
+                fontWeight: 600,
+              }}
+            >
+              Sign in
+            </Link>
+          </div>
+        </div>
 
         <div
           style={{
-            margin: "0 auto",
-            borderRadius: 18,
-            border: cardBorder,
-            background: cardBg,
-            boxShadow: "0 18px 60px rgba(0,0,0,0.40)",
-            padding: 16,
-            textAlign: "left",
+            width: "min(980px, 100%)",
+            borderRadius: 24,
+            border: "1px solid rgba(255,255,255,0.16)",
+            background: "rgba(255,255,255,0.06)",
+            boxShadow: "0 26px 90px rgba(0,0,0,0.45)",
+            padding: "clamp(14px, 3vw, 22px)",
+            position: "relative",
+            overflow: "hidden",
           }}
         >
-          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
-            <div style={{ display: "grid", gap: 10 }}>
-              <Link
+          <div
+            style={{
+              position: "absolute",
+              inset: -2,
+              background:
+                "radial-gradient(520px 220px at 15% 15%, rgba(29,78,216,0.22), rgba(0,0,0,0)), radial-gradient(520px 220px at 85% 35%, rgba(255,255,255,0.12), rgba(0,0,0,0))",
+              pointerEvents: "none",
+            }}
+          />
+
+          <div style={{ position: "relative" }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: "clamp(10px, 2.2vw, 14px)",
+              }}
+            >
+              <FeatureCard
+                title="Open runs"
+                description="Browse recent runs, inspect hashes, and open run detail."
                 href="/runs"
-                style={{
-                  display: "block",
-                  padding: "14px 14px",
-                  borderRadius: 16,
-                  border: "1px solid rgba(255,255,255,0.16)",
-                  background: "rgba(255,255,255,0.05)",
-                  textDecoration: "none",
-                  color: "white",
-                  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <span style={{ display: "inline-flex", filter: iconGlow }}>
-                    <IconList />
-                  </span>
-                  <div style={{ display: "grid", gap: 2 }}>
-                    <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-0.01em" }}>
-                      Open runs
-                    </div>
-                    <div style={{ fontSize: 12, opacity: 0.72 }}>
-                      Browse recent runs, inspect hashes, and open run detail.
-                    </div>
-                  </div>
-                </div>
-              </Link>
+                icon={
+                  <GlowIcon glow="rgba(29,78,216,0.65)">
+                    <IconList color={blue} />
+                  </GlowIcon>
+                }
+              />
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <Link
-                  href="/login"
-                  style={{
-                    display: "block",
-                    padding: "12px 12px",
-                    borderRadius: 14,
-                    border: "1px solid rgba(255,255,255,0.16)",
-                    background: "rgba(255,255,255,0.04)",
-                    textDecoration: "none",
-                    color: "white",
-                    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ display: "inline-flex", filter: iconGlow }}>
-                      <IconShield />
-                    </span>
-                    <div style={{ display: "grid", gap: 2 }}>
-                      <div style={{ fontSize: 13, fontWeight: 750 }}>Sign in</div>
-                      <div style={{ fontSize: 12, opacity: 0.72 }}>Authenticate to view private runs.</div>
-                    </div>
-                  </div>
-                </Link>
+              <FeatureCard
+                title="Sign in"
+                description="Authenticate to access private runs and protected artifacts."
+                href="/login"
+                icon={
+                  <GlowIcon glow="rgba(29,78,216,0.65)">
+                    <IconShield color={blue} />
+                  </GlowIcon>
+                }
+              />
 
-                <Link
-                  href="/"
-                  style={{
-                    display: "block",
-                    padding: "12px 12px",
-                    borderRadius: 14,
-                    border: "1px solid rgba(255,255,255,0.16)",
-                    background: "rgba(255,255,255,0.04)",
-                    textDecoration: "none",
-                    color: "white",
-                    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ display: "inline-flex", filter: iconGlow }}>
-                      <IconBolt />
-                    </span>
-                    <div style={{ display: "grid", gap: 2 }}>
-                      <div style={{ fontSize: 13, fontWeight: 750 }}>Overview</div>
-                      <div style={{ fontSize: 12, opacity: 0.72 }}>What this dashboard is for.</div>
-                    </div>
-                  </div>
-                </Link>
-              </div>
+              <FeatureCard
+                title="Integrity"
+                description="Mode, status, hashes, and close timestamp in one place."
+                icon={
+                  <GlowIcon glow="rgba(29,78,216,0.55)">
+                    <IconBolt color={blue} />
+                  </GlowIcon>
+                }
+              />
+
+              <FeatureCard
+                title="Artifacts"
+                description="Evidence pack, audit JSON, and evidence JSON ready to ship."
+                icon={
+                  <GlowIcon glow="rgba(29,78,216,0.55)">
+                    <IconDownload color={blue} />
+                  </GlowIcon>
+                }
+              />
             </div>
 
-            <div style={{ height: 1, background: "rgba(255,255,255,0.10)", margin: "2px 0" }} />
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Link
-                href="/runs"
-                data-cta="1"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  padding: "12px 12px",
-                  borderRadius: 14,
-                  border: "1px solid rgba(255,255,255,0.16)",
-                  background: "rgba(255,255,255,0.04)",
-                  textDecoration: "none",
-                  color: "white",
-                  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ display: "inline-flex", filter: iconGlow }}>
-                    <IconList />
-                  </span>
-                  <div style={{ display: "grid", gap: 2 }}>
-                    <div style={{ fontSize: 13, fontWeight: 750 }}>Runs</div>
-                    <div style={{ fontSize: 12, opacity: 0.72 }}>List and detail</div>
-                  </div>
-                </div>
-                <span style={{ opacity: 0.7, fontSize: 14 }}>→</span>
-              </Link>
-
-              <Link
-                href="/runs"
-                data-cta="1"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  padding: "12px 12px",
-                  borderRadius: 14,
-                  border: "1px solid rgba(255,255,255,0.16)",
-                  background: "rgba(255,255,255,0.04)",
-                  textDecoration: "none",
-                  color: "white",
-                  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ display: "inline-flex", filter: iconGlow }}>
-                    <IconUpload />
-                  </span>
-                  <div style={{ display: "grid", gap: 2 }}>
-                    <div style={{ fontSize: 13, fontWeight: 750 }}>Artifacts</div>
-                    <div style={{ fontSize: 12, opacity: 0.72 }}>Packs and hashes</div>
-                  </div>
-                </div>
-                <span style={{ opacity: 0.7, fontSize: 14 }}>→</span>
-              </Link>
-            </div>
-
-            <div style={{ marginTop: 4, opacity: 0.55, fontSize: 12, textAlign: "center" }}>
+            <div
+              style={{
+                marginTop: "clamp(14px, 2.8vw, 18px)",
+                opacity: 0.72,
+                fontSize: "clamp(12px, 2.2vw, 14px)",
+                textAlign: "center",
+              }}
+            >
               Minimal surface, strong guarantees. Everything is hashed. Everything is traceable.
             </div>
           </div>
+
+          <style>{`
+            @media (max-width: 720px) {
+              div[data-grid="features"] {
+                grid-template-columns: 1fr;
+              }
+            }
+          `}</style>
         </div>
+
+        <div style={{ height: 12 }} />
       </div>
+
+      <style>{`
+        :root { color-scheme: dark; }
+        body { margin: 0; background: #000; color: #fff; }
+        * { box-sizing: border-box; }
+        @media (max-width: 720px) {
+          main { padding-left: 16px; padding-right: 16px; }
+        }
+      `}</style>
     </main>
   );
 }
