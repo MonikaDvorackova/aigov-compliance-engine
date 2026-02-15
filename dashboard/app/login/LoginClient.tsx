@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { useRouter, useSearchParams } from "next/navigation";
+import AigovMarkStatic from "../components/brand/AigovMarkStatic";
 
 function createSupabaseBrowserClient(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -131,29 +132,6 @@ export default function LoginClient() {
     }
   }
 
-  async function signInOAuth(provider: "google" | "github") {
-    setBusy(true);
-    setMessage(null);
-
-    try {
-      const redirectTo = `${window.location.origin}/auth/callback`;
-
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: { redirectTo },
-      });
-
-      if (error) {
-        setMessage(userFriendlyMessage(error.message) ?? "Sign in failed. Please try again.");
-        return;
-      }
-    } catch (_err: any) {
-      setMessage("Sign in failed. Please try again.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   const shellBg =
     "radial-gradient(1200px 520px at 50% 8%, rgba(255,255,255,0.08), rgba(0,0,0,0) 60%), radial-gradient(900px 520px at 20% 28%, rgba(29,78,216,0.10), rgba(0,0,0,0) 55%), radial-gradient(900px 520px at 82% 42%, rgba(255,255,255,0.06), rgba(0,0,0,0) 55%)";
 
@@ -216,6 +194,10 @@ export default function LoginClient() {
       `}</style>
 
       <div style={{ width: "100%", maxWidth: 520, textAlign: "center" }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+          <AigovMarkStatic style={{ width: 152, height: "auto", opacity: 0.92 }} />
+        </div>
+
         <div style={{ opacity: 0.75, fontSize: 12, letterSpacing: "0.08em" }}>AIGOV</div>
 
         <h1
@@ -270,19 +252,23 @@ export default function LoginClient() {
           ) : null}
 
           <div style={{ display: "grid", gap: 10 }}>
-            <button type="button" data-btn="1" onClick={() => signInOAuth("google")} disabled={busy} style={buttonStyle}>
-              <span style={{ display: "inline-flex", filter: iconGlow }}>
-                <IconGoogle color={blue} size={18} />
-              </span>
-              Continue with Google
-            </button>
+            <a href="/auth/login/google?next=/runs" style={{ textDecoration: "none" }} aria-disabled={busy}>
+              <button type="button" data-btn="1" disabled={busy} style={buttonStyle}>
+                <span style={{ display: "inline-flex", filter: iconGlow }}>
+                  <IconGoogle color={blue} size={18} />
+                </span>
+                Continue with Google
+              </button>
+            </a>
 
-            <button type="button" data-btn="1" onClick={() => signInOAuth("github")} disabled={busy} style={buttonStyle}>
-              <span style={{ display: "inline-flex", filter: iconGlow }}>
-                <IconGitHub color={blue} size={18} />
-              </span>
-              Continue with GitHub
-            </button>
+            <a href="/auth/login/github?next=/runs" style={{ textDecoration: "none" }} aria-disabled={busy}>
+              <button type="button" data-btn="1" disabled={busy} style={buttonStyle}>
+                <span style={{ display: "inline-flex", filter: iconGlow }}>
+                  <IconGitHub color={blue} size={18} />
+                </span>
+                Continue with GitHub
+              </button>
+            </a>
           </div>
 
           <div style={{ marginTop: 14, opacity: 0.65, fontSize: 12, textAlign: "center" }}>

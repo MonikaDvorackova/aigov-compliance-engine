@@ -27,19 +27,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  // Vytvoříme redirect response jako první
   const res = NextResponse.redirect(new URL(next, url.origin));
-
   const supabase = createSupabaseRouteClient(request, res);
 
   const { error } = await supabase.auth.exchangeCodeForSession(code);
 
   if (error) {
     const redirectUrl = new URL("/login", url.origin);
-    redirectUrl.searchParams.set("message", error.message || "OAuth exchange failed.");
+    redirectUrl.searchParams.set("message", `exchange:${error.message}`);
     return NextResponse.redirect(redirectUrl);
   }
 
-  // Vracíme tu samou response, do které se zapisovaly cookies
   return res;
 }
