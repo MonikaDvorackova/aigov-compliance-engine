@@ -1,12 +1,9 @@
-import { type NextRequest } from "next/server";
-import { updateSession } from "./lib/supabase/proxy";
+import { type NextRequest, NextResponse } from "next/server";
+import { createSupabaseRouteClient } from "./lib/supabase/proxy";
 
 export async function proxy(request: NextRequest) {
-  return await updateSession(request);
+  const res = NextResponse.next({ request: { headers: request.headers } });
+  const supabase = createSupabaseRouteClient(request, res);
+  if (supabase) await supabase.auth.getClaims();
+  return res;
 }
-
-export const config = {
-  matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api|auth|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
-  ],
-};
