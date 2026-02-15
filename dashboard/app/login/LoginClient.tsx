@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useRouter, useSearchParams } from "next/navigation";
 import AigovMarkStatic from "../components/brand/AigovMarkStatic";
 
@@ -12,13 +13,7 @@ function createSupabaseBrowserClient(): SupabaseClient {
   if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
   if (!anon) throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY");
 
-  return createClient(url, anon, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
-    },
-  });
+  return createBrowserClient(url, anon);
 }
 
 function IconGoogle({ size = 18, color = "#1D4ED8" }: { size?: number; color?: string }) {
@@ -40,7 +35,7 @@ function IconGoogle({ size = 18, color = "#1D4ED8" }: { size?: number; color?: s
         opacity="0.66"
       />
       <path
-        d="M12 5.94c1.47 0 2.8.5 3.84 1.5l2.88-2.88C16.96 2.9 14.7 2 12 2 8.06 2 4.66 4.22 3.02 7.55l3.3 2.56c.8-2.39 3.04-4.17 5.68-4.17Z"
+        d="M12 5.94c1.47 0 2.8.5 3.84 1.5l2.88-2.88C16.96 2.9 14.7 2 12 2 8.06 0 4.66 4.22 3.02 7.55l3.3 2.56c.8-2.39 3.04-4.17 5.68-4.17Z"
         fill={color}
         opacity="0.88"
       />
@@ -74,7 +69,13 @@ function userFriendlyMessage(raw: string | null): string | null {
 
   const lower = s.toLowerCase();
 
-  if (lower.includes("missing oauth code") || lower.includes("oauth exchange failed") || lower.includes("invalid code")) {
+  if (
+    lower.includes("missing oauth code") ||
+    lower.includes("oauth exchange failed") ||
+    lower.includes("invalid code") ||
+    lower.includes("pkce") ||
+    lower.includes("code verifier")
+  ) {
     return "Sign in didn’t complete. Please try again.";
   }
 
