@@ -5,6 +5,7 @@ import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useRouter, useSearchParams } from "next/navigation";
 import AigovMarkStatic from "../components/brand/AigovMarkStatic";
+import InfraShell, { InfraPanel } from "../_ui/InfraShell";
 
 function createSupabaseBrowserClient(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -133,40 +134,44 @@ export default function LoginClient() {
     }
   }
 
-  const shellBg =
-    "radial-gradient(1200px 520px at 50% 8%, rgba(255,255,255,0.08), rgba(0,0,0,0) 60%), radial-gradient(900px 520px at 20% 28%, rgba(29,78,216,0.10), rgba(0,0,0,0) 55%), radial-gradient(900px 520px at 82% 42%, rgba(255,255,255,0.06), rgba(0,0,0,0) 55%)";
-
-  const cardBorder = "1px solid rgba(255,255,255,0.14)";
-  const cardBg = "rgba(255,255,255,0.03)";
-
   const inputStyle: React.CSSProperties = {
     width: "100%",
     height: 44,
-    borderRadius: 12,
+    borderRadius: 16,
     border: "1px solid rgba(255,255,255,0.16)",
-    background: "rgba(0,0,0,0.25)",
+    background: "rgba(255,255,255,0.03)",
     color: "white",
     fontSize: 14,
     padding: "0 12px",
     outline: "none",
     textAlign: "center",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
+    backdropFilter: "blur(10px)",
+    WebkitBackdropFilter: "blur(10px)",
   };
 
   const buttonStyle: React.CSSProperties = {
     width: "100%",
-    height: 44,
-    borderRadius: 12,
+    height: 46,
+    borderRadius: 16,
     border: "1px solid rgba(255,255,255,0.18)",
-    background: "rgba(255,255,255,0.04)",
+    background: "rgba(255,255,255,0.06)",
     color: "white",
-    fontSize: 14,
+    fontSize: 15,
     cursor: busy ? "not-allowed" : "pointer",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10), 0 18px 40px rgba(0,0,0,0.30)",
     transition: "transform 120ms ease, background 120ms ease, border-color 120ms ease",
+    backdropFilter: "blur(10px)",
+    WebkitBackdropFilter: "blur(10px)",
+  };
+
+  const buttonSoftStyle: React.CSSProperties = {
+    ...buttonStyle,
+    background: "rgba(255,255,255,0.04)",
   };
 
   const linkStyle: React.CSSProperties = {
@@ -178,36 +183,29 @@ export default function LoginClient() {
   };
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: shellBg,
-        padding: 18,
-        display: "grid",
-        placeItems: "center",
-      }}
-    >
+    <InfraShell maxWidth={520} align="center" padding={18}>
       <style>{`
-        button[data-btn="1"]:hover { transform: translateY(-1px); background: rgba(255,255,255,0.055); border-color: rgba(255,255,255,0.22); }
-        button[data-btn="1"]:active { transform: translateY(0px); background: rgba(255,255,255,0.045); }
+        button[data-btn="1"]:hover { transform: translateY(-1px); background: rgba(255,255,255,0.075); border-color: rgba(255,255,255,0.22); }
+        button[data-btn="1"]:active { transform: translateY(0px); background: rgba(255,255,255,0.06); }
         input:focus { border-color: rgba(59,130,246,0.70); box-shadow: 0 0 0 3px rgba(59,130,246,0.20); }
         a:hover { color: rgba(255,255,255,0.92); text-decoration-color: rgba(59,130,246,0.95); }
       `}</style>
 
-      <div style={{ width: "100%", maxWidth: 520, textAlign: "center" }}>
+      <div style={{ width: "100%", textAlign: "center" }}>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
           <AigovMarkStatic style={{ width: 152, height: "auto", opacity: 0.92 }} />
         </div>
 
-        <div style={{ opacity: 0.75, fontSize: 12, letterSpacing: "0.08em" }}>AIGOV</div>
+        <div style={{ opacity: 0.72, fontSize: 12, letterSpacing: "0.28em", marginBottom: 10 }}>GOVAI</div>
 
         <h1
           style={{
             margin: 0,
-            marginTop: 10,
-            fontSize: 28,
-            letterSpacing: "-0.02em",
-            lineHeight: 1.05,
+            letterSpacing: "-0.03em",
+            fontWeight: 500,
+            lineHeight: 1.06,
+            fontSize: "clamp(28px, 6.2vw, 40px)",
+            textWrap: "balance",
           }}
         >
           Dashboard Login
@@ -215,37 +213,30 @@ export default function LoginClient() {
 
         <p
           style={{
-            marginTop: 10,
-            marginBottom: 14,
+            margin: "12px auto 16px",
+            maxWidth: "42ch",
             opacity: 0.78,
-            fontSize: 13,
+            fontSize: 14,
+            lineHeight: 1.45,
+            textWrap: "balance",
           }}
         >
           Sign in to load runs from the database.
         </p>
 
-        <div
-          style={{
-            margin: "0 auto",
-            borderRadius: 16,
-            border: cardBorder,
-            background: cardBg,
-            boxShadow: "0 18px 60px rgba(0,0,0,0.40)",
-            padding: 16,
-            textAlign: "left",
-          }}
-        >
+        <InfraPanel>
           {message ? (
             <div
               style={{
-                marginBottom: 10,
+                marginBottom: 12,
                 padding: "10px 12px",
-                borderRadius: 12,
+                borderRadius: 16,
                 border: "1px solid rgba(255,255,255,0.16)",
                 background: "rgba(255,255,255,0.05)",
                 fontSize: 12,
                 opacity: 0.95,
                 textAlign: "left",
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
               }}
             >
               {message}
@@ -254,7 +245,7 @@ export default function LoginClient() {
 
           <div style={{ display: "grid", gap: 10 }}>
             <a href="/auth/login/google?next=/runs" style={{ textDecoration: "none" }} aria-disabled={busy}>
-              <button type="button" data-btn="1" disabled={busy} style={buttonStyle}>
+              <button type="button" data-btn="1" disabled={busy} style={buttonSoftStyle}>
                 <span style={{ display: "inline-flex", filter: iconGlow }}>
                   <IconGoogle color={blue} size={18} />
                 </span>
@@ -263,7 +254,7 @@ export default function LoginClient() {
             </a>
 
             <a href="/auth/login/github?next=/runs" style={{ textDecoration: "none" }} aria-disabled={busy}>
-              <button type="button" data-btn="1" disabled={busy} style={buttonStyle}>
+              <button type="button" data-btn="1" disabled={busy} style={buttonSoftStyle}>
                 <span style={{ display: "inline-flex", filter: iconGlow }}>
                   <IconGitHub color={blue} size={18} />
                 </span>
@@ -332,8 +323,8 @@ export default function LoginClient() {
           <div style={{ marginTop: 10, opacity: 0.55, fontSize: 11, textAlign: "center" }}>
             Secure sign in via Google or GitHub.
           </div>
-        </div>
+        </InfraPanel>
       </div>
-    </main>
+    </InfraShell>
   );
 }
