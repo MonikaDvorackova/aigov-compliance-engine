@@ -1,4 +1,6 @@
+import React from "react";
 import Link from "next/link";
+import InfraShell, { InfraPanel } from "./_ui/InfraShell";
 
 type Feature = {
   title: string;
@@ -84,10 +86,6 @@ function IconDownload({ size = 22 }: { size?: number }) {
   );
 }
 
-function cx(...xs: Array<string | false | null | undefined>) {
-  return xs.filter(Boolean).join(" ");
-}
-
 export default function Page() {
   const accent = "#1D4ED8";
 
@@ -115,111 +113,135 @@ export default function Page() {
   ];
 
   return (
-    <main className="page">
-      <div className="shell">
-        <div className="hero">
-          <div className="kicker">AIGOV</div>
+    <InfraShell maxWidth={980} align="start">
+      <div style={{ textAlign: "center", paddingTop: 8 }}>
+        <div style={{ letterSpacing: "0.28em", fontSize: 12, opacity: 0.72, marginBottom: 10 }}>GOVAI</div>
 
-          <h1 className="h1">
-            Compliance Evidence
-            <br />
-            Dashboard
-          </h1>
+        <h1
+          style={{
+            margin: 0,
+            letterSpacing: "-0.03em",
+            fontWeight: 500,
+            lineHeight: 1.06,
+            fontSize: "clamp(34px, 7.6vw, 60px)",
+            textWrap: "balance",
+          }}
+        >
+          Compliance Evidence
+          <br />
+          Dashboard
+        </h1>
 
-          <p className="sub">
-            Generate runs, verify integrity, and ship auditable evidence bundles.
-          </p>
+        <p
+          style={{
+            margin: "14px auto 16px",
+            maxWidth: "42ch",
+            opacity: 0.78,
+            fontSize: "clamp(14px, 3.6vw, 18px)",
+            lineHeight: 1.45,
+            textWrap: "balance",
+          }}
+        >
+          Generate runs, verify integrity, and ship auditable evidence bundles.
+        </p>
 
-          <div className="ctaRow">
-            <Link className="btn" href="/runs">
-              Open runs
-            </Link>
-            <Link className={cx("btn", "btnSoft")} href="/login">
-              Sign in
-            </Link>
-          </div>
+        <div
+          style={{
+            display: "flex",
+            gap: 12,
+            justifyContent: "center",
+            alignItems: "center",
+            flexWrap: "wrap",
+            marginTop: 10,
+            marginBottom: 18,
+          }}
+        >
+          <Link className="govai_btn" href="/runs">
+            Open runs
+          </Link>
+          <Link className="govai_btn govai_btnSoft" href="/login">
+            Sign in
+          </Link>
         </div>
-
-        <section className="panel">
-          <div className="grid">
-            {features.map((f) => (
-              <div key={f.title} className="card">
-                <div className="iconPill" aria-hidden="true">
-                  <span className="icon">{f.icon}</span>
-                </div>
-                <div className="cardTitle">{f.title}</div>
-                <div className="cardDesc">{f.description}</div>
-              </div>
-            ))}
-          </div>
-
-          <div className="footerLine">
-            Minimal surface, strong guarantees. Everything is hashed.
-            <br />
-            Everything is traceable.
-          </div>
-        </section>
       </div>
 
+      <InfraPanel>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 14,
+          }}
+        >
+          {features.map((f) => (
+            <div
+              key={f.title}
+              style={{
+                borderRadius: 18,
+                border: "1px solid rgba(255,255,255,0.14)",
+                background: "rgba(255,255,255,0.03)",
+                padding: "14px 12px 14px",
+                textAlign: "center",
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
+                minHeight: 162,
+                display: "grid",
+                alignContent: "start",
+                justifyItems: "center",
+              }}
+            >
+              <div
+                aria-hidden="true"
+                style={{
+                  width: 54,
+                  height: 54,
+                  borderRadius: 16,
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  background: "rgba(29,78,216,0.10)",
+                  boxShadow:
+                    "0 0 28px rgba(29,78,216,0.26), inset 0 1px 0 rgba(255,255,255,0.10)",
+                  display: "grid",
+                  placeItems: "center",
+                  marginBottom: 10,
+                }}
+              >
+                <span
+                  style={{
+                    color: accent,
+                    filter: "drop-shadow(0 0 10px rgba(29,78,216,0.55))",
+                    display: "inline-flex",
+                  }}
+                >
+                  {f.icon}
+                </span>
+              </div>
+
+              <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-0.01em", marginBottom: 6 }}>
+                {f.title}
+              </div>
+              <div
+                style={{
+                  fontSize: 14,
+                  opacity: 0.76,
+                  lineHeight: 1.42,
+                  maxWidth: "18ch",
+                  textWrap: "balance",
+                }}
+              >
+                {f.description}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ textAlign: "center", marginTop: 14, fontSize: 13, opacity: 0.7, lineHeight: 1.45 }}>
+          Minimal surface, strong guarantees. Everything is hashed.
+          <br />
+          Everything is traceable.
+        </div>
+      </InfraPanel>
+
       <style>{`
-        .page {
-          min-height: 100vh;
-          padding: 22px 16px 28px;
-          display: grid;
-          place-items: start center;
-          color: rgba(255,255,255,0.92);
-          background:
-            radial-gradient(1200px 640px at 50% -10%, rgba(255,255,255,0.10), rgba(0,0,0,0)),
-            radial-gradient(900px 520px at 50% 12%, rgba(29,78,216,0.12), rgba(0,0,0,0)),
-            linear-gradient(180deg, rgba(9,16,32,1) 0%, rgba(5,9,18,1) 100%);
-        }
-
-        .shell {
-          width: 100%;
-          max-width: 980px;
-        }
-
-        .hero {
-          text-align: center;
-          padding-top: 8px;
-        }
-
-        .kicker {
-          letter-spacing: 0.28em;
-          font-size: 12px;
-          opacity: 0.72;
-          margin-bottom: 10px;
-        }
-
-        .h1 {
-          margin: 0;
-          letter-spacing: -0.03em;
-          font-weight: 500;
-          line-height: 1.06;
-          font-size: clamp(34px, 7.6vw, 60px);
-          text-wrap: balance;
-        }
-
-        .sub {
-          margin: 14px auto 16px;
-          max-width: 42ch;
-          opacity: 0.78;
-          font-size: clamp(14px, 3.6vw, 18px);
-          line-height: 1.45;
-          text-wrap: balance;
-        }
-
-        .ctaRow {
-          display: flex;
-          gap: 12px;
-          justify-content: center;
-          align-items: center;
-          flex-wrap: wrap;
-          margin-top: 10px;
-          margin-bottom: 18px;
-        }
-
-        .btn {
+        .govai_btn {
           display: inline-flex;
           align-items: center;
           justify-content: center;
@@ -232,152 +254,17 @@ export default function Page() {
           text-decoration: none;
           font-size: 17px;
           font-weight: 600;
-          box-shadow:
-            inset 0 1px 0 rgba(255,255,255,0.10),
-            0 18px 40px rgba(0,0,0,0.30);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 18px 40px rgba(0,0,0,0.30);
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
         }
-
-        .btnSoft {
-          background: rgba(255,255,255,0.04);
-        }
-
-        .panel {
-          margin-top: 10px;
-          border-radius: 22px;
-          border: 1px solid rgba(255,255,255,0.14);
-          background: rgba(255,255,255,0.04);
-          box-shadow: 0 22px 70px rgba(0,0,0,0.45);
-          padding: 16px;
-          backdrop-filter: blur(14px);
-          -webkit-backdrop-filter: blur(14px);
-        }
-
-        .grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 14px;
-        }
-
-        .card {
-          border-radius: 18px;
-          border: 1px solid rgba(255,255,255,0.14);
-          background: rgba(255,255,255,0.03);
-          padding: 14px 12px 14px;
-          text-align: center;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
-          min-height: 162px;
-          display: grid;
-          align-content: start;
-          justify-items: center;
-        }
-
-        .iconPill {
-          width: 54px;
-          height: 54px;
-          border-radius: 16px;
-          border: 1px solid rgba(255,255,255,0.14);
-          background: rgba(29,78,216,0.10);
-          box-shadow:
-            0 0 28px rgba(29,78,216,0.26),
-            inset 0 1px 0 rgba(255,255,255,0.10);
-          display: grid;
-          place-items: center;
-          margin-bottom: 10px;
-        }
-
-        .icon {
-          color: ${accent};
-          filter: drop-shadow(0 0 10px rgba(29,78,216,0.55));
-        }
-
-        .cardTitle {
-          font-size: 18px;
-          font-weight: 700;
-          letter-spacing: -0.01em;
-          margin-bottom: 6px;
-        }
-
-        .cardDesc {
-          font-size: 14px;
-          opacity: 0.76;
-          line-height: 1.42;
-          max-width: 18ch;
-          text-wrap: balance;
-        }
-
-        .footerLine {
-          text-align: center;
-          margin-top: 14px;
-          font-size: 13px;
-          opacity: 0.70;
-          line-height: 1.45;
-        }
-
-        @media (max-width: 420px) {
-          .page {
-            padding: 18px 14px 24px;
-          }
-
-          .panel {
-            padding: 14px;
-          }
-
-          .grid {
-            gap: 12px;
-          }
-
-          .card {
-            padding: 12px 10px 12px;
-            min-height: 152px;
-          }
-
-          .iconPill {
-            width: 50px;
-            height: 50px;
-            border-radius: 15px;
-          }
-
-          .cardTitle {
-            font-size: 17px;
-          }
-
-          .cardDesc {
-            font-size: 13px;
-          }
-
-          .btn {
-            height: 44px;
-            font-size: 16px;
-            padding: 0 16px;
-          }
-        }
-
-        @media (min-width: 760px) {
-          .panel {
-            padding: 18px;
-          }
-
-          .grid {
-            gap: 16px;
-          }
-
-          .card {
-            min-height: 176px;
-            padding: 16px 14px 16px;
-          }
-
-          .cardTitle {
-            font-size: 20px;
-          }
-
-          .cardDesc {
-            font-size: 14px;
-            max-width: 20ch;
-          }
+        .govai_btnSoft { background: rgba(255,255,255,0.04); }
+        .govai_btn:hover { transform: translateY(-1px); }
+        .govai_btn:active { transform: translateY(0px); }
+        @media (max-width: 520px) {
+          .govai_btn { height: 44px; font-size: 16px; padding: 0 16px; }
         }
       `}</style>
-    </main>
+    </InfraShell>
   );
 }

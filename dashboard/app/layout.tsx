@@ -19,32 +19,18 @@ export const metadata: Metadata = {
   },
   description: "Infrastructure-grade AI governance engine.",
   applicationName: "GovAI",
-  keywords: [
-    "AI governance",
-    "AI Act",
-    "compliance engine",
-    "risk management",
-    "ML infrastructure",
-  ],
+  keywords: ["AI governance", "AI Act", "compliance engine", "risk management", "ML infrastructure"],
   authors: [{ name: "GovAI" }],
   creator: "GovAI",
   icons: {
-    icon: "/aigov-icon.svg",
+    icon: "/icon.svg",
   },
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        {children}
-      </body>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>{children}</body>
     </html>
   );
 }
