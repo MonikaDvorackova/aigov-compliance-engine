@@ -4,11 +4,11 @@ import React, { useEffect, useState } from "react";
 import AigovMarkStatic from "./AigovMarkStatic";
 import AigovMarkAnimated from "./AigovMarkAnimated";
 
-type Props = React.SVGProps<SVGSVGElement> & {
+export type AigovMarkProps = React.SVGProps<SVGSVGElement> & {
   isRunning?: boolean;
 };
 
-export default function AigovMark({ isRunning = false, ...svgProps }: Props) {
+export default function AigovMark({ isRunning = false, ...svgProps }: AigovMarkProps) {
   const [reduceMotion, setReduceMotion] = useState(true);
 
   useEffect(() => {
