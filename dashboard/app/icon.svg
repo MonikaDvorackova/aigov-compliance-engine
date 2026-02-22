@@ -1,32 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 120" role="img" aria-label="AIGOV icon">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="84 -20 160 160" role="img" aria-label="GovAI icon">
+
   <defs>
-    <linearGradient id="strokeBlue" x1="90" y1="50" x2="230" y2="90" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="rgba(120,170,255,0.75)" />
-      <stop offset="55%" stop-color="rgba(185,215,255,0.92)" />
-      <stop offset="100%" stop-color="rgba(120,170,255,0.75)" />
+    <linearGradient id="strokeBlue" x1="110" y1="44" x2="210" y2="92" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="rgba(120,170,255,0.75)"></stop>
+      <stop offset="55%" stop-color="rgba(185,215,255,0.92)"></stop>
+      <stop offset="100%" stop-color="rgba(120,170,255,0.75)"></stop>
     </linearGradient>
+
+    <filter id="softGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="2.4" result="b"></feGaussianBlur>
+      <feMerge>
+        <feMergeNode in="b"></feMergeNode>
+        <feMergeNode in="SourceGraphic"></feMergeNode>
+      </feMerge>
+    </filter>
   </defs>
 
-  <path
-    stroke="url(#strokeBlue)"
-    stroke-width="5.6"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    fill="none"
-    opacity="0.96"
-    d="M118 36 L96 60 L118 84"
-  />
-  <path
-    stroke="url(#strokeBlue)"
-    stroke-width="5.6"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    fill="none"
-    opacity="0.96"
-    d="M202 36 L224 60 L202 84"
-  />
+  <circle cx="160" cy="60" r="68" fill="rgba(255,255,255,0.05)"></circle>
 
-  <circle fill="rgba(165,200,255,0.82)" cx="144" cy="77.6" r="6.4" />
-  <circle fill="rgba(165,200,255,0.82)" cx="160" cy="77.6" r="6.4" />
-  <circle fill="rgba(165,200,255,0.82)" cx="176" cy="77.6" r="6.4" />
+  <g filter="url(#softGlow)">
+    <!-- jemný outline pro čitelnost -->
+    <path stroke="rgba(170,205,255,0.6)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" fill="none" d="M118 36 L96 60 L118 84"></path>
+    <path stroke="rgba(170,205,255,0.6)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" fill="none" d="M202 36 L224 60 L202 84"></path>
+
+    <!-- původní kresba -->
+    <path stroke="url(#strokeBlue)" stroke-width="5.6" stroke-linecap="round" stroke-linejoin="round" fill="none" d="M118 36 L96 60 L118 84"></path>
+    <path stroke="url(#strokeBlue)" stroke-width="5.6" stroke-linecap="round" stroke-linejoin="round" fill="none" d="M202 36 L224 60 L202 84"></path>
+
+    <!-- tečky dole ve stejné linii -->
+    <circle fill="rgba(165,200,255,0.92)" cx="144" cy="77.6" r="6.4"></circle>
+    <circle fill="rgba(165,200,255,0.92)" cx="160" cy="77.6" r="6.4"></circle>
+    <circle fill="rgba(165,200,255,0.92)" cx="176" cy="77.6" r="6.4"></circle>
+  </g>
 </svg>
