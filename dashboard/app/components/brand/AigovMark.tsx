@@ -16,7 +16,7 @@ export type AigovMarkProps = {
   style?: React.CSSProperties;
 };
 
-function strengthToFilter(neon: boolean, neonStrength: AigovNeonStrength) {
+function shouldEnableNeon(neon: boolean, neonStrength: AigovNeonStrength) {
   if (!neon) return false;
   if (neonStrength === "off") return false;
   return true;
@@ -27,7 +27,7 @@ export default function AigovMark({
   size = 18,
   glow = true,
   neon = false,
-  neonStrength = "soft",
+  neonStrength = "off",
   tone = "blue",
   className,
   style,
@@ -51,9 +51,16 @@ export default function AigovMark({
 
   const showPulse = useMemo(() => isRunning && !reduceMotion, [isRunning, reduceMotion]);
 
-  const effectiveNeon = strengthToFilter(neon, neonStrength);
+  const effectiveNeon = shouldEnableNeon(neon, neonStrength);
 
   const pulseSize = Math.max(7, Math.round(size * 0.34));
+
+  const pulseBg = tone === "teal" ? "rgba(185,255,244,0.86)" : "rgba(191,219,254,0.86)";
+
+  const pulseShadow =
+    tone === "teal"
+      ? "0 0 10px rgba(45,212,191,0.14), 0 0 18px rgba(153,246,228,0.10)"
+      : "0 0 10px rgba(147,197,253,0.14), 0 0 18px rgba(191,219,254,0.10)";
 
   return (
     <span className={className} style={{ display: "inline-flex", position: "relative", lineHeight: 0, ...style }}>
@@ -69,22 +76,19 @@ export default function AigovMark({
             width: pulseSize,
             height: pulseSize,
             borderRadius: 999,
-            background: tone === "teal" ? "rgba(185,255,244,0.98)" : "rgba(191,219,254,0.98)",
-            boxShadow:
-              tone === "teal"
-                ? "0 0 12px rgba(153,246,228,0.30), 0 0 26px rgba(45,212,191,0.22)"
-                : "0 0 12px rgba(191,219,254,0.30), 0 0 26px rgba(147,197,253,0.22)",
+            background: pulseBg,
+            boxShadow: pulseShadow,
             transformOrigin: "center",
-            animation: "aigovPulse 1.8s ease-in-out infinite",
+            animation: "aigovPulse 1.9s ease-in-out infinite",
           }}
         />
       ) : null}
 
       <style>{`
         @keyframes aigovPulse {
-          0% { transform: scale(1); opacity: 0.72; }
-          50% { transform: scale(1.28); opacity: 1; }
-          100% { transform: scale(1); opacity: 0.72; }
+          0% { transform: scale(1); opacity: 0.58; }
+          50% { transform: scale(1.22); opacity: 0.86; }
+          100% { transform: scale(1); opacity: 0.58; }
         }
       `}</style>
     </span>
