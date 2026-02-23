@@ -1,41 +1,33 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import AigovIcon from "./AigovIcon";
-import AigovWordmark from "./AigovWordmark";
-import AigovLogo, { type AigovNeonStrength } from "./AigovLogo";
+import AigovIcon, { type AigovIconTone } from "./AigovIcon";
 
-export type AigovMarkMode = "icon" | "wordmark" | "lockup";
+export type AigovNeonStrength = "off" | "soft" | "strong";
 
 export type AigovMarkProps = {
-  mode?: AigovMarkMode;
   isRunning?: boolean;
-
+  size?: number;
   glow?: boolean;
   neon?: boolean;
   neonStrength?: AigovNeonStrength;
-
-  size?: number;
-  wordWidth?: number;
-  wordHeight?: number;
-
-  tone?: "blue" | "teal";
+  tone?: AigovIconTone;
   className?: string;
   style?: React.CSSProperties;
 };
 
-export default function AigovMark({
-  mode = "icon",
-  isRunning = false,
+function strengthToFilter(neon: boolean, neonStrength: AigovNeonStrength) {
+  if (!neon) return false;
+  if (neonStrength === "off") return false;
+  return true;
+}
 
+export default function AigovMark({
+  isRunning = false,
+  size = 18,
   glow = true,
   neon = false,
-  neonStrength = "strong",
-
-  size = 18,
-  wordWidth = 112,
-  wordHeight = 28,
-
+  neonStrength = "soft",
   tone = "blue",
   className,
   style,
@@ -59,34 +51,13 @@ export default function AigovMark({
 
   const showPulse = useMemo(() => isRunning && !reduceMotion, [isRunning, reduceMotion]);
 
-  if (mode === "wordmark") {
-    return (
-      <span className={className} style={{ display: "inline-flex", ...style }}>
-        <AigovWordmark width={wordWidth} height={wordHeight} glow={glow} />
-      </span>
-    );
-  }
+  const effectiveNeon = strengthToFilter(neon, neonStrength);
 
-  if (mode === "lockup") {
-    return (
-      <span className={className} style={{ display: "inline-flex", ...style }}>
-        <AigovLogo
-          iconSize={size}
-          wordWidth={wordWidth}
-          wordHeight={wordHeight}
-          gap={10}
-          glow={glow}
-          neon={neon}
-          neonStrength={neonStrength}
-          tone={tone}
-        />
-      </span>
-    );
-  }
+  const pulseSize = Math.max(7, Math.round(size * 0.34));
 
   return (
-    <span className={className} style={{ display: "inline-flex", position: "relative", ...style }}>
-      <AigovIcon size={size} glow={glow} neon={neon} tone={tone} />
+    <span className={className} style={{ display: "inline-flex", position: "relative", lineHeight: 0, ...style }}>
+      <AigovIcon size={size} glow={glow} neon={effectiveNeon} tone={tone} />
 
       {showPulse ? (
         <span
@@ -95,14 +66,14 @@ export default function AigovMark({
             position: "absolute",
             right: -2,
             top: -2,
-            width: Math.max(6, Math.round(size * 0.36)),
-            height: Math.max(6, Math.round(size * 0.36)),
+            width: pulseSize,
+            height: pulseSize,
             borderRadius: 999,
-            background: tone === "teal" ? "rgba(45,212,191,0.95)" : "rgba(191,219,254,0.95)",
+            background: tone === "teal" ? "rgba(185,255,244,0.98)" : "rgba(191,219,254,0.98)",
             boxShadow:
               tone === "teal"
-                ? "0 0 10px rgba(45,212,191,0.25), 0 0 18px rgba(20,184,166,0.18)"
-                : "0 0 12px rgba(191,219,254,0.38), 0 0 26px rgba(147,197,253,0.26)",
+                ? "0 0 12px rgba(153,246,228,0.30), 0 0 26px rgba(45,212,191,0.22)"
+                : "0 0 12px rgba(191,219,254,0.30), 0 0 26px rgba(147,197,253,0.22)",
             transformOrigin: "center",
             animation: "aigovPulse 1.8s ease-in-out infinite",
           }}
@@ -111,9 +82,9 @@ export default function AigovMark({
 
       <style>{`
         @keyframes aigovPulse {
-          0% { transform: scale(1); opacity: 0.78; }
-          50% { transform: scale(1.25); opacity: 1; }
-          100% { transform: scale(1); opacity: 0.78; }
+          0% { transform: scale(1); opacity: 0.72; }
+          50% { transform: scale(1.28); opacity: 1; }
+          100% { transform: scale(1); opacity: 0.72; }
         }
       `}</style>
     </span>

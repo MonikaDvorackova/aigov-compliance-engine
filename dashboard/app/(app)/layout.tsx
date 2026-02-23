@@ -50,29 +50,24 @@ export default async function AppLayout({
             textDecoration: "none",
           }}
         >
-          <AigovMark
-            mode="icon"
-            size={26}
-            glow
-            neon
-            neonStrength="soft"
-            tone="blue"
+          <span
             style={{
-              opacity: 0.98,
+              display: "inline-flex",
+              alignItems: "center",
+              lineHeight: 0,
               transition: "opacity 120ms ease, transform 120ms ease",
+              opacity: 0.98,
             }}
-          />
+          >
+            <AigovMark size={26} glow neon neonStrength="soft" tone="blue" />
+          </span>
         </Link>
 
-        <div style={{ fontSize: 13, opacity: 0.6 }}>
-          Signed in as {user.email}
-        </div>
+        <div style={{ fontSize: 13, opacity: 0.6 }}>Signed in as {user.email}</div>
       </header>
 
       {/* CONTENT */}
-      <main style={{ flex: 1, padding: 24 }}>
-        {children}
-      </main>
+      <main style={{ flex: 1, padding: 24 }}>{children}</main>
     </div>
   );
 }

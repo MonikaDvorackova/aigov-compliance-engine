@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import AigovMark, { type AigovMarkProps } from "../components/brand/AigovMark";
+import AigovMark from "../components/brand/AigovMark";
 
 type Props = {
   children: React.ReactNode;
@@ -161,19 +161,15 @@ export function InfraAigovMark({
   isRunning?: boolean;
   alignY?: number;
 }) {
-  const preset =
-    size === "xl"
-      ? { icon: 22, wordW: 140, wordH: 34 }
-      : size === "lg"
-      ? { icon: 20, wordW: 128, wordH: 32 }
-      : { icon: 18, wordW: 116, wordH: 30 };
+  const iconSize = size === "xl" ? 26 : size === "lg" ? 24 : 22;
+  const pad = size === "xl" ? "10px 14px" : size === "lg" ? "9px 13px" : "8px 12px";
 
   const wrap: React.CSSProperties = {
     display: "inline-flex",
     alignItems: "center",
     textDecoration: "none",
     transform: `translateY(${alignY}px)`,
-    padding: "10px 16px",
+    padding: pad,
     borderRadius: 20,
     userSelect: "none",
     cursor: "pointer",
@@ -184,19 +180,6 @@ export function InfraAigovMark({
     boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10), 0 0 0 1px rgba(59,130,246,0.06)",
     backdropFilter: "blur(14px)",
     WebkitBackdropFilter: "blur(14px)",
-  };
-
-  const markProps: AigovMarkProps = {
-    mode: "lockup",
-    isRunning,
-    glow: true,
-    size: preset.icon,
-    wordWidth: preset.wordW,
-    wordHeight: preset.wordH,
-    tone: "blue",
-    style: {
-      display: "block",
-    },
   };
 
   return (
@@ -225,7 +208,15 @@ export function InfraAigovMark({
           background: "radial-gradient(circle, rgba(96,165,250,0.55) 0%, rgba(59,130,246,0) 65%)",
         }}
       />
-      <AigovMark {...markProps} />
+      <AigovMark
+        isRunning={isRunning}
+        size={iconSize}
+        glow
+        neon
+        neonStrength="soft"
+        tone="blue"
+        style={{ display: "block" }}
+      />
     </a>
   );
 }

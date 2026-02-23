@@ -192,9 +192,16 @@ export default function LoginClient() {
       `}</style>
 
       <div style={{ width: "100%", textAlign: "center" }}>
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            marginBottom: 8,
+            height: 72,
+            alignItems: "center",
+          }}
+        >
           <AigovMark
-            mode="icon"
             size={56}
             glow
             neon
