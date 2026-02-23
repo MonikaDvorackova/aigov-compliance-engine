@@ -6,12 +6,14 @@ export type AigovWordmarkProps = Omit<React.SVGProps<SVGSVGElement>, "width" | "
   width?: number;
   height?: number;
   glow?: boolean;
+  showDot?: boolean;
 };
 
 export default function AigovWordmark({
   width = 112,
   height = 28,
   glow = true,
+  showDot = true,
   style,
   ...rest
 }: AigovWordmarkProps) {
@@ -31,16 +33,16 @@ export default function AigovWordmark({
       {...rest}
     >
       <defs>
-        <filter id="aigovWordGlow" x="-45%" y="-55%" width="220%" height="230%">
-          <feGaussianBlur stdDeviation="6" result="b" />
+        <filter id="aigovWordGlow" x="-55%" y="-70%" width="250%" height="270%">
+          <feGaussianBlur stdDeviation="7.5" result="b" />
           <feMerge>
             <feMergeNode in="b" />
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
 
-        <filter id="aigovWordDotGlow" x="-70%" y="-70%" width="240%" height="240%">
-          <feGaussianBlur stdDeviation="8" result="b" />
+        <filter id="aigovWordDotGlow" x="-90%" y="-90%" width="300%" height="300%">
+          <feGaussianBlur stdDeviation="10" result="b" />
           <feMerge>
             <feMergeNode in="b" />
             <feMergeNode in="SourceGraphic" />
@@ -54,7 +56,7 @@ export default function AigovWordmark({
           y="78"
           fontSize="64"
           fontWeight="700"
-          fill="rgba(255,255,255,0.92)"
+          fill="rgba(255,255,255,0.94)"
           fontFamily="Inter, system-ui, sans-serif"
         >
           Gov
@@ -65,20 +67,22 @@ export default function AigovWordmark({
           y="78"
           fontSize="64"
           fontWeight="700"
-          fill="rgba(147,197,253,0.98)"
+          fill="rgba(170,205,255,1)"
           fontFamily="Inter, system-ui, sans-serif"
         >
           AI
         </text>
       </g>
 
-      <circle
-        cx="282"
-        cy="70"
-        r="8"
-        fill="rgba(147,197,253,0.95)"
-        filter={glow ? "url(#aigovWordDotGlow)" : undefined}
-      />
+      {showDot ? (
+        <circle
+          cx="282"
+          cy="70"
+          r="8"
+          fill="rgba(170,205,255,0.98)"
+          filter={glow ? "url(#aigovWordDotGlow)" : undefined}
+        />
+      ) : null}
     </svg>
   );
 }
