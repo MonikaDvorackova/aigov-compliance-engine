@@ -1,5 +1,8 @@
+import React from "react";
 import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import InfraShell, { InfraHeaderRow } from "@/app/_ui/InfraShell";
+import { InfraAigovMark } from "@/app/_ui/InfraShell";
 
 type RunRow = {
   id: string;
@@ -143,8 +146,7 @@ function ModeBadge({ mode }: { mode: string | null }) {
 
 function StatusBadge({ status }: { status: string | null }) {
   const s = norm(status);
-  const kind: "neutral" | "ok" | "warn" =
-    s === "valid" ? "ok" : s === "invalid" ? "warn" : "neutral";
+  const kind: "neutral" | "ok" | "warn" = s === "valid" ? "ok" : s === "invalid" ? "warn" : "neutral";
   const label = s ? s : "—";
   return <span style={badgeStyle(kind)}>{label}</span>;
 }
@@ -256,9 +258,7 @@ export default async function RunDetailPage({ params }: { params: { id: string }
 
   const { data, error } = await supabase
     .from("runs")
-    .select(
-      "id,created_at,mode,status,policy_version,bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at"
-    )
+    .select("id,created_at,mode,status,policy_version,bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at")
     .eq("id", params.id)
     .single();
 
@@ -282,25 +282,13 @@ export default async function RunDetailPage({ params }: { params: { id: string }
 
   const signed = await fetchSignedUrls(r.id);
 
-  return (
-    <main
-      style={{
-        minHeight: "100vh",
-        padding: 24,
-        background:
-          "radial-gradient(1100px 520px at 50% 8%, rgba(255,255,255,0.08), rgba(0,0,0,0))",
-      }}
-    >
-      <div style={{ maxWidth: 980, margin: "0 auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "baseline" }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 28, letterSpacing: "-0.01em" }}>Run detail</h1>
-            <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <ModeBadge mode={r.mode} />
-              <StatusBadge status={r.status} />
-            </div>
-          </div>
+  const isRunning = !hasClosed;
 
+  return (
+    <InfraShell maxWidth={980} align="start" padding={22}>
+      <InfraHeaderRow
+        left={<InfraAigovMark href="/runs" size="md" isRunning={isRunning} alignY={-1} />}
+        right={
           <a
             href="/runs"
             style={{
@@ -313,6 +301,19 @@ export default async function RunDetailPage({ params }: { params: { id: string }
           >
             Back to runs
           </a>
+        }
+      />
+
+      <div style={{ marginTop: 8 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "baseline" }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 28, letterSpacing: "-0.01em" }}>Run detail</h1>
+            <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <ModeBadge mode={r.mode} />
+              <StatusBadge status={r.status} />
+              {isRunning ? <span style={badgeStyle("neutral")}>processing</span> : <span style={badgeStyle("neutral")}>closed</span>}
+            </div>
+          </div>
         </div>
 
         <div style={{ marginTop: 16, ...surfaceCardStyle() }}>
@@ -397,12 +398,10 @@ export default async function RunDetailPage({ params }: { params: { id: string }
             {hashBlock("Bundle SHA256", r.bundle_sha256 ? shortHash(r.bundle_sha256) : null)}
             {hashBlock("Evidence SHA256", r.evidence_sha256 ? shortHash(r.evidence_sha256) : null)}
             {hashBlock("Report SHA256", r.report_sha256 ? shortHash(r.report_sha256) : null)}
-            <div style={{ marginTop: 12, opacity: 0.6, fontSize: 12 }}>
-              Full hashes are available in the audit JSON.
-            </div>
+            <div style={{ marginTop: 12, opacity: 0.6, fontSize: 12 }}>Full hashes are available in the audit JSON.</div>
           </div>
         </div>
       </div>
-    </main>
+    </InfraShell>
   );
 }

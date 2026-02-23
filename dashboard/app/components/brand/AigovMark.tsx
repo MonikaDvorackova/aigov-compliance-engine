@@ -1,14 +1,35 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import AigovMarkStatic from "./AigovMarkStatic";
-import AigovMarkAnimated from "./AigovMarkAnimated";
+import React, { useEffect, useMemo, useState } from "react";
+import AigovIcon from "./AigovIcon";
+import AigovWordmark from "./AigovWordmark";
+import AigovLogo from "./AigovLogo";
 
-export type AigovMarkProps = React.SVGProps<SVGSVGElement> & {
+export type AigovMarkMode = "icon" | "wordmark" | "lockup";
+
+export type AigovMarkProps = {
+  mode?: AigovMarkMode;
   isRunning?: boolean;
+  glow?: boolean;
+  size?: number;
+  wordWidth?: number;
+  wordHeight?: number;
+  tone?: "blue" | "teal";
+  className?: string;
+  style?: React.CSSProperties;
 };
 
-export default function AigovMark({ isRunning = false, ...svgProps }: AigovMarkProps) {
+export default function AigovMark({
+  mode = "icon",
+  isRunning = false,
+  glow = true,
+  size = 18,
+  wordWidth = 112,
+  wordHeight = 28,
+  tone = "blue",
+  className,
+  style,
+}: AigovMarkProps) {
   const [reduceMotion, setReduceMotion] = useState(true);
 
   useEffect(() => {
@@ -26,9 +47,55 @@ export default function AigovMark({ isRunning = false, ...svgProps }: AigovMarkP
     return () => mq.removeListener(apply);
   }, []);
 
-  if (isRunning && !reduceMotion) {
-    return <AigovMarkAnimated {...svgProps} />;
+  const showPulse = useMemo(() => isRunning && !reduceMotion, [isRunning, reduceMotion]);
+
+  if (mode === "wordmark") {
+    return (
+      <span className={className} style={{ display: "inline-flex", ...style }}>
+        <AigovWordmark width={wordWidth} height={wordHeight} glow={glow} />
+      </span>
+    );
   }
 
-  return <AigovMarkStatic {...svgProps} />;
+  if (mode === "lockup") {
+    return (
+      <span className={className} style={{ display: "inline-flex", ...style }}>
+        <AigovLogo iconSize={size} wordWidth={wordWidth} wordHeight={wordHeight} glow={glow} tone={tone} />
+      </span>
+    );
+  }
+
+  return (
+    <span className={className} style={{ display: "inline-flex", position: "relative", ...style }}>
+      <AigovIcon size={size} glow={glow} tone={tone} />
+      {showPulse ? (
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            right: -2,
+            top: -2,
+            width: Math.max(6, Math.round(size * 0.36)),
+            height: Math.max(6, Math.round(size * 0.36)),
+            borderRadius: 999,
+            background: tone === "teal" ? "rgba(45,212,191,0.95)" : "rgba(147,197,253,0.95)",
+            boxShadow:
+              tone === "teal"
+                ? "0 0 10px rgba(45,212,191,0.25), 0 0 18px rgba(20,184,166,0.18)"
+                : "0 0 10px rgba(147,197,253,0.25), 0 0 18px rgba(59,130,246,0.18)",
+            transformOrigin: "center",
+            animation: "aigovPulse 1.8s ease-in-out infinite",
+          }}
+        />
+      ) : null}
+
+      <style>{`
+        @keyframes aigovPulse {
+          0% { transform: scale(1); opacity: 0.78; }
+          50% { transform: scale(1.25); opacity: 1; }
+          100% { transform: scale(1); opacity: 0.78; }
+        }
+      `}</style>
+    </span>
+  );
 }

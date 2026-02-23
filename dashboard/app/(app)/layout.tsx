@@ -2,7 +2,7 @@ import React from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import AigovMarkStatic from "@/app/components/brand/AigovMarkStatic";
+import AigovMark from "@/app/components/brand/AigovMark";
 
 export const dynamic = "force-dynamic";
 
@@ -41,12 +41,22 @@ export default async function AppLayout({
           justifyContent: "space-between",
         }}
       >
-        <Link href="/runs" style={{ display: "inline-flex", alignItems: "center" }}>
-          <AigovMarkStatic
+        <Link
+          href="/runs"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            textDecoration: "none",
+          }}
+        >
+          <AigovMark
+            mode="lockup"
+            size={18}
+            wordWidth={104}
+            wordHeight={26}
+            glow
             style={{
-              width: 120,
-              height: "auto",
-              opacity: 0.9,
+              opacity: 0.92,
               transition: "opacity 120ms ease",
             }}
           />

@@ -2,17 +2,27 @@
 
 import React from "react";
 
-export default function AigovMarkStatic({
-  width,
-  height,
+export type AigovWordmarkProps = Omit<React.SVGProps<SVGSVGElement>, "width" | "height"> & {
+  width?: number;
+  height?: number;
+  glow?: boolean;
+};
+
+export default function AigovWordmark({
+  width = 112,
+  height = 28,
+  glow = true,
   style,
   ...rest
-}: React.SVGProps<SVGSVGElement>) {
+}: AigovWordmarkProps) {
   return (
     <svg
       viewBox="0 0 320 120"
       width={width}
       height={height}
+      aria-hidden="true"
+      focusable="false"
+      preserveAspectRatio="xMidYMid meet"
       style={{
         display: "block",
         overflow: "visible",
@@ -21,24 +31,24 @@ export default function AigovMarkStatic({
       {...rest}
     >
       <defs>
-        <filter id="softGlow" x="-40%" y="-40%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="6" result="blur" />
+        <filter id="aigovWordGlow" x="-45%" y="-55%" width="220%" height="230%">
+          <feGaussianBlur stdDeviation="6" result="b" />
           <feMerge>
-            <feMergeNode in="blur" />
+            <feMergeNode in="b" />
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
 
-        <filter id="dotGlow" x="-60%" y="-60%" width="220%" height="220%">
-          <feGaussianBlur stdDeviation="8" result="blur" />
+        <filter id="aigovWordDotGlow" x="-70%" y="-70%" width="240%" height="240%">
+          <feGaussianBlur stdDeviation="8" result="b" />
           <feMerge>
-            <feMergeNode in="blur" />
+            <feMergeNode in="b" />
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
       </defs>
 
-      <g filter="url(#softGlow)">
+      <g filter={glow ? "url(#aigovWordGlow)" : undefined}>
         <text
           x="30"
           y="78"
@@ -67,7 +77,7 @@ export default function AigovMarkStatic({
         cy="70"
         r="8"
         fill="rgba(147,197,253,0.95)"
-        filter="url(#dotGlow)"
+        filter={glow ? "url(#aigovWordDotGlow)" : undefined}
       />
     </svg>
   );

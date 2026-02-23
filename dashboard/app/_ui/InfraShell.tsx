@@ -96,16 +96,12 @@ export function InfraButton({
     padding: "0 20px",
     borderRadius: 18,
     border: "1px solid rgba(255,255,255,0.18)",
-    background:
-      variant === "soft"
-        ? "rgba(255,255,255,0.05)"
-        : "rgba(255,255,255,0.08)",
+    background: variant === "soft" ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.08)",
     color: "rgba(255,255,255,0.92)",
     textDecoration: "none",
     fontSize: 17,
     fontWeight: 600,
-    boxShadow:
-      "inset 0 1px 0 rgba(255,255,255,0.10), 0 20px 50px rgba(0,0,0,0.30)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10), 0 20px 50px rgba(0,0,0,0.30)",
     backdropFilter: "blur(12px)",
     WebkitBackdropFilter: "blur(12px)",
     width: fullWidth ? "100%" : undefined,
@@ -148,14 +144,8 @@ export function InfraHeaderRow({
         padding: "0 4px",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        {left}
-      </div>
-      {right ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {right}
-        </div>
-      ) : null}
+      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>{left}</div>
+      {right ? <div style={{ display: "flex", alignItems: "center", gap: 12 }}>{right}</div> : null}
     </header>
   );
 }
@@ -171,12 +161,12 @@ export function InfraAigovMark({
   isRunning?: boolean;
   alignY?: number;
 }) {
-  const dims =
+  const preset =
     size === "xl"
-      ? { w: 230, h: 72 }
+      ? { icon: 22, wordW: 140, wordH: 34 }
       : size === "lg"
-      ? { w: 210, h: 66 }
-      : { w: 190, h: 60 };
+      ? { icon: 20, wordW: 128, wordH: 32 }
+      : { icon: 18, wordW: 116, wordH: 30 };
 
   const wrap: React.CSSProperties = {
     display: "inline-flex",
@@ -189,24 +179,23 @@ export function InfraAigovMark({
     cursor: "pointer",
     position: "relative",
     transition: "transform 160ms ease, filter 160ms ease",
-    background:
-      "radial-gradient(220px 90px at 50% 60%, rgba(59,130,246,0.22), rgba(0,0,0,0))",
+    background: "radial-gradient(220px 90px at 50% 60%, rgba(59,130,246,0.22), rgba(0,0,0,0))",
     border: "1px solid rgba(255,255,255,0.12)",
-    boxShadow:
-      "inset 0 1px 0 rgba(255,255,255,0.10), 0 0 0 1px rgba(59,130,246,0.06)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10), 0 0 0 1px rgba(59,130,246,0.06)",
     backdropFilter: "blur(14px)",
     WebkitBackdropFilter: "blur(14px)",
   };
 
   const markProps: AigovMarkProps = {
+    mode: "lockup",
     isRunning,
-    width: dims.w,
-    height: dims.h,
+    glow: true,
+    size: preset.icon,
+    wordWidth: preset.wordW,
+    wordHeight: preset.wordH,
+    tone: "blue",
     style: {
       display: "block",
-      overflow: "visible",
-      filter:
-        "drop-shadow(0 0 24px rgba(96,165,250,0.50)) drop-shadow(0 0 48px rgba(59,130,246,0.35))",
     },
   };
 
@@ -233,8 +222,7 @@ export function InfraAigovMark({
           filter: "blur(26px)",
           opacity: 0.95,
           pointerEvents: "none",
-          background:
-            "radial-gradient(circle, rgba(96,165,250,0.55) 0%, rgba(59,130,246,0) 65%)",
+          background: "radial-gradient(circle, rgba(96,165,250,0.55) 0%, rgba(59,130,246,0) 65%)",
         }}
       />
       <AigovMark {...markProps} />

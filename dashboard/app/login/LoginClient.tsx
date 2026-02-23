@@ -4,7 +4,7 @@ import React, { useMemo, useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useRouter, useSearchParams } from "next/navigation";
-import AigovMarkStatic from "../components/brand/AigovMarkStatic";
+import AigovMark from "../components/brand/AigovMark";
 import InfraShell, { InfraPanel } from "../_ui/InfraShell";
 
 function createSupabaseBrowserClient(): SupabaseClient {
@@ -193,7 +193,14 @@ export default function LoginClient() {
 
       <div style={{ width: "100%", textAlign: "center" }}>
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-          <AigovMarkStatic style={{ width: 152, height: "auto", opacity: 0.92 }} />
+          <AigovMark
+            mode="lockup"
+            size={22}
+            wordWidth={140}
+            wordHeight={34}
+            glow
+            style={{ opacity: 0.92 }}
+          />
         </div>
 
         <div style={{ opacity: 0.72, fontSize: 12, letterSpacing: "0.28em", marginBottom: 10 }}>GOVAI</div>
