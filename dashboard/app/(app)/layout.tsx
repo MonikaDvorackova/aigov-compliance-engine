@@ -43,6 +43,7 @@ export default async function AppLayout({
       >
         <Link
           href="/runs"
+          aria-label="GovAI"
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -50,14 +51,15 @@ export default async function AppLayout({
           }}
         >
           <AigovMark
-            mode="lockup"
-            size={18}
-            wordWidth={104}
-            wordHeight={26}
+            mode="icon"
+            size={26}
             glow
+            neon
+            neonStrength="soft"
+            tone="blue"
             style={{
-              opacity: 0.92,
-              transition: "opacity 120ms ease",
+              opacity: 0.98,
+              transition: "opacity 120ms ease, transform 120ms ease",
             }}
           />
         </Link>
