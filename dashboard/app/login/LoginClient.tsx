@@ -195,11 +195,13 @@ export default function LoginClient() {
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
           <AigovMark
             mode="lockup"
-            size={22}
-            wordWidth={140}
-            wordHeight={34}
+            size={32}
+            wordWidth={210}
+            wordHeight={52}
             glow
-            style={{ opacity: 0.92 }}
+            neon
+            neonStrength="strong"
+            style={{ opacity: 0.98 }}
           />
         </div>
 

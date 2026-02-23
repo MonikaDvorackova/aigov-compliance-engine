@@ -3,17 +3,22 @@
 import React, { useEffect, useMemo, useState } from "react";
 import AigovIcon from "./AigovIcon";
 import AigovWordmark from "./AigovWordmark";
-import AigovLogo from "./AigovLogo";
+import AigovLogo, { type AigovNeonStrength } from "./AigovLogo";
 
 export type AigovMarkMode = "icon" | "wordmark" | "lockup";
 
 export type AigovMarkProps = {
   mode?: AigovMarkMode;
   isRunning?: boolean;
+
   glow?: boolean;
+  neon?: boolean;
+  neonStrength?: AigovNeonStrength;
+
   size?: number;
   wordWidth?: number;
   wordHeight?: number;
+
   tone?: "blue" | "teal";
   className?: string;
   style?: React.CSSProperties;
@@ -22,10 +27,15 @@ export type AigovMarkProps = {
 export default function AigovMark({
   mode = "icon",
   isRunning = false,
+
   glow = true,
+  neon = false,
+  neonStrength = "strong",
+
   size = 18,
   wordWidth = 112,
   wordHeight = 28,
+
   tone = "blue",
   className,
   style,
@@ -60,14 +70,24 @@ export default function AigovMark({
   if (mode === "lockup") {
     return (
       <span className={className} style={{ display: "inline-flex", ...style }}>
-        <AigovLogo iconSize={size} wordWidth={wordWidth} wordHeight={wordHeight} glow={glow} tone={tone} />
+        <AigovLogo
+          iconSize={size}
+          wordWidth={wordWidth}
+          wordHeight={wordHeight}
+          gap={10}
+          glow={glow}
+          neon={neon}
+          neonStrength={neonStrength}
+          tone={tone}
+        />
       </span>
     );
   }
 
   return (
     <span className={className} style={{ display: "inline-flex", position: "relative", ...style }}>
-      <AigovIcon size={size} glow={glow} tone={tone} />
+      <AigovIcon size={size} glow={glow} neon={neon} tone={tone} />
+
       {showPulse ? (
         <span
           aria-hidden="true"
@@ -78,11 +98,11 @@ export default function AigovMark({
             width: Math.max(6, Math.round(size * 0.36)),
             height: Math.max(6, Math.round(size * 0.36)),
             borderRadius: 999,
-            background: tone === "teal" ? "rgba(45,212,191,0.95)" : "rgba(147,197,253,0.95)",
+            background: tone === "teal" ? "rgba(45,212,191,0.95)" : "rgba(191,219,254,0.95)",
             boxShadow:
               tone === "teal"
                 ? "0 0 10px rgba(45,212,191,0.25), 0 0 18px rgba(20,184,166,0.18)"
-                : "0 0 10px rgba(147,197,253,0.25), 0 0 18px rgba(59,130,246,0.18)",
+                : "0 0 12px rgba(191,219,254,0.38), 0 0 26px rgba(147,197,253,0.26)",
             transformOrigin: "center",
             animation: "aigovPulse 1.8s ease-in-out infinite",
           }}
