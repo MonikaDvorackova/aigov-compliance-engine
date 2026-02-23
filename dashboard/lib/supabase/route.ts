@@ -13,14 +13,13 @@ export function createSupabaseRouteClient(req: NextRequest, res: NextResponse) {
 
   return createServerClient(url, key, {
     cookies: {
-      get(name: string) {
-        return req.cookies.get(name)?.value;
+      getAll() {
+        return req.cookies.getAll();
       },
-      set(name: string, value: string, options: any) {
-        res.cookies.set(name, value, options);
-      },
-      remove(name: string, options: any) {
-        res.cookies.set(name, "", { ...options, maxAge: 0 });
+      setAll(cookiesToSet) {
+        for (const { name, value, options } of cookiesToSet) {
+          res.cookies.set(name, value, options);
+        }
       },
     },
   });
