@@ -75,7 +75,7 @@ function IconDownload({ size = 20 }: { size?: number }) {
 }
 
 export default function Page() {
-  const accent = "#1D4ED8";
+  const accent = "#0066FF";
 
   const features: Feature[] = [
     {
@@ -103,7 +103,9 @@ export default function Page() {
   return (
     <InfraShell maxWidth={920} align="start">
       <div style={{ textAlign: "center", paddingTop: 4 }}>
-        <div style={{ letterSpacing: "0.26em", fontSize: 11, opacity: 0.72, marginBottom: 8 }}>GOVAI</div>
+        <div style={{ letterSpacing: "0.26em", fontSize: 11, opacity: 0.72, marginBottom: 8 }}>
+          GOVAI
+        </div>
 
         <h1
           style={{
@@ -112,7 +114,6 @@ export default function Page() {
             fontWeight: 500,
             lineHeight: 1.08,
             fontSize: "clamp(28px, 5.2vw, 46px)",
-            textWrap: "balance",
           }}
         >
           Compliance Evidence
@@ -127,7 +128,6 @@ export default function Page() {
             opacity: 0.78,
             fontSize: "clamp(13px, 2.1vw, 16px)",
             lineHeight: 1.5,
-            textWrap: "balance",
           }}
         >
           Generate runs, verify integrity, and ship auditable evidence bundles.
@@ -184,8 +184,13 @@ export default function Page() {
                   height: 44,
                   borderRadius: 14,
                   border: "1px solid rgba(255,255,255,0.14)",
-                  background: "rgba(29,78,216,0.10)",
-                  boxShadow: "0 0 22px rgba(29,78,216,0.22), inset 0 1px 0 rgba(255,255,255,0.10)",
+                  background: "rgba(0,102,255,0.18)",
+                  boxShadow: `
+                    0 0 14px rgba(0,102,255,0.6),
+                    0 0 32px rgba(0,102,255,0.45),
+                    0 0 60px rgba(0,102,255,0.35),
+                    inset 0 1px 0 rgba(255,255,255,0.12)
+                  `,
                   display: "grid",
                   placeItems: "center",
                   marginBottom: 8,
@@ -194,7 +199,11 @@ export default function Page() {
                 <span
                   style={{
                     color: accent,
-                    filter: "drop-shadow(0 0 9px rgba(29,78,216,0.55))",
+                    filter: `
+                      drop-shadow(0 0 6px rgba(0,102,255,0.95))
+                      drop-shadow(0 0 18px rgba(0,102,255,0.8))
+                      drop-shadow(0 0 36px rgba(0,102,255,0.6))
+                    `,
                     display: "inline-flex",
                   }}
                 >
@@ -212,7 +221,6 @@ export default function Page() {
                   opacity: 0.76,
                   lineHeight: 1.45,
                   maxWidth: "22ch",
-                  textWrap: "balance",
                 }}
               >
                 {f.description}
@@ -246,17 +254,17 @@ export default function Page() {
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
         }
-        .govai_btnSoft { background: rgba(255,255,255,0.04); }
-        .govai_btn:hover { transform: translateY(-1px); }
-        .govai_btn:active { transform: translateY(0px); }
 
-        @media (max-width: 520px) {
-          .govai_btn { height: 38px; font-size: 14px; padding: 0 12px; }
+        .govai_btnSoft {
+          background: rgba(255,255,255,0.04);
         }
 
-        @media (max-width: 720px) {
-          /* na menších šířkách ať to nepůsobí masivně */
-          h1 { letter-spacing: -0.02em; }
+        .govai_btn:hover {
+          transform: translateY(-1px);
+        }
+
+        .govai_btn:active {
+          transform: translateY(0px);
         }
       `}</style>
     </InfraShell>
