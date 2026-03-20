@@ -5,6 +5,7 @@ use std::cmp::Ordering;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 fn canonical_json_bytes<T: Serialize>(value: &T) -> Vec<u8> {
     // serde_json keeps insertion order, but we need canonical ordering
@@ -81,6 +82,386 @@ pub fn find_model_artifact_path(events: &[EvidenceEvent]) -> Option<String> {
     None
 }
 
+fn payload_get_str(payload: &serde_json::Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+fn payload_get_num(payload: &serde_json::Value, key: &str) -> Option<f64> {
+    payload.get(key).and_then(|v| v.as_f64())
+}
+
+fn find_last_payload_str_for_event_types(
+    events: &[EvidenceEvent],
+    event_types: &[&str],
+    key: &str,
+) -> Option<String> {
+    events
+        .iter()
+        .rev()
+        .find(|e| event_types.contains(&e.event_type.as_str()))
+        .and_then(|e| payload_get_str(&e.payload, key))
+}
+
+fn extract_canonical_identifiers(events: &[EvidenceEvent]) -> serde_json::Value {
+    let ai_system_id = find_last_payload_str_for_event_types(
+        events,
+        &[
+            "data_registered",
+            "model_trained",
+            "evaluation_reported",
+            "risk_recorded",
+            "risk_mitigated",
+            "risk_reviewed",
+            "human_approved",
+            "model_promoted",
+        ],
+        "ai_system_id",
+    );
+    let dataset_id = find_last_payload_str_for_event_types(
+        events,
+        &[
+            "data_registered",
+            "model_trained",
+            "evaluation_reported",
+            "risk_recorded",
+            "risk_mitigated",
+            "risk_reviewed",
+            "human_approved",
+            "model_promoted",
+        ],
+        "dataset_id",
+    );
+    let model_version_id = find_last_payload_str_for_event_types(
+        events,
+        &[
+            "model_trained",
+            "evaluation_reported",
+            "risk_recorded",
+            "risk_mitigated",
+            "risk_reviewed",
+            "human_approved",
+            "model_promoted",
+        ],
+        "model_version_id",
+    );
+
+    // Match projection: only risk lifecycle events contribute to the authoritative risk_id set.
+    let mut risk_ids: BTreeMap<String, ()> = BTreeMap::new();
+    for e in events.iter() {
+        if e.event_type != "risk_recorded" && e.event_type != "risk_mitigated" && e.event_type != "risk_reviewed" {
+            continue;
+        }
+        if let Some(rid) = payload_get_str(&e.payload, "risk_id") {
+            risk_ids.insert(rid, ());
+        }
+    }
+    let risk_ids: Vec<String> = risk_ids.keys().cloned().collect();
+    let primary_risk_id = risk_ids.first().cloned();
+
+    serde_json::json!({
+        "ai_system_id": ai_system_id,
+        "dataset_id": dataset_id,
+        "model_version_id": model_version_id,
+        "primary_risk_id": primary_risk_id,
+        "risk_ids": risk_ids
+    })
+}
+
+fn extract_dataset_governance(events: &[EvidenceEvent]) -> Option<serde_json::Value> {
+    for e in events.iter().rev() {
+        if e.event_type != "data_registered" {
+            continue;
+        }
+
+        let p = &e.payload;
+        let ai_system_id = payload_get_str(p, "ai_system_id")?;
+        let dataset_id = payload_get_str(p, "dataset_id")?;
+        let dataset = payload_get_str(p, "dataset")?;
+        let dataset_version = payload_get_str(p, "dataset_version")?;
+        let dataset_fingerprint = payload_get_str(p, "dataset_fingerprint")?;
+        let dataset_governance_id = payload_get_str(p, "dataset_governance_id")?;
+        let dataset_governance_commitment = payload_get_str(p, "dataset_governance_commitment")?;
+
+        let source = payload_get_str(p, "source")?;
+        let intended_use = payload_get_str(p, "intended_use")?;
+        let limitations = payload_get_str(p, "limitations")?;
+        let quality_summary = payload_get_str(p, "quality_summary")?;
+        let governance_status = payload_get_str(p, "governance_status")?;
+
+        return Some(serde_json::json!({
+            "ai_system_id": ai_system_id,
+            "dataset_id": dataset_id,
+            "dataset": dataset,
+            "dataset_version": dataset_version,
+            "dataset_fingerprint": dataset_fingerprint,
+            "dataset_governance_id": dataset_governance_id,
+            "dataset_governance_commitment": dataset_governance_commitment,
+            "source": source,
+            "intended_use": intended_use,
+            "limitations": limitations,
+            "quality_summary": quality_summary,
+            "governance_status": governance_status
+        }));
+    }
+
+    None
+}
+
+fn extract_evaluation(events: &[EvidenceEvent]) -> Option<serde_json::Value> {
+    for e in events.iter().rev() {
+        if e.event_type != "evaluation_reported" {
+            continue;
+        }
+        let p = &e.payload;
+        let ai_system_id = payload_get_str(p, "ai_system_id")?;
+        let dataset_id = payload_get_str(p, "dataset_id")?;
+        let model_version_id = payload_get_str(p, "model_version_id")?;
+        let metric = payload_get_str(p, "metric")?;
+        let value = p.get("value")?.as_f64()?;
+        let threshold = p.get("threshold")?.as_f64()?;
+        let passed = p.get("passed")?.as_bool()?;
+
+        return Some(serde_json::json!({
+            "ai_system_id": ai_system_id,
+            "dataset_id": dataset_id,
+            "model_version_id": model_version_id,
+            "metric": metric,
+            "value": value,
+            "threshold": threshold,
+            "passed": passed,
+            "event_id": e.event_id,
+            "ts_utc": e.ts_utc
+        }));
+    }
+    None
+}
+
+fn extract_human_approval(events: &[EvidenceEvent]) -> Option<serde_json::Value> {
+    for e in events.iter().rev() {
+        if e.event_type != "human_approved" {
+            continue;
+        }
+
+        let scope = payload_get_str(&e.payload, "scope").unwrap_or_default();
+        if scope != "model_promoted" {
+            continue;
+        }
+
+        let decision = payload_get_str(&e.payload, "decision").unwrap_or_default();
+        let approver = payload_get_str(&e.payload, "approver")?;
+        let justification = payload_get_str(&e.payload, "justification")?;
+        let assessment_id = payload_get_str(&e.payload, "assessment_id")?;
+        let risk_id = payload_get_str(&e.payload, "risk_id")?;
+        let dataset_governance_commitment =
+            payload_get_str(&e.payload, "dataset_governance_commitment")?;
+        let ai_system_id = payload_get_str(&e.payload, "ai_system_id")?;
+        let dataset_id = payload_get_str(&e.payload, "dataset_id")?;
+        let model_version_id = payload_get_str(&e.payload, "model_version_id")?;
+
+        return Some(serde_json::json!({
+            "approval_event_id": e.event_id,
+            "ts_utc": e.ts_utc,
+            "decision": decision,
+            "approver": approver,
+            "justification": justification,
+            "assessment_id": assessment_id,
+            "risk_id": risk_id,
+            "dataset_governance_commitment": dataset_governance_commitment,
+            "ai_system_id": ai_system_id,
+            "dataset_id": dataset_id,
+            "model_version_id": model_version_id
+        }));
+    }
+    None
+}
+
+fn extract_promotion_decision(events: &[EvidenceEvent]) -> Option<serde_json::Value> {
+    for e in events.iter().rev() {
+        if e.event_type != "model_promoted" {
+            continue;
+        }
+
+        let artifact_path = payload_get_str(&e.payload, "artifact_path")?;
+        let promotion_reason = payload_get_str(&e.payload, "promotion_reason")?;
+        let approved_human_event_id = payload_get_str(&e.payload, "approved_human_event_id")?;
+        let assessment_id = payload_get_str(&e.payload, "assessment_id")?;
+        let risk_id = payload_get_str(&e.payload, "risk_id")?;
+        let dataset_governance_commitment =
+            payload_get_str(&e.payload, "dataset_governance_commitment")?;
+        let ai_system_id = payload_get_str(&e.payload, "ai_system_id")?;
+        let dataset_id = payload_get_str(&e.payload, "dataset_id")?;
+        let model_version_id = payload_get_str(&e.payload, "model_version_id")?;
+
+        let artifact_sha256 = payload_get_str(&e.payload, "artifact_sha256");
+
+        return Some(serde_json::json!({
+            "promotion_event_id": e.event_id,
+            "ts_utc": e.ts_utc,
+            "artifact_path": artifact_path,
+            "artifact_sha256": artifact_sha256,
+            "promotion_reason": promotion_reason,
+            "approved_human_event_id": approved_human_event_id,
+            "assessment_id": assessment_id,
+            "risk_id": risk_id,
+            "dataset_governance_commitment": dataset_governance_commitment,
+            "ai_system_id": ai_system_id,
+            "dataset_id": dataset_id,
+            "model_version_id": model_version_id
+        }));
+    }
+    None
+}
+
+fn extract_model_version(events: &[EvidenceEvent]) -> Option<serde_json::Value> {
+    let trained = events.iter().rev().find(|e| e.event_type == "model_trained");
+    let promoted = events.iter().rev().find(|e| e.event_type == "model_promoted");
+
+    let trained = match trained {
+        Some(t) => t,
+        None => return None,
+    };
+
+    let p = &trained.payload;
+    let model_version_id = payload_get_str(p, "model_version_id")?;
+    let model_type = payload_get_str(p, "model_type")?;
+    let artifact_sha256 = payload_get_str(p, "artifact_sha256");
+    let ai_system_id = payload_get_str(p, "ai_system_id")?;
+    let dataset_id = payload_get_str(p, "dataset_id")?;
+
+    // Include both training params and (if promotion exists) final promotion linkage.
+    let training_params = p
+        .get("training_params")
+        .cloned()
+        .or_else(|| p.get("params").cloned());
+
+    let mut out = serde_json::json!({
+        "ai_system_id": ai_system_id,
+        "dataset_id": dataset_id,
+        "model_version_id": model_version_id,
+        "model_type": model_type,
+        "trained_ts_utc": trained.ts_utc,
+        "artifact_sha256": artifact_sha256,
+        "training_params": training_params,
+    });
+
+    if let Some(promoted) = promoted {
+        let pp = &promoted.payload;
+        let artifact_path = payload_get_str(pp, "artifact_path");
+        out.as_object_mut()
+            .unwrap()
+            .insert("artifact_path".to_string(), serde_json::json!(artifact_path));
+
+        let promotion_reason = payload_get_str(pp, "promotion_reason");
+        out.as_object_mut()
+            .unwrap()
+            .insert("promotion_reason".to_string(), serde_json::json!(promotion_reason));
+    }
+
+    Some(out)
+}
+
+fn extract_risk_register(events: &[EvidenceEvent]) -> Option<serde_json::Value> {
+    // Gather unique risk_ids from risk lifecycle events.
+    let mut risk_ids: BTreeMap<String, ()> = BTreeMap::new();
+    for e in events.iter() {
+        if e.event_type != "risk_recorded" && e.event_type != "risk_mitigated" && e.event_type != "risk_reviewed" {
+            continue;
+        }
+        if let Some(rid) = payload_get_str(&e.payload, "risk_id") {
+            risk_ids.insert(rid, ());
+        }
+    }
+
+    if risk_ids.is_empty() {
+        return None;
+    }
+
+    let mut risks: Vec<serde_json::Value> = Vec::new();
+
+    for risk_id in risk_ids.keys() {
+        let mut recorded: Option<&EvidenceEvent> = None;
+        let mut latest_mitigated: Option<&EvidenceEvent> = None;
+        let mut latest_reviewed: Option<&EvidenceEvent> = None;
+
+        let mut history: Vec<serde_json::Value> = Vec::new();
+
+        for e in events.iter() {
+            if payload_get_str(&e.payload, "risk_id").as_deref() != Some(risk_id.as_str()) {
+                continue;
+            }
+
+            if e.event_type == "risk_recorded" {
+                recorded = Some(e);
+            } else if e.event_type == "risk_mitigated" {
+                latest_mitigated = Some(e);
+            } else if e.event_type == "risk_reviewed" {
+                latest_reviewed = Some(e);
+            }
+
+            if e.event_type.starts_with("risk_") {
+                history.push(serde_json::json!({
+                    "event_type": e.event_type,
+                    "event_id": e.event_id,
+                    "ts_utc": e.ts_utc
+                }));
+            }
+        }
+
+        let recorded = recorded.or(latest_mitigated).or(latest_reviewed)?;
+        let rp = &recorded.payload;
+        let assessment_id = payload_get_str(rp, "assessment_id");
+        let dataset_commitment = payload_get_str(rp, "dataset_governance_commitment");
+        let ai_system_id = payload_get_str(rp, "ai_system_id");
+        let dataset_id = payload_get_str(rp, "dataset_id");
+        let model_version_id = payload_get_str(rp, "model_version_id");
+        let risk_class = payload_get_str(rp, "risk_class");
+
+        let severity = payload_get_num(rp, "severity");
+        let likelihood = payload_get_num(rp, "likelihood");
+
+        // Mitigation and status come from the latest mitigation event, if present; otherwise from the recorded event.
+        let mp = &latest_mitigated.unwrap_or(recorded).payload;
+        let status = payload_get_str(mp, "status");
+        let mitigation = payload_get_str(mp, "mitigation");
+        let owner = payload_get_str(mp, "owner");
+
+        let review = if let Some(r) = latest_reviewed {
+            let pp = &r.payload;
+            serde_json::json!({
+                "risk_review_event_id": r.event_id,
+                "ts_utc": r.ts_utc,
+                "decision": payload_get_str(pp, "decision"),
+                "reviewer": payload_get_str(pp, "reviewer"),
+                "justification": payload_get_str(pp, "justification"),
+            })
+        } else {
+            serde_json::Value::Null
+        };
+
+        risks.push(serde_json::json!({
+            "risk_id": risk_id,
+            "assessment_id": assessment_id,
+            "risk_class": risk_class,
+            "severity": severity,
+            "likelihood": likelihood,
+            "dataset_governance_commitment": dataset_commitment,
+            "ai_system_id": ai_system_id,
+            "dataset_id": dataset_id,
+            "model_version_id": model_version_id,
+            "status": status,
+            "mitigation": mitigation,
+            "owner": owner,
+            "latest_review": review,
+            "history": history
+        }));
+    }
+
+    Some(serde_json::json!({ "risks": risks }))
+}
+
 fn stable_event_order(a: &EvidenceEvent, b: &EvidenceEvent) -> Ordering {
     // primary timestamp
     let t = a.ts_utc.cmp(&b.ts_utc);
@@ -129,17 +510,49 @@ fn canonical_bundle_value(
     model_artifact_path: Option<&str>,
     events: &[EvidenceEvent],
 ) -> serde_json::Value {
+    let dataset_governance = extract_dataset_governance(events);
+    let evaluation = extract_evaluation(events);
+    let risk_register = extract_risk_register(events);
+    let human_approval = extract_human_approval(events);
+    let promotion = extract_promotion_decision(events);
+    let model_version = extract_model_version(events);
+    let identifiers = extract_canonical_identifiers(events);
+
     let mut v = serde_json::json!({
         "ok": true,
         "run_id": run_id,
         "policy_version": policy_version,
+        "schema_version": "aigov.bundle.v1",
         "log_path": log_path,
         "model_artifact_path": model_artifact_path,
+        "identifiers": identifiers,
+        "dataset_governance": dataset_governance,
+        "model_version": model_version,
+        "evaluation": evaluation,
+        "risk_register": risk_register,
+        "human_approval": human_approval,
+        "promotion": promotion,
         "events": events
     });
 
     canonicalize_json(&mut v);
     v
+}
+
+pub fn bundle_document_value(
+    run_id: &str,
+    policy_version: &str,
+    log_path: &str,
+    events: &[EvidenceEvent],
+) -> serde_json::Value {
+    let artifact_path = find_model_artifact_path(events);
+    canonical_bundle_value(
+        run_id,
+        policy_version,
+        log_path,
+        artifact_path.as_deref(),
+        events,
+    )
 }
 
 pub fn bundle_sha256(

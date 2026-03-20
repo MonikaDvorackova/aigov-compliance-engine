@@ -2,6 +2,7 @@ use crate::auth::{AuthConfig, CurrentUser};
 use crate::bundle;
 use crate::db::{self, DbPool};
 use crate::policy;
+use crate::projection;
 use crate::schema::EvidenceEvent;
 use crate::verify_chain;
 
@@ -14,11 +15,17 @@ use serde_json::json;
 use std::collections::HashSet;
 use uuid::Uuid;
 
-pub fn core_router() -> Router {
+pub fn core_router(policy_version: &'static str) -> Router {
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
-        .route("/status", get(status))
+        .route(
+            "/status",
+            get({
+                let pv = policy_version;
+                move || async move { status(pv).await }
+            }),
+        )
 }
 
 pub async fn root() -> (StatusCode, Json<serde_json::Value>) {
@@ -36,8 +43,8 @@ pub async fn health() -> (StatusCode, Json<serde_json::Value>) {
     (StatusCode::OK, Json(json!({ "ok": true })))
 }
 
-pub async fn status() -> Json<serde_json::Value> {
-    Json(json!({ "ok": true }))
+pub async fn status(policy_version: &'static str) -> Json<serde_json::Value> {
+    Json(json!({ "ok": true, "policy_version": policy_version }))
 }
 
 #[derive(Deserialize)]
@@ -136,15 +143,9 @@ async fn bundle_route(
     match bundle::collect_events_for_run(audit.log_path, &q.run_id) {
         Ok(events) => {
             let events = canonicalize_events(events);
-            let artifact_path = bundle::find_model_artifact_path(&events);
-            Json(json!({
-                "ok": true,
-                "run_id": q.run_id,
-                "policy_version": audit.policy_version,
-                "log_path": format!("rust/{}", audit.log_path),
-                "model_artifact_path": artifact_path,
-                "events": events
-            }))
+            let log_path = format!("rust/{}", audit.log_path);
+            let doc = bundle::bundle_document_value(&q.run_id, audit.policy_version, &log_path, &events);
+            Json(doc)
         }
         Err(e) => Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
     }
@@ -204,7 +205,53 @@ pub fn audit_router(log_path: &'static str, policy_version: &'static str) -> Rou
         .route("/bundle", get(bundle_route))
         .route("/bundle-hash", get(bundle_hash_route))
         .route("/verify-log", get(verify_log))
+        .route("/compliance-summary", get(compliance_summary_route))
         .with_state(state)
+}
+
+#[derive(Deserialize)]
+struct ComplianceSummaryQuery {
+    run_id: String,
+}
+
+async fn compliance_summary_route(
+    State(audit): State<AuditState>,
+    Query(q): Query<ComplianceSummaryQuery>,
+) -> Json<serde_json::Value> {
+    match bundle::collect_events_for_run(audit.log_path, &q.run_id) {
+        Ok(events) => {
+            let events = canonicalize_events(events);
+            let artifact_path = bundle::find_model_artifact_path(&events);
+            let log_path = format!("rust/{}", audit.log_path);
+            let bundle_hash = bundle::bundle_sha256(
+                &q.run_id,
+                audit.policy_version,
+                &log_path,
+                artifact_path.as_deref(),
+                &events,
+            );
+            let derived = projection::derive_current_state_from_events_with_context(
+                &q.run_id,
+                &events,
+                Some(bundle_hash),
+                None,
+            );
+            Json(json!({
+                "ok": true,
+                "schema_version": "aigov.compliance_summary.v2",
+                "policy_version": audit.policy_version,
+                "run_id": q.run_id,
+                "current_state": derived,
+            }))
+        }
+        Err(e) => Json(json!({
+            "ok": false,
+            "schema_version": "aigov.compliance_summary.v2",
+            "error": e,
+            "policy_version": audit.policy_version,
+            "run_id": q.run_id,
+        })),
+    }
 }
 
 #[derive(Clone)]

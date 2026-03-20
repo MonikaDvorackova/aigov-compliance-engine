@@ -44,9 +44,11 @@ def build_minimal_evidence(run_id: str, mode: str) -> Dict[str, Any]:
     genesis = {
         "id": "genesis",
         "event_id": "genesis",
+        "event_type": "evidence_genesis",
         "run_id": run_id,
         "ts_utc": ts,
         "type": "evidence_genesis",
+        "actor": "ci_fallback",
         "system": "ci_fallback",
         "payload": {"source": "ci_fallback"},
         "prev_event_id": None,
@@ -55,9 +57,11 @@ def build_minimal_evidence(run_id: str, mode: str) -> Dict[str, Any]:
     head = {
         "id": "ci_fallback_used",
         "event_id": "ci_fallback_used",
+        "event_type": "ci_fallback_used",
         "run_id": run_id,
         "ts_utc": ts,
         "type": "ci_fallback_used",
+        "actor": "ci_fallback",
         "system": "ci_fallback",
         "payload": {"source": "ci_fallback"},
         "prev_event_id": "genesis",

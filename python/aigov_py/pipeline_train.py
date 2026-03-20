@@ -2,12 +2,20 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone
+import hashlib
 
 import requests
 from joblib import dump
 from sklearn.datasets import load_iris
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
+
+from .prototype_domain import (
+  approved_human_event_id_for_run,
+  dataset_governance_iris,
+  model_version_id_for_run,
+  risk_lifecycle_payloads,
+)
 
 AUDIT_URL = os.environ.get("AIGOV_AUDIT_URL", "http://127.0.0.1:8088")
 SYSTEM = os.environ.get("AIGOV_SYSTEM", "aigov_poc")
@@ -27,22 +35,25 @@ def post_event(event: dict) -> dict:
     return {"ok": False, "error": f"non_json_response status={r.status_code}", "text": r.text}
 
 
-def dataset_fingerprint_iris() -> str:
-  iris = load_iris()
-  payload = {
-    "dataset": "iris",
-    "n_rows": int(iris.data.shape[0]),
-    "n_features": int(iris.data.shape[1]),
-    "target_names": list(iris.target_names),
-  }
-  import hashlib
-
-  h = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
-  return h
+def sha256_file(path: str) -> str:
+  h = hashlib.sha256()
+  with open(path, "rb") as f:
+    for chunk in iter(lambda: f.read(1024 * 1024), b""):
+      h.update(chunk)
+  return h.hexdigest()
 
 
 def main() -> None:
-  run_id = str(uuid.uuid4())
+  run_id = (os.environ.get("RUN_ID") or "").strip() or str(uuid.uuid4())
+
+  dataset_gov = dataset_governance_iris()
+  ai_system_id = dataset_gov["ai_system_id"]
+  dataset_id = dataset_gov["dataset_id"]
+  dataset_commitment = dataset_gov["dataset_governance_commitment"]
+  risk_recorded_payload, risk_mitigated_payload, risk_reviewed_payload = risk_lifecycle_payloads(run_id)
+  assessment_id = risk_recorded_payload["assessment_id"]
+  risk_id = risk_recorded_payload["risk_id"]
+  model_version_id = model_version_id_for_run(run_id)
 
   res = post_event(
     {
@@ -52,13 +63,18 @@ def main() -> None:
       "actor": ACTOR,
       "system": SYSTEM,
       "run_id": run_id,
-      "payload": {"purpose": "poc_train_pending_approval"},
+      "payload": {
+        "purpose": "poc_train_pending_approval",
+        "ai_system_id": ai_system_id,
+        "dataset_id": dataset_id,
+        "model_version_id": model_version_id,
+        "risk_id": risk_id,
+      },
     }
   )
   if not res.get("ok"):
     raise SystemExit(f"run_started failed: {res}")
 
-  fp = dataset_fingerprint_iris()
   res = post_event(
     {
       "event_id": str(uuid.uuid4()),
@@ -68,11 +84,25 @@ def main() -> None:
       "system": SYSTEM,
       "run_id": run_id,
       "payload": {
-        "dataset": "iris",
-        "dataset_fingerprint": fp,
-        "n_rows": 150,
-        "n_features": 4,
-        "target_names": ["setosa", "versicolor", "virginica"],
+        # Dataset governance fields + commitment (Article 10 core in this prototype).
+        "ai_system_id": ai_system_id,
+        "dataset_id": dataset_id,
+        "dataset": dataset_gov["dataset"],
+        "dataset_version": dataset_gov["dataset_version"],
+        "dataset_fingerprint": dataset_gov["dataset_fingerprint"],
+        "dataset_governance_id": dataset_gov["dataset_governance_id"],
+        "dataset_governance_commitment": dataset_commitment,
+        "source": dataset_gov["source"],
+        "intended_use": dataset_gov["intended_use"],
+        "limitations": dataset_gov["limitations"],
+        "quality_summary": dataset_gov["quality_summary"],
+        "governance_status": dataset_gov["governance_status"],
+        # Extra traceability (nice-to-have in thesis).
+        "n_rows": dataset_gov.get("n_rows", 150),
+        "n_features": dataset_gov.get("n_features", 4),
+        "target_names": dataset_gov.get(
+          "target_names", ["setosa", "versicolor", "virginica"]
+        ),
       },
     }
   )
@@ -98,8 +128,13 @@ def main() -> None:
       "system": SYSTEM,
       "run_id": run_id,
       "payload": {
+        "model_version_id": model_version_id,
+        "ai_system_id": ai_system_id,
+        "dataset_id": dataset_id,
         "model_type": "LogisticRegression",
-        "params": model.get_params(),
+        "training_params": model.get_params(),
+        "artifact_path": f"python/artifacts/model_{run_id}.joblib",
+        "artifact_sha256": "PENDING",
       },
     }
   )
@@ -119,6 +154,9 @@ def main() -> None:
         "value": acc,
         "threshold": THRESHOLD,
         "passed": passed,
+        "ai_system_id": ai_system_id,
+        "dataset_id": dataset_id,
+        "model_version_id": model_version_id,
       },
     }
   )
@@ -128,7 +166,52 @@ def main() -> None:
   os.makedirs("artifacts", exist_ok=True)
 
   artifact_path = f"python/artifacts/model_{run_id}.joblib"
-  dump(model, os.path.join("artifacts", f"model_{run_id}.joblib"))
+  artifact_path_fs = os.path.join("artifacts", f"model_{run_id}.joblib")
+  dump(model, artifact_path_fs)
+  artifact_sha = sha256_file(artifact_path_fs)
+
+  # Re-emit model_trained with computed artifact digest (stable for bundle evidence).
+  res = post_event(
+    {
+      "event_id": str(uuid.uuid4()),
+      "event_type": "model_trained",
+      "ts_utc": now_utc(),
+      "actor": ACTOR,
+      "system": SYSTEM,
+      "run_id": run_id,
+      "payload": {
+        "model_version_id": model_version_id,
+        "ai_system_id": ai_system_id,
+        "dataset_id": dataset_id,
+        "model_type": "LogisticRegression",
+        "training_params": model.get_params(),
+        "artifact_path": artifact_path,
+        "artifact_sha256": artifact_sha,
+      },
+    }
+  )
+  if not res.get("ok"):
+    raise SystemExit(f"model_trained (artifact digest) failed: {res}")
+
+  # Risk register lifecycle evidence: recorded -> mitigated -> reviewed.
+  for et, payload in (
+    ("risk_recorded", risk_recorded_payload),
+    ("risk_mitigated", risk_mitigated_payload),
+    ("risk_reviewed", risk_reviewed_payload),
+  ):
+    res = post_event(
+      {
+        "event_id": str(uuid.uuid4()),
+        "event_type": et,
+        "ts_utc": now_utc(),
+        "actor": ACTOR,
+        "system": SYSTEM,
+        "run_id": run_id,
+        "payload": payload,
+      }
+    )
+    if not res.get("ok"):
+      raise SystemExit(f"{et} failed: {res}")
 
   print(f"done run_id={run_id} accuracy={acc} passed={passed}")
   print("")
@@ -139,7 +222,7 @@ def main() -> None:
     "curl -sS -X POST http://127.0.0.1:8088/evidence -H 'Content-Type: application/json' -d "
     + json.dumps(
       {
-        "event_id": f"ha_{run_id}",
+        "event_id": approved_human_event_id_for_run(run_id),
         "event_type": "human_approved",
         "ts_utc": now_utc(),
         "actor": ACTOR,
@@ -149,7 +232,13 @@ def main() -> None:
           "scope": "model_promoted",
           "decision": "approve",
           "approver": "compliance_officer",
-          "justification": "metrics meet threshold and dataset fingerprint verified",
+          "justification": "metrics meet threshold and dataset governance commitment verified",
+          "ai_system_id": ai_system_id,
+          "dataset_id": dataset_id,
+          "model_version_id": model_version_id,
+          "assessment_id": assessment_id,
+          "risk_id": risk_id,
+          "dataset_governance_commitment": dataset_commitment,
         },
       }
     )
@@ -168,7 +257,15 @@ def main() -> None:
         "run_id": run_id,
         "payload": {
           "artifact_path": artifact_path,
+          "artifact_sha256": artifact_sha,
           "promotion_reason": "approved_by_human",
+          "ai_system_id": ai_system_id,
+          "dataset_id": dataset_id,
+          "model_version_id": model_version_id,
+          "assessment_id": assessment_id,
+          "risk_id": risk_id,
+          "dataset_governance_commitment": dataset_commitment,
+          "approved_human_event_id": approved_human_event_id_for_run(run_id),
         },
       }
     )

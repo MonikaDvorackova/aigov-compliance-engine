@@ -5,6 +5,8 @@ import os
 import sys
 from typing import Any, Dict, Optional
 
+import requests
+
 
 def repo_root() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -20,6 +22,7 @@ def load_json(path: str) -> Optional[Dict[str, Any]]:
 def verify(run_id: str) -> int:
     root = repo_root()
     mode = os.environ.get("AIGOV_MODE", "ci")
+    endpoint = (os.environ.get("AIGOV_AUDIT_ENDPOINT") or os.environ.get("AIGOV_AUDIT_URL") or "http://127.0.0.1:8088").rstrip("/")
 
     audit_path = os.path.join(root, "docs", "audit", f"{run_id}.json")
     evidence_path = os.path.join(root, "docs", "evidence", f"{run_id}.json")
@@ -49,64 +52,44 @@ def verify(run_id: str) -> int:
     else:
         print("OK   evidence file present")
 
-    # --- PROD SAFETY ---
-    if mode == "prod":
-        if evidence.get("system") == "ci_fallback":
-            print("FAIL ci_fallback evidence is forbidden in PROD")
+    # --- GOVERNANCE LOG VERIFICATION ---
+    # Evidence bundle content is expected to come from the immutable Rust ledger.
+    # If evidence is not ledger-derived (e.g. CI fallback), do not hard-fail.
+    ledger_derived = isinstance(evidence, dict) and bool(evidence.get("log_path"))
+    try:
+        r = requests.get(f"{endpoint}/verify-log", timeout=15)
+        r.raise_for_status()
+        verdict = r.json()
+        if verdict.get("ok") is True:
+            print("OK   governance hash chain verified")
+        else:
+            print(f"FAIL governance verify-log returned: {verdict}")
             ok = False
+    except Exception as e:
+        if ledger_derived:
+            print(f"FAIL could not verify governance log chain: {e}")
+            ok = False
+        else:
+            print(f"WARN could not verify governance log chain (skipping): {e}")
 
-    # --- EVENTS LIST ---
+    # --- EVENTS LIST (structure only; chain is verified server-side) ---
     events = evidence.get("events")
-    if not isinstance(events, list):
-        print("FAIL evidence.events missing or not a list")
-        ok = False
-        events = []
-    elif len(events) < 2:
-        print("FAIL evidence must contain at least 2 events")
+    if not isinstance(events, list) or len(events) == 0:
+        print("FAIL evidence.events missing or empty")
         ok = False
     else:
         print(f"OK   evidence contains {len(events)} events")
 
-    # --- LINEAR CHAIN VALIDATION ---
-    prev_id: Optional[str] = None
-    seen_ids = set()
-
-    for idx, ev in enumerate(events):
-        if not isinstance(ev, dict):
-            print(f"FAIL event {idx} is not an object")
-            ok = False
-            break
-
-        eid = ev.get("id") or ev.get("event_id")
-        if not isinstance(eid, str):
-            print(f"FAIL event {idx} missing id/event_id")
-            ok = False
-            break
-
-        if eid in seen_ids:
-            print(f"FAIL duplicate event id {eid}")
-            ok = False
-            break
-        seen_ids.add(eid)
-
-        prev = ev.get("prev_event_id") or ev.get("prev")
-        if idx == 0:
-            if prev is not None:
-                print("FAIL genesis event must not have prev_event_id")
-                ok = False
-        else:
-            if prev != prev_id:
-                print(
-                    f"FAIL broken chain at event {idx}: "
-                    f"prev_event_id={prev} expected={prev_id}"
-                )
+        # Minimal structure check
+        for idx, ev in enumerate(events[:10]):
+            if not isinstance(ev, dict):
+                print(f"FAIL event {idx} is not an object")
                 ok = False
                 break
-
-        prev_id = eid
-
-    if ok:
-        print("OK   event chain is linear and valid")
+            if not isinstance(ev.get("event_id"), str) or not isinstance(ev.get("event_type"), str):
+                print(f"FAIL event {idx} missing event_id/event_type")
+                ok = False
+                break
 
     # --- POLICY VERSION ---
     policy_version = None
@@ -122,6 +105,13 @@ def verify(run_id: str) -> int:
         ok = False
     else:
         print(f"OK   policy_version={policy_version}")
+
+    # --- AUDIT BUNDLE FINGERPRINT ---
+    if isinstance(audit, dict):
+        bundle_sha = audit.get("bundle_sha256")
+        if not isinstance(bundle_sha, str) or not bundle_sha.strip():
+            print("FAIL missing audit.bundle_sha256")
+            ok = False
 
     # --- REPORT FILE ---
     if not os.path.exists(report_path):

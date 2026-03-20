@@ -4,6 +4,8 @@ mod policy;
 mod schema;
 mod verify_chain;
 
+mod projection;
+
 mod auth;
 mod db;
 mod govai_api;
@@ -33,7 +35,7 @@ async fn main() {
     };
 
     let app: Router = Router::new()
-        .merge(govai_api::core_router())
+        .merge(govai_api::core_router(POLICY_VERSION))
         .merge(govai_api::audit_router(LOG_PATH, POLICY_VERSION))
         .merge(govai_api::assessments_router(pool));
 

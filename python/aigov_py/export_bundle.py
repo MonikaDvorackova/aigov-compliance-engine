@@ -79,6 +79,62 @@ def _bundle_fingerprint(
     return _sha256_bytes(raw)
 
 
+def _extract_identifiers(evidence: Dict[str, Any]) -> Dict[str, Any]:
+    identifiers = evidence.get("identifiers")
+    if isinstance(identifiers, dict):
+        risk_ids = identifiers.get("risk_ids") if isinstance(identifiers.get("risk_ids"), list) else []
+        primary = identifiers.get("primary_risk_id")
+        legacy = identifiers.get("risk_id")
+        rid = primary if isinstance(primary, str) else legacy
+        if not isinstance(rid, str) and risk_ids:
+            rid = risk_ids[0]
+        return {
+            "ai_system_id": identifiers.get("ai_system_id"),
+            "dataset_id": identifiers.get("dataset_id"),
+            "model_version_id": identifiers.get("model_version_id"),
+            "primary_risk_id": rid if isinstance(rid, str) else None,
+            "risk_ids": risk_ids,
+        }
+
+    events = evidence.get("events")
+    ai_system_id = None
+    dataset_id = None
+    model_version_id = None
+    risk_ids: list[str] = []
+
+    if isinstance(events, list):
+        seen_risks = set()
+        risk_event_types = frozenset({"risk_recorded", "risk_mitigated", "risk_reviewed"})
+        for e in reversed(events):
+            if not isinstance(e, dict):
+                continue
+            et = str(e.get("event_type") or "")
+            p = e.get("payload")
+            if not isinstance(p, dict):
+                continue
+            if ai_system_id is None and isinstance(p.get("ai_system_id"), str):
+                ai_system_id = p.get("ai_system_id")
+            if dataset_id is None and isinstance(p.get("dataset_id"), str):
+                dataset_id = p.get("dataset_id")
+            if model_version_id is None and isinstance(p.get("model_version_id"), str):
+                model_version_id = p.get("model_version_id")
+            if et in risk_event_types:
+                rid = p.get("risk_id")
+                if isinstance(rid, str) and rid and rid not in seen_risks:
+                    seen_risks.add(rid)
+                    risk_ids.append(rid)
+
+    risk_ids.sort()
+    primary_risk_id = risk_ids[0] if risk_ids else None
+    return {
+        "ai_system_id": ai_system_id,
+        "dataset_id": dataset_id,
+        "model_version_id": model_version_id,
+        "primary_risk_id": primary_risk_id,
+        "risk_ids": risk_ids,
+    }
+
+
 def export_bundle(run_id: str) -> None:
     run_id = run_id.strip()
     if not run_id:
@@ -102,10 +158,12 @@ def export_bundle(run_id: str) -> None:
 
     evidence_obj = _load_json(evidence_path)
     policy_version = _policy_version_from_evidence(evidence_obj) or "unknown"
+    identifiers = _extract_identifiers(evidence_obj)
 
     evidence_sha256 = _sha256_file(evidence_path)
     report_sha256 = _sha256_file(report_path)
 
+    bundle_sha256 = str(evidence_obj.get("bundle_sha256") or "").strip()
     chain_head: Optional[str] = None
     chain = evidence_obj.get("chain")
     if isinstance(chain, dict):
@@ -113,17 +171,20 @@ def export_bundle(run_id: str) -> None:
         if isinstance(h, str) and h.strip():
             chain_head = h.strip()
 
-    bundle_sha256 = _bundle_fingerprint(
-        run_id=run_id,
-        policy_version=policy_version,
-        evidence_sha256=evidence_sha256,
-        evidence_chain_head_sha256=chain_head,
-    )
+    if not bundle_sha256:
+        # Backwards-compatible fallback when evidence bundle does not embed bundle_sha256.
+        bundle_sha256 = _bundle_fingerprint(
+            run_id=run_id,
+            policy_version=policy_version,
+            evidence_sha256=evidence_sha256,
+            evidence_chain_head_sha256=chain_head,
+        )
 
     audit_obj: Dict[str, Any] = {
         "run_id": run_id,
         "bundle_sha256": bundle_sha256,
         "policy_version": policy_version,
+        "identifiers": identifiers,
         "generated_ts_utc": _utc_now_iso(),
         "evidence_chain_head_sha256": chain_head,
         "hashes": {

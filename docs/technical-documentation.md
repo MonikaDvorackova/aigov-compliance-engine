@@ -1,65 +1,53 @@
-# AI Governance Engineering PoC Technical Documentation
+# Technical documentation (v0.1)
+
+**Authoritative layout for the current implementation:** [ARCHITECTURE.md](../ARCHITECTURE.md), [DEMO_FLOW.md](../DEMO_FLOW.md), [OPEN_SOURCE_SCOPE.md](../OPEN_SOURCE_SCOPE.md). This file retains a compact technical summary.
 
 ## Scope
-This repository provides a proof of concept for compliance by design in an ML pipeline. The PoC focuses on:
-- tamper evident audit logging (hash chained records)
-- policy as code enforcement in the evidence service
-- traceability of data via dataset fingerprint
-- exportable evidence bundle per ML run
 
-## Components
-### Rust evidence service
-- HTTP API
-  - POST /evidence ingests evidence events
-  - GET /verify verifies the hash chain integrity
-  - GET /status returns policy version
-  - GET /bundle?run_id=... exports the evidence set for a single ML run
-- Storage
-  - rust/audit_log.jsonl stores StoredRecord lines with prev_hash and record_hash
-  - record_hash = sha256(prev_hash || json(event))
-- Policy as code
-  - policy rules are enforced before events are appended to the log
+Proof-of-concept for:
 
-### Python ML pipeline
-- trains a simple baseline model (LogisticRegression on iris)
-- emits evidence events to the evidence service
-- persists model artifact under python/artifacts/
+- Tamper-evident audit logging (hash-chained JSONL records)
+- Policy-as-code enforcement before append (`v0.4_human_approval`)
+- Dataset fingerprint and governance fields in `data_registered`
+- Per-run exportable evidence bundle and Markdown report
 
-## Evidence schema
-Each event uses:
-- event_id, event_type, ts_utc, actor, system, run_id, payload
+## Rust evidence service (`rust/`)
 
-Required event sequence (enforced by policy):
-- run_started
-- data_registered (must include dataset_fingerprint)
-- model_trained (requires prior data_registered for same run_id)
-- evaluation_reported (payload schema enforced)
-- model_promoted (requires prior evaluation_reported with passed=true for same run_id)
+- **Ingest:** `POST /evidence` — body: `EvidenceEvent` (`event_id`, `event_type`, `ts_utc`, `actor`, `system`, `run_id`, `payload`).
+- **Chain:** `GET /verify`, `GET /verify-log`
+- **Bundle:** `GET /bundle?run_id=…`, `GET /bundle-hash?run_id=…`
+- **Summary:** `GET /compliance-summary?run_id=…` — `ok`, `schema_version` (`aigov.compliance_summary.v2`), `policy_version`, `run_id`, `current_state` (inner `schema_version`: `aigov.compliance_current_state.v2`, same projection as bundle `identifiers` for canonical fields)
+- **Storage:** append-only `audit_log.jsonl` (relative to process cwd when running from `rust/`).
+- **Other:** `GET /status` (`{"ok":true,"policy_version":"…"}`); `GET /`, `/health` — service metadata.
 
-## Policy versions
-- v0.3_traceability
-  - data_registered must contain dataset(str) and dataset_fingerprint(str)
-  - model_trained requires prior data_registered for same run_id
-  - evaluation_reported payload must include metric(str), value(number), threshold(number), passed(bool)
-  - model_promoted requires prior evaluation_reported passed=true for same run_id
+Authenticated routes (Supabase JWT): `GET /api/me`, `POST /api/assessments`.
 
-## Evidence bundle export
-To export a single run evidence bundle:
-- make bundle RUN_ID=<run_id>
+## Python ML pipeline
 
-The bundle includes:
-- policy_version
-- log_path
-- model_artifact_path (if model_promoted exists)
-- ordered list of events for the run_id
+- `python -m aigov_py.pipeline_train` — sklearn `LogisticRegression` on Iris; posts events to `AIGOV_AUDIT_URL` (default `http://127.0.0.1:8088`).
 
-## Integrity verification
-- make verify
-The verify endpoint checks the full chain in rust/audit_log.jsonl and fails if any record is altered or reordered.
+## Policy / event sequence (enforced in Rust)
 
-## EU AI Act mapping (Articles 9 to 13)
-This PoC demonstrates technical mechanisms that support:
-- risk management workflow hooks via policy enforced gates (Article 9)
-- data governance and traceability via dataset fingerprint and data_registered evidence (Article 10)
-- technical documentation and record keeping via exportable evidence bundles and append only logs (Articles 11 and 12)
-- transparency and observability signals via evaluation_reported and model_promoted evidence (Article 13)
+The policy enforces payload shapes and ordering for a governed promotion path, including:
+
+- `data_registered` (dataset + governance metadata + `dataset_governance_commitment`, `ai_system_id`, `dataset_id`, …)
+- `model_trained` (after `data_registered` for the same `run_id`)
+- `evaluation_reported` (metric / threshold / passed)
+- `risk_recorded` → `risk_mitigated` → `risk_reviewed` (assessment and risk linkage)
+- `human_approved` (linkage to assessment, risk, dataset commitment, scope)
+- `model_promoted` (evaluation passed, approved human and risk review linkage)
+
+See `rust/src/policy.rs` for the exact rules.
+
+## Exports and Makefile
+
+- `make bundle RUN_ID=…` → `aigov_py.export_bundle` (expects `docs/evidence/<RUN_ID>.json` and `docs/reports/<RUN_ID>.md`).
+- `make report_prepare RUN_ID=…` → fetch evidence, render report, export bundle, verify CLI.
+
+## Integrity
+
+- `make verify` — calls `GET /verify` on the running service (full chain).
+
+## EU AI Act (mapping only)
+
+Mechanisms above can be **discussed** in terms of Articles 9–13 (risk, data, documentation, logging, transparency) for research and communication. The **implementation** remains a small PoC; mapping does not imply regulatory completeness.

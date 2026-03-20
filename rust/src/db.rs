@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
+use sqlx::Row;
 
 pub type DbPool = PgPool;
 
@@ -21,40 +22,42 @@ pub struct UserTeamRow {
 }
 
 pub async fn list_user_teams(pool: &DbPool, user_id: &Uuid) -> Result<Vec<UserTeamRow>, sqlx::Error> {
-    let rows = sqlx::query!(
+    let rows = sqlx::query(
         r#"
-        select tm.team_id as "team_id!", t.name as "team_name!", tm.role as "role!"
+        select tm.team_id as team_id,
+               t.name as team_name,
+               tm.role as role
         from public.team_members tm
         join public.teams t on t.id = tm.team_id
         where tm.user_id = $1
         order by t.created_at asc
         "#,
-        user_id
     )
+    .bind(user_id)
     .fetch_all(pool)
     .await?;
 
     Ok(rows
         .into_iter()
         .map(|r| UserTeamRow {
-            team_id: r.team_id,
-            team_name: r.team_name,
-            role: r.role,
+            team_id: r.get::<Uuid, _>("team_id"),
+            team_name: r.get::<String, _>("team_name"),
+            role: r.get::<String, _>("role"),
         })
         .collect())
 }
 
 pub async fn is_team_member(pool: &DbPool, team_id: Uuid, user_id: Uuid) -> Result<bool, sqlx::Error> {
-    let row = sqlx::query!(
+    let row = sqlx::query(
         r#"
-        select 1 as "one!"
+        select 1
         from public.team_members
         where team_id = $1 and user_id = $2
         limit 1
         "#,
-        team_id,
-        user_id
     )
+    .bind(team_id)
+    .bind(user_id)
     .fetch_optional(pool)
     .await?;
 
@@ -62,20 +65,20 @@ pub async fn is_team_member(pool: &DbPool, team_id: Uuid, user_id: Uuid) -> Resu
 }
 
 pub async fn get_default_team_for_user(pool: &DbPool, user_id: Uuid) -> Result<Option<Uuid>, sqlx::Error> {
-    let row = sqlx::query!(
+    let row = sqlx::query(
         r#"
-        select team_id as "team_id!"
+        select team_id
         from public.team_members
         where user_id = $1
         order by created_at asc
         limit 1
         "#,
-        user_id
     )
+    .bind(user_id)
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.map(|r| r.team_id))
+    Ok(row.map(|r| r.get::<Uuid, _>("team_id")))
 }
 
 pub async fn bootstrap_team_for_user(pool: &DbPool, user_id: Uuid) -> Result<Uuid, sqlx::Error> {
@@ -84,25 +87,25 @@ pub async fn bootstrap_team_for_user(pool: &DbPool, user_id: Uuid) -> Result<Uui
 
     let mut tx = pool.begin().await?;
 
-    sqlx::query!(
+    sqlx::query(
         r#"
         insert into public.teams (id, name)
         values ($1, $2)
         "#,
-        team_id,
-        name
     )
+    .bind(team_id)
+    .bind(name)
     .execute(&mut *tx)
     .await?;
 
-    sqlx::query!(
+    sqlx::query(
         r#"
         insert into public.team_members (team_id, user_id, role)
         values ($1, $2, 'owner')
         "#,
-        team_id,
-        user_id
     )
+    .bind(team_id)
+    .bind(user_id)
     .execute(&mut *tx)
     .await?;
 
@@ -131,7 +134,7 @@ pub async fn insert_assessment(
 ) -> Result<AssessmentRow, sqlx::Error> {
     let id = Uuid::new_v4();
 
-    let row = sqlx::query!(
+    let row = sqlx::query(
         r#"
         insert into public.assessments (
             id,
@@ -153,24 +156,24 @@ pub async fn insert_assessment(
             intended_purpose,
             risk_class
         "#,
-        id,
-        team_id,
-        created_by,
-        system_name,
-        intended_purpose,
-        risk_class
     )
+    .bind(id)
+    .bind(team_id)
+    .bind(created_by)
+    .bind(system_name)
+    .bind(intended_purpose)
+    .bind(risk_class)
     .fetch_one(pool)
     .await?;
 
     Ok(AssessmentRow {
-        id: row.id,
-        team_id: row.team_id,
-        created_by: row.created_by,
-        created_at: row.created_at,
-        status: row.status,
-        system_name: row.system_name,
-        intended_purpose: row.intended_purpose,
-        risk_class: row.risk_class,
+        id: row.get::<Uuid, _>("id"),
+        team_id: row.get::<Uuid, _>("team_id"),
+        created_by: row.get::<Uuid, _>("created_by"),
+        created_at: row.get::<DateTime<Utc>, _>("created_at"),
+        status: row.get::<String, _>("status"),
+        system_name: row.get::<Option<String>, _>("system_name"),
+        intended_purpose: row.get::<Option<String>, _>("intended_purpose"),
+        risk_class: row.get::<Option<String>, _>("risk_class"),
     })
 }
