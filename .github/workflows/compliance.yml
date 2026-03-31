@@ -145,6 +145,7 @@ jobs:
     needs: [changes, make_verify]
     env:
       AUDIT_URL: http://127.0.0.1:8088
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
       BASE_SHA: ${{ needs.changes.outputs.base_sha }}
       HEAD_SHA: ${{ needs.changes.outputs.head_sha }}
       REPORTS_CHANGED_FLAG: ${{ needs.changes.outputs.reports_changed }}
@@ -176,6 +177,7 @@ jobs:
         if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
         run: |
           set -euo pipefail
+          test -n "${DATABASE_URL:-}" || { echo "DATABASE_URL is missing"; exit 1; }
           nohup bash -lc 'cd rust && cargo run --locked' > "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" 2>&1 &
           for i in {1..240}; do
             if curl -fsS "${AUDIT_URL}/status" >/dev/null; then
