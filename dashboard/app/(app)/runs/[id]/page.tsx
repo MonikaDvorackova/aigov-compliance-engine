@@ -3,6 +3,11 @@ import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import InfraShell, { InfraHeaderRow } from "@/app/_ui/InfraShell";
 import { InfraAigovMark } from "@/app/_ui/InfraShell";
+import {
+  ComplianceReviewPanel,
+  ComplianceReviewUnavailable,
+} from "@/app/components/ComplianceReviewPanel";
+import { fetchComplianceSummary } from "@/lib/server/fetchComplianceSummary";
 
 type RunRow = {
   id: string;
@@ -282,6 +287,8 @@ export default async function RunDetailPage({ params }: { params: { id: string }
 
   const signed = await fetchSignedUrls(r.id);
 
+  const compliance = await fetchComplianceSummary(r.id);
+
   const isRunning = !hasClosed;
 
   return (
@@ -314,6 +321,21 @@ export default async function RunDetailPage({ params }: { params: { id: string }
               {isRunning ? <span style={badgeStyle("neutral")}>processing</span> : <span style={badgeStyle("neutral")}>closed</span>}
             </div>
           </div>
+        </div>
+
+        <div style={{ marginTop: 16 }}>
+          {compliance.available ? (
+            <ComplianceReviewPanel
+              runId={r.id}
+              rawBody={compliance.body}
+              storedBundleSha256={r.bundle_sha256}
+            />
+          ) : (
+            <ComplianceReviewUnavailable
+              reason={compliance.reason}
+              detail={compliance.detail}
+            />
+          )}
         </div>
 
         <div style={{ marginTop: 16, ...surfaceCardStyle() }}>
