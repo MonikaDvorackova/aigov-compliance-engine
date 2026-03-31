@@ -9,6 +9,7 @@ mod projection;
 mod auth;
 mod db;
 mod govai_api;
+mod rbac;
 
 use axum::Router;
 use std::net::SocketAddr;
@@ -37,7 +38,8 @@ async fn main() {
     let app: Router = Router::new()
         .merge(govai_api::core_router(POLICY_VERSION))
         .merge(govai_api::audit_router(LOG_PATH, POLICY_VERSION))
-        .merge(govai_api::assessments_router(pool));
+        .merge(govai_api::assessments_router(pool.clone()))
+        .merge(govai_api::compliance_workflow_router(pool));
 
     println!("govai listening on http://{}", addr);
 

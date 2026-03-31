@@ -2,11 +2,12 @@ use crate::auth::{AuthConfig, CurrentUser};
 use crate::bundle;
 use crate::db::{self, DbPool};
 use crate::policy;
+use crate::rbac;
 use crate::projection;
 use crate::schema::EvidenceEvent;
 use crate::verify_chain;
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -282,7 +283,11 @@ pub struct AssessmentOut {
 pub struct TeamOut {
     pub id: String,
     pub name: String,
+    /// Raw value from `team_members.role` (may be a legacy alias).
     pub role: String,
+    /// Normalized enterprise role id (`admin`, `compliance_officer`, …).
+    pub effective_role: String,
+    pub permissions: rbac::ProductPermissions,
 }
 
 #[derive(Serialize)]
@@ -319,10 +324,15 @@ async fn me(
         user_id: user.user_id.to_string(),
         teams: teams
             .into_iter()
-            .map(|t| TeamOut {
-                id: t.team_id.to_string(),
-                name: t.team_name,
-                role: t.role,
+            .map(|t| {
+                let nr = rbac::normalize_role(&t.role);
+                TeamOut {
+                    id: t.team_id.to_string(),
+                    name: t.team_name,
+                    effective_role: rbac::canonical_role_id(nr).to_string(),
+                    permissions: rbac::permissions_for(nr),
+                    role: t.role,
+                }
             })
             .collect(),
     };
@@ -384,6 +394,29 @@ async fn resolve_team_id(
     }
 }
 
+async fn team_product_permissions(
+    pool: &DbPool,
+    team_id: Uuid,
+    user_id: Uuid,
+) -> Result<rbac::ProductPermissions, (StatusCode, Json<serde_json::Value>)> {
+    let role_raw = match db::get_team_member_role(pool, team_id, user_id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": "NOT_TEAM_MEMBER" })),
+            ))
+        }
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+            ))
+        }
+    };
+    Ok(rbac::permissions_for_db_role(&role_raw))
+}
+
 async fn create_assessment(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -403,6 +436,21 @@ async fn create_assessment(
         Ok(t) => t,
         Err(resp) => return resp,
     };
+
+    let perms = match team_product_permissions(&state.pool, team_id, user.user_id).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    if !perms.decision_submit {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "FORBIDDEN",
+                "reason": "INSUFFICIENT_ROLE",
+                "required_permission": "decision_submit"
+            })),
+        );
+    }
 
     let rec = match db::insert_assessment(
         &state.pool,
@@ -443,5 +491,406 @@ pub fn assessments_router(pool: DbPool) -> Router {
     Router::new()
         .route("/api/me", get(me))
         .route("/api/assessments", post(create_assessment))
+        .with_state(state)
+}
+
+#[derive(Serialize)]
+pub struct ComplianceWorkflowOut {
+    pub id: String,
+    pub team_id: String,
+    pub run_id: String,
+    pub state: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub created_by: String,
+    pub updated_by: Option<String>,
+}
+
+fn workflow_to_out(r: db::ComplianceWorkflowRow) -> ComplianceWorkflowOut {
+    ComplianceWorkflowOut {
+        id: r.id.to_string(),
+        team_id: r.team_id.to_string(),
+        run_id: r.run_id,
+        state: r.state,
+        created_at: r.created_at.to_rfc3339(),
+        updated_at: r.updated_at.to_rfc3339(),
+        created_by: r.created_by.to_string(),
+        updated_by: r.updated_by.map(|u| u.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ListWorkflowQuery {
+    pub state: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct RegisterWorkflowBody {
+    pub run_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct ReviewDecisionBody {
+    /// `"approve"` or `"reject"`
+    pub decision: String,
+}
+
+#[derive(Deserialize)]
+pub struct PromotionDecisionBody {
+    /// `"allow"` or `"block"`
+    pub decision: String,
+}
+
+async fn list_compliance_workflow(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<ListWorkflowQuery>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let cfg = match AuthConfig::from_env() {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+    };
+
+    let user = match crate::auth::require_user(&cfg, &headers).await {
+        Ok(u) => u,
+        Err(resp) => return resp,
+    };
+
+    let team_id = match resolve_team_id(&state.pool, &user, &headers).await {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+
+    let perms = match team_product_permissions(&state.pool, team_id, user.user_id).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    if !perms.review_queue_view {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "FORBIDDEN",
+                "reason": "INSUFFICIENT_ROLE",
+                "required_permission": "review_queue_view"
+            })),
+        );
+    }
+
+    let filter = q.state.as_deref().filter(|s| !s.trim().is_empty());
+    let rows = match db::list_compliance_workflow(&state.pool, team_id, filter).await {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+            )
+        }
+    };
+
+    let out: Vec<ComplianceWorkflowOut> = rows.into_iter().map(workflow_to_out).collect();
+    (StatusCode::OK, Json(json!({ "ok": true, "items": out })))
+}
+
+async fn register_compliance_workflow(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<RegisterWorkflowBody>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let cfg = match AuthConfig::from_env() {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+    };
+
+    let user = match crate::auth::require_user(&cfg, &headers).await {
+        Ok(u) => u,
+        Err(resp) => return resp,
+    };
+
+    let team_id = match resolve_team_id(&state.pool, &user, &headers).await {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+
+    let perms = match team_product_permissions(&state.pool, team_id, user.user_id).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    if !perms.decision_submit {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "FORBIDDEN",
+                "reason": "INSUFFICIENT_ROLE",
+                "required_permission": "decision_submit"
+            })),
+        );
+    }
+
+    let run_id = body.run_id.trim().to_string();
+    if run_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "RUN_ID_REQUIRED" })),
+        );
+    }
+
+    let rec = match db::upsert_workflow_pending(&state.pool, team_id, &run_id, user.user_id).await {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+            )
+        }
+    };
+
+    (
+        StatusCode::OK,
+        Json(json!({ "ok": true, "workflow": workflow_to_out(rec) })),
+    )
+}
+
+async fn get_compliance_workflow_one(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let cfg = match AuthConfig::from_env() {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+    };
+
+    let user = match crate::auth::require_user(&cfg, &headers).await {
+        Ok(u) => u,
+        Err(resp) => return resp,
+    };
+
+    let team_id = match resolve_team_id(&state.pool, &user, &headers).await {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+
+    let perms = match team_product_permissions(&state.pool, team_id, user.user_id).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    if !perms.review_queue_view {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "FORBIDDEN",
+                "reason": "INSUFFICIENT_ROLE",
+                "required_permission": "review_queue_view"
+            })),
+        );
+    }
+
+    let rid = run_id.trim();
+    let rec = match db::get_compliance_workflow(&state.pool, team_id, rid).await {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+            )
+        }
+    };
+
+    match rec {
+        Some(r) => (StatusCode::OK, Json(json!({ "ok": true, "workflow": workflow_to_out(r) }))),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "NOT_FOUND" })),
+        ),
+    }
+}
+
+async fn post_review_decision(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+    Json(body): Json<ReviewDecisionBody>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let cfg = match AuthConfig::from_env() {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+    };
+
+    let user = match crate::auth::require_user(&cfg, &headers).await {
+        Ok(u) => u,
+        Err(resp) => return resp,
+    };
+
+    let team_id = match resolve_team_id(&state.pool, &user, &headers).await {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+
+    let perms = match team_product_permissions(&state.pool, team_id, user.user_id).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    if !perms.decision_submit {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "FORBIDDEN",
+                "reason": "INSUFFICIENT_ROLE",
+                "required_permission": "decision_submit"
+            })),
+        );
+    }
+
+    let rid = run_id.trim().to_string();
+    if rid.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "RUN_ID_REQUIRED" })),
+        );
+    }
+
+    let approve = match body.decision.trim() {
+        "approve" => true,
+        "reject" => false,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "INVALID_DECISION", "expected": ["approve", "reject"] })),
+            )
+        }
+    };
+
+    let rec = match db::transition_workflow_review(&state.pool, team_id, &rid, user.user_id, approve)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+            )
+        }
+    };
+
+    match rec {
+        Some(r) => (
+            StatusCode::OK,
+            Json(json!({ "ok": true, "workflow": workflow_to_out(r) })),
+        ),
+        None => (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "INVALID_STATE",
+                "message": "expected pending_review for review decision"
+            })),
+        ),
+    }
+}
+
+async fn post_promotion_decision(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+    Json(body): Json<PromotionDecisionBody>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let cfg = match AuthConfig::from_env() {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+    };
+
+    let user = match crate::auth::require_user(&cfg, &headers).await {
+        Ok(u) => u,
+        Err(resp) => return resp,
+    };
+
+    let team_id = match resolve_team_id(&state.pool, &user, &headers).await {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+
+    let perms = match team_product_permissions(&state.pool, team_id, user.user_id).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    if !perms.promotion_action {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "FORBIDDEN",
+                "reason": "INSUFFICIENT_ROLE",
+                "required_permission": "promotion_action"
+            })),
+        );
+    }
+
+    let rid = run_id.trim().to_string();
+    if rid.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "RUN_ID_REQUIRED" })),
+        );
+    }
+
+    let allow = match body.decision.trim() {
+        "allow" => true,
+        "block" => false,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "INVALID_DECISION", "expected": ["allow", "block"] })),
+            )
+        }
+    };
+
+    let rec = match db::transition_workflow_promotion(
+        &state.pool,
+        team_id,
+        &rid,
+        user.user_id,
+        allow,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+            )
+        }
+    };
+
+    match rec {
+        Some(r) => (
+            StatusCode::OK,
+            Json(json!({ "ok": true, "workflow": workflow_to_out(r) })),
+        ),
+        None => (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "INVALID_STATE",
+                "message": "expected approved for promotion decision"
+            })),
+        ),
+    }
+}
+
+pub fn compliance_workflow_router(pool: DbPool) -> Router {
+    let state = AppState { pool };
+
+    Router::new()
+        .route("/api/compliance-workflow", get(list_compliance_workflow).post(register_compliance_workflow))
+        .route(
+            "/api/compliance-workflow/:run_id",
+            get(get_compliance_workflow_one),
+        )
+        .route(
+            "/api/compliance-workflow/:run_id/review",
+            post(post_review_decision),
+        )
+        .route(
+            "/api/compliance-workflow/:run_id/promotion",
+            post(post_promotion_decision),
+        )
         .with_state(state)
 }
