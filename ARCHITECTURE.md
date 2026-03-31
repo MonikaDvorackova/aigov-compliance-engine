@@ -2,6 +2,51 @@
 
 This document describes the **implemented** layout: binaries, HTTP surface, on-disk artifacts, and main Python entrypoints. It is **not** a roadmap.
 
+## Core vs enterprise layer
+
+The repository ships **one Rust binary** with both surfaces merged at the router (`rust/src/main.rs`). The **split is semantic**, not structural: there is no separate OSS-only crate; instead, **frozen core** vs **enterprise layer** is defined by **which routes and data** you rely on.
+
+```mermaid
+flowchart TB
+  subgraph core [Frozen core — ledger + contracts]
+    E["POST /evidence + policy.rs"]
+    L["audit_log.jsonl"]
+    R["GET /bundle, /verify*, /compliance-summary"]
+    E --> L
+    L --> R
+  end
+  subgraph ent [Enterprise layer — product APIs]
+    A["JWT + x-govai-team-id"]
+    P["teams, team_members, assessments"]
+    W["compliance_workflow"]
+    A --> P
+    P --> W
+  end
+```
+
+There is **no edge** between the two subgraphs on purpose: enterprise tables and JWT **do not** append to the ledger or replace policy enforcement. See [ENTERPRISE_LAYER.md](ENTERPRISE_LAYER.md).
+
+| Layer | What it is | Stability expectation |
+|-------|------------|------------------------|
+| **Core (frozen)** | Append-only `audit_log.jsonl`, `policy.rs` enforcement on `POST /evidence`, bundle/projection/compliance-summary routes that read the log only (`/bundle`, `/bundle-hash`, `/compliance-summary`, `/verify*`). Event schema (`schema.rs`), canonical contracts in [docs/strong-core-contract-note.md](docs/strong-core-contract-note.md). | This is the **portable regulation-agnostic contract**; changes are intentional and versioned. |
+| **Enterprise layer** | Supabase JWT auth and team-scoped **`/api/*`** routes: **`/api/me`**, **`/api/assessments`**, **`/api/compliance-workflow*`** backed by Postgres **`teams`**, **`team_members`**, product **RBAC** (`rust/src/rbac.rs`), **`compliance_workflow`** (migration `0003_compliance_workflow.sql`). Dashboard + Python Supabase helpers target this stack. | **Optional product layer** (same repo): **not** the same stability or portability guarantee as the core ledger API. Detail: [ENTERPRISE_LAYER.md](ENTERPRISE_LAYER.md). |
+
+**Explicit separation (reuse / integration):**
+
+| If you need only… | Integrate with… | You can ignore… |
+|-------------------|-----------------|-----------------|
+| Hash-chained evidence + policy + bundle/summary contracts | Core HTTP routes above + contract note | `DATABASE_URL`, Supabase, `/api/*`, dashboard |
+| Team-scoped UI + workflow queue + assessments | `DATABASE_URL`, JWT, `/api/*`, migrations | — |
+
+**What belongs in which layer (quick check):**
+
+- **Core:** hash chain, `POST /evidence`, `policy.rs`, read-only bundle/verify/compliance-summary from the log. No JWT, no team rows, no workflow table.
+- **Enterprise:** JWT validation, `x-govai-team-id` resolution, role → permission checks, `compliance_workflow` state. Does **not** append to the ledger or replace `policy.rs`.
+
+**Rule of thumb:** anything that **writes** hash-chained evidence or enforces `policy.rs` is core. Anything that **scopes users to a team**, checks **JWT + DB role permissions**, or stores **workflow rows** is enterprise layer and does **not** replace or append to the immutable ledger.
+
+**Process note (v0.1):** the server builds a Postgres pool at startup (`DATABASE_URL`); core routes do not use JWT, while **`/api/*`** requires it. See [ENTERPRISE_LAYER.md](ENTERPRISE_LAYER.md#boundaries-vs-frozen-core).
+
 ## High-level data flow
 
 ```mermaid
@@ -51,10 +96,17 @@ flowchart LR
 | GET | `/bundle?run_id=…` | Bundle document (`schema_version`: `aigov.bundle.v1`, includes `events`, `identifiers`, derived sections) |
 | GET | `/bundle-hash?run_id=…` | Canonical `bundle_sha256` for the run |
 | GET | `/compliance-summary?run_id=…` | `ok` + `schema_version` `aigov.compliance_summary.v2`, `policy_version`, `run_id`, `current_state` (projection; inner schema `aigov.compliance_current_state.v2`); or `ok:false` + `error` when the run cannot be loaded |
-| GET | `/api/me` | Supabase JWT — user + teams |
-| POST | `/api/assessments` | Create assessment row (auth + team resolution) |
+| GET | `/api/me` | Supabase JWT — user + teams (each team includes `effective_role` + `permissions` from product RBAC; see `rust/src/rbac.rs`) |
+| POST | `/api/assessments` | Create assessment row (auth + team resolution + **`decision_submit` permission**) |
+| GET | `/api/compliance-workflow` | List workflow rows for resolved team; optional `?state=pending_review` (or other state) |
+| POST | `/api/compliance-workflow` | Register `run_id` in `pending_review` (idempotent if already present) |
+| GET | `/api/compliance-workflow/:run_id` | Fetch one workflow row for the team |
+| POST | `/api/compliance-workflow/:run_id/review` | Body `{"decision":"approve"\|"reject"}` — transitions from `pending_review` only |
+| POST | `/api/compliance-workflow/:run_id/promotion` | Body `{"decision":"allow"\|"block"}` — transitions from `approved` only |
 
-Auth for `/api/me` and `/api/assessments` requires **`SUPABASE_URL`** at minimum (JWKS fetch); optional **`SUPABASE_JWT_AUD`** for audience checks — see `rust/src/auth.rs`. Without a valid `Authorization: Bearer` JWT, these routes return 401/403 as implemented.
+Auth for `/api/me`, `/api/assessments`, and `/api/compliance-workflow*` requires **`SUPABASE_URL`** at minimum (JWKS fetch); optional **`SUPABASE_JWT_AUD`** for audience checks — see `rust/src/auth.rs`. Team scope uses header **`x-govai-team-id`** when set (same as assessments). Without a valid `Authorization: Bearer` JWT, these routes return 401/403 as implemented.
+
+**Compliance workflow (Postgres `compliance_workflow` table)** is **app-layer queue/state only** — it does **not** append to `audit_log.jsonl` or change `policy.rs`. Evidence events (`human_approved`, `model_promoted`, …) remain separate: **manual** via Python/Makefile or any client calling `POST /evidence`. Permissions: list/get require **`review_queue_view`**; register + review require **`decision_submit`**; promotion requires **`promotion_action`** (see `rust/src/rbac.rs`).
 
 ## Policy and evidence schema
 
@@ -94,7 +146,7 @@ Environment variables commonly used: `RUN_ID`, `AIGOV_AUDIT_URL` / `AIGOV_AUDIT_
 
 ## Dashboard (`dashboard/`)
 
-Next.js (App Router): `/login`, `/runs` (list), `/runs/[id]` (detail). Run rows come from **Supabase** after `db_ingest` (same project as dashboard env). The dashboard does not call the Rust audit service directly for v0.1.
+Next.js (App Router): `/login`, `/runs` (list), `/runs/[id]` (detail). Run rows come from **Supabase** after `db_ingest` (same project as dashboard env). Optionally set **`AIGOV_AUDIT_URL`** on the dashboard server so `/runs/[id]` can render the **frozen** `GET /compliance-summary` contract (no projection logic in the UI).
 
 ## EU AI Act (mapping only)
 

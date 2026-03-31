@@ -2,7 +2,16 @@
 
 **Research prototype** — no legal compliance guarantee, certification, or operational warranty. What follows describes what this repository **is** and **is not**, as of the **v0.1** reference implementation.
 
-There is **no separate OSS package or directory split**: everything lives in one tree. The boundary below is **semantic**—what to treat as the portable **core** versus demo glue and optional product surfaces when reading or reusing the code.
+There is **no separate OSS package or directory split**: everything lives in one tree. The boundary below is **semantic**—what to treat as the portable **core** versus demo glue and optional **product** surfaces when reading or reusing the code.
+
+**Enterprise layer ≠ OSS core.** The **enterprise layer** (Postgres-backed teams, JWT-gated `/api/*`, product RBAC, `compliance_workflow`, Supabase dashboard/helpers) is an **optional product integration** shipped in the same repo. It is **not** part of the **open-source core guarantee**: portability, semantic stability, and reuse expectations apply to the ledger and contract surfaces below, not to enterprise APIs or their schema.
+
+| Guarantee | Applies to |
+|-----------|------------|
+| **OSS / “strong core”** | Ledger + policy + bundle/projection contracts and modules listed under *Portable core* below. |
+| **Explicitly outside this guarantee** | **Enterprise layer**: team scope, JWT-gated `/api/*`, product RBAC, `compliance_workflow`, Supabase-integrated dashboard/helpers. Present for demos and product wiring; **may change** independently of core policy/versioning—do not treat as a frozen public API unless you fork and own it. |
+
+**OSS core guarantee** = the portable **core** (ledger + contracts + consumers that target it). **Enterprise layer** = optional product integration only; see [ENTERPRISE_LAYER.md](ENTERPRISE_LAYER.md) and [ARCHITECTURE.md](ARCHITECTURE.md#core-vs-enterprise-layer).
 
 ## Layers in one repository (practical v0.1 boundary)
 
@@ -25,11 +34,13 @@ This is the part meant to stay stable if you swap datasets, models, or hosting; 
 - **Human-approval helpers**: `approve` / `promote` are wired to the demo event-id conventions from `prototype_domain` (e.g. `ha_<run_id>`).
 - **CI-only behavior**: `ci_fallback` (disallowed when `AIGOV_MODE=prod`).
 
-### Optional product / integration surfaces (same repo, not required for the ledger demo)
+### Enterprise layer — optional product integration (not OSS core guarantee)
 
-- **Postgres-authenticated routes**: `GET /api/me`, `POST /api/assessments` (JWT via Supabase config in `rust/src/auth.rs`); header conventions such as `x-govai-team-id` in `govai_api.rs`.
-- **Python**: `ingest_run` (Supabase `runs` upsert), `GovaiClient` and related types in `client.py` for team/assessment flows.
-- **Dashboard** (`dashboard/`): Next.js UI that expects a deployed API and optional Supabase-backed data.
+Same repo; **omit entirely** if you only need the core audit service and file-based ledger.
+
+- **Postgres + JWT**: `GET /api/me`, `POST /api/assessments`, `GET/POST /api/compliance-workflow*` (Supabase JWKS in `rust/src/auth.rs`); team scope via `x-govai-team-id` when set (`rust/src/govai_api.rs`).
+- **Python**: `ingest_run` (Supabase `runs` upsert), `GovaiClient` / `client.py` helpers for team/assessment flows.
+- **Dashboard** (`dashboard/`): Next.js UI that expects Supabase (and optionally `AIGOV_AUDIT_URL` for read-only compliance summary).
 
 ### Meta (shipped with the release)
 
@@ -41,7 +52,7 @@ This is the part meant to stay stable if you swap datasets, models, or hosting; 
 
 - **Legal or regulatory certification** — the code is a research / reference PoC; it does not by itself satisfy EU AI Act or other obligations.
 - **Production-grade security** — no commitment to threat model, pen testing, or operational hardening; JWT/Supabase wiring is minimal integration.
-- **Multi-tenant SaaS** — team/assessment APIs exist as scaffolding; not a full product.
+- **Full multi-tenant SaaS product** — team-scoped tables and APIs exist as an **optional enterprise layer**, not as a complete SaaS (billing, org hierarchy, SLAs, etc.).
 - **Arbitrary model frameworks** — the reference path is sklearn + joblib; other stacks would need new emitters.
 - **Immutable global deployment** — single-process log file and local paths; no distributed consensus or WORM storage.
 - **Exhaustive policy language** — rules are Rust code for one policy version, not a user-editable rules engine.

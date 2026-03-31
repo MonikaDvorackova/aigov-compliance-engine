@@ -6,9 +6,14 @@ Exact commands and **representative** expected outputs. UUIDs, accuracy, and has
 
 ## Prerequisites
 
-1. **`DATABASE_URL`** — Postgres connection string (required for `make audit` / `audit_bg`).
+1. **`DATABASE_URL`** — Postgres connection string (required for `make audit` / `audit_bg`). For a **clean clone / reproducible** enterprise demo, apply the SQL migrations **in order** to that same database (`rust/migrations/0001_govai_core.sql`, `0002_add_compliance_context_fields.sql`, `0003_compliance_workflow.sql`) so `teams`, `team_members`, and **`compliance_workflow`** exist. Without this, `/api/*` handlers that touch Postgres return DB errors. Deeper semantics (teams, RBAC): [ENTERPRISE_LAYER.md](ENTERPRISE_LAYER.md).
 2. **Python venv** — `cd python && . .venv/bin/activate` with `pip install -e .` (see [README.md](README.md)).
 3. For **`make demo_new`** / **`make db_ingest`**: **`SUPABASE_URL`** and **`SUPABASE_SERVICE_ROLE_KEY`**, and the `supabase` Python package if not already installed.
+4. **Auth and team scope for `/api/*`** (enterprise workflow, assessments, `GET /api/me`) — required for the steps in **§2b**:
+   - Set **`SUPABASE_URL`** in the Rust process environment (JWKS fetch). Optionally **`SUPABASE_JWT_AUD`** for audience validation (`rust/src/auth.rs`). Without a valid issuer/JWKS config, **`/api/*`** returns **`500`** or auth errors — same env must be used across **`make audit_bg`**, DB, and curl so a **clean clone** reproduces the same behavior.
+   - **Every** `/api/*` request must include **`Authorization: Bearer <JWT>`** (Supabase session or compatible token).
+   - **Team header (reproducibility):** **`x-govai-team-id: <team-uuid>`** is optional but **recommended** for a deterministic demo: pick **`teams.id`** from your seeded `team_members` rows, or from **`GET /api/me`** → **`teams[].id`**. That way queue rows line up with the membership you expect. If omitted, the server uses a default team or bootstraps one (`resolve_team_id` in `rust/src/govai_api.rs`), which can differ across DBs/users.
+   - **Errors:** invalid UUID in the header → **`400`** `{"error":"INVALID_TEAM_ID"}`; user not in team → **`403`** `{"error":"NOT_TEAM_MEMBER"}`; insufficient product permission → **`403`** `{"error":"FORBIDDEN","reason":"INSUFFICIENT_ROLE","required_permission":"…"}`.
 
 ## Golden run reference path
 
@@ -51,6 +56,131 @@ make run
 - Printed `curl` examples and `make bundle RUN_ID=<uuid>`
 
 Copy **`RUN_ID`** for the next steps.
+
+## 2b. Enterprise compliance workflow (API queue)
+
+This is **app-layer state** in Postgres (`compliance_workflow`). It does **not** append to `audit_log.jsonl` and does **not** replace **`make approve`** / **`make promote`** (those post evidence via `POST /evidence`). Use it to mirror an internal review queue. Deeper semantics: [ENTERPRISE_LAYER.md](ENTERPRISE_LAYER.md).
+
+**Base URL (align with Makefile):** use the same origin as **`make status`** — Makefile defines **`AUDIT_URL`** (default **`http://127.0.0.1:8088`**). The Python pipeline uses **`AIGOV_AUDIT_URL`** for the same service; when mixing **`make run`** and these curls, keep host/port identical (e.g. `export AUDIT_URL="${AIGOV_AUDIT_URL:-http://127.0.0.1:8088}"`).
+
+| Step | Method | Path | Body (JSON) |
+|------|--------|------|-------------|
+| Register in queue | `POST` | `/api/compliance-workflow` | `{"run_id":"<RUN_ID>"}` |
+| Review decision | `POST` | `/api/compliance-workflow/<RUN_ID>/review` | `{"decision":"approve"}` or `"reject"` |
+| Promotion decision | `POST` | `/api/compliance-workflow/<RUN_ID>/promotion` | `{"decision":"allow"}` or `"block"` |
+
+**Permissions (product RBAC, `rust/src/rbac.rs`):** list and single-row **`GET`** need **`review_queue_view`**; **register** and **review** need **`decision_submit`**; **promotion** needs **`promotion_action`**. On denial: **`403`** with `{"error":"FORBIDDEN","reason":"INSUFFICIENT_ROLE","required_permission":"…"}`. **Demo pitfall:** the **`reviewer`** DB role has `decision_submit` but **not** `promotion_action`; use **`compliance_officer`**, **`risk_officer`**, **`admin`**, or **`owner`** (or switch user/JWT) for the promotion step, or expect **`403`** on **`POST …/promotion`**.
+
+**States** (see migration): `pending_review` → `approved` or `rejected` after review; from `approved`, promotion moves to `promotion_allowed` or `promotion_blocked`. Wrong transition: **`409`** `{"error":"INVALID_STATE","message":"…"}` — e.g. review when not pending: `"expected pending_review for review decision"`; promotion when not approved: `"expected approved for promotion decision"`. Bad decision strings: **`400`** `{"error":"INVALID_DECISION","expected":["approve","reject"]}` or `["allow","block"]`. Empty **`run_id`** on register: **`400`** `{"error":"RUN_ID_REQUIRED"}`.
+
+**Representative success shape** (`POST` register / review / promotion return the same `workflow` object type):
+
+```json
+{
+  "ok": true,
+  "workflow": {
+    "id": "<uuid>",
+    "team_id": "<uuid>",
+    "run_id": "<RUN_ID>",
+    "state": "pending_review",
+    "created_at": "<rfc3339>",
+    "updated_at": "<rfc3339>",
+    "created_by": "<user-uuid>",
+    "updated_by": null
+  }
+}
+```
+
+(`updated_by` is set after transitions; states and UUIDs vary.)
+
+With the audit service up:
+
+```bash
+export AUDIT_URL="${AUDIT_URL:-${AIGOV_AUDIT_URL:-http://127.0.0.1:8088}}"
+export TOKEN="<supabase-jwt>"
+export TEAM_ID="<team-uuid>"   # optional; use GET /api/me → teams[].id for reproducibility
+export RUN_ID="<uuid-from-step-2>"
+```
+
+Discover teams and effective permissions (optional):
+
+```bash
+curl -sS "$AUDIT_URL/api/me" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Representative output:** JSON with **`user_id`** and **`teams`** (each team: **`id`**, **`name`**, **`role`**, **`effective_role`**, **`permissions`** with boolean flags such as **`decision_submit`**, **`promotion_action`**).
+
+**1) Register run in queue** (`pending_review` on first insert; idempotent if already present):
+
+```bash
+curl -sS -X POST "$AUDIT_URL/api/compliance-workflow" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "x-govai-team-id: $TEAM_ID" \
+  -d "{\"run_id\":\"$RUN_ID\"}"
+```
+
+**Expected:** `{"ok":true,"workflow":{…}}` with **`id`**, **`team_id`**, **`run_id`**, **`state`**, **`created_at`**, **`updated_at`**, **`created_by`**, **`updated_by`**. On the **first** registration for that `(team_id, run_id)`, **`state`** is **`pending_review`**. A duplicate `POST` returns **200** with the **existing** row (state may already be **`approved`**, **`rejected`**, **`promotion_*`**, etc.—the server does not reset it).
+
+**2) Review decision** (only from `pending_review`):
+
+```bash
+curl -sS -X POST "$AUDIT_URL/api/compliance-workflow/$RUN_ID/review" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "x-govai-team-id: $TEAM_ID" \
+  -d '{"decision":"approve"}'
+```
+
+Use **`"decision":"reject"`** to end in `rejected`. **`400`** with `INVALID_DECISION` and `"expected":["approve","reject"]` if the value is wrong.
+
+**Expected on success:** `{"ok":true,"workflow":{…}}` with `"state":"approved"` or `"state":"rejected"`.
+
+**3) Promotion decision** (only from `approved`):
+
+```bash
+curl -sS -X POST "$AUDIT_URL/api/compliance-workflow/$RUN_ID/promotion" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "x-govai-team-id: $TEAM_ID" \
+  -d '{"decision":"allow"}'
+```
+
+Use **`"decision":"block"`** for `promotion_blocked`. **`400`** with `INVALID_DECISION` and `"expected":["allow","block"]` if the value is wrong.
+
+**Expected on success:** `{"ok":true,"workflow":{…}}` with `"state":"promotion_allowed"` or `"state":"promotion_blocked"`.
+
+**List / inspect (optional):**
+
+```bash
+curl -sS "$AUDIT_URL/api/compliance-workflow?state=pending_review" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "x-govai-team-id: $TEAM_ID"
+```
+
+**Expected:** `{"ok":true,"items":[…]}` (each element matches the **`workflow`** object shape above).
+
+```bash
+curl -sS "$AUDIT_URL/api/compliance-workflow/$RUN_ID" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "x-govai-team-id: $TEAM_ID"
+```
+
+**Expected:** `{"ok":true,"workflow":{…}}` or **`404`** `{"error":"NOT_FOUND"}`.
+
+### Final enterprise demo sequence (end-to-end)
+
+1. **`make audit_bg`** — service listening (e.g. `http://127.0.0.1:8088`); **`make status`** should return `{"ok":true,"policy_version":"…"}`.
+2. **Clean-repo prerequisites:** **`DATABASE_URL`** set for the Rust process; migrations **`0001`**–**`0003`** applied to that database; **`SUPABASE_URL`** (JWKS) in the same environment as the server; a valid **`Authorization: Bearer`** JWT for a user present in **`team_members`** when using **`x-govai-team-id`**.
+3. **`make run`** — copy **`RUN_ID`** from stdout.
+4. Export **`AUDIT_URL`** (same default as Makefile; match **`AIGOV_AUDIT_URL`** if you use the Python train path), **`TOKEN`**, and **`TEAM_ID`** — use **`GET /api/me`** to copy **`teams[].id`** when you need a stable team scope.
+5. **Register in queue:** **`POST /api/compliance-workflow`** with `{"run_id":"$RUN_ID"}` → **`200`**, body `{"ok":true,"workflow":{…}}`; on first registration **`workflow.state`** is **`pending_review`** (a duplicate `POST` returns the current row unchanged).
+6. **Review decision:** **`POST /api/compliance-workflow/$RUN_ID/review`** with `{"decision":"approve"}` or `{"decision":"reject"}` → workflow state **`approved`** or **`rejected`** (stop here if rejected).
+7. **Promotion decision:** **`POST /api/compliance-workflow/$RUN_ID/promotion`** with `{"decision":"allow"}` or `{"decision":"block"}` (requires **`promotion_action`**; see RBAC note above) → **`promotion_allowed`** or **`promotion_blocked`**.
+8. Optionally **`GET /api/compliance-workflow?state=…`** and **`GET /api/compliance-workflow/$RUN_ID`** to inspect the queue.
+
+**Ledger parity:** the workflow API does **not** write **`audit_log.jsonl`**. For real **`human_approved`** / **`model_promoted`** evidence events, still run **`make approve`** and **`make promote`** (§3–4) in addition to or after the API steps above.
 
 ## 3. Human approval
 
