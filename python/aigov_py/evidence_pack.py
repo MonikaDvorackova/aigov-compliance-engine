@@ -48,11 +48,14 @@ def main() -> None:
 
     evidence_path = repo_root / "docs" / "evidence" / f"{run_id}.json"
     report_path = repo_root / "docs" / "reports" / f"{run_id}.md"
+    audit_path = repo_root / "docs" / "audit" / f"{run_id}.json"
 
     if not evidence_path.exists():
         raise SystemExit(f"missing evidence bundle: {evidence_path}")
     if not report_path.exists():
         raise SystemExit(f"missing report: {report_path}")
+    if not audit_path.exists():
+        raise SystemExit(f"missing audit JSON: {audit_path}")
 
     bundle = _read_json(evidence_path)
     policy_version = str(bundle.get("policy_version", "")).strip() or "unknown"
@@ -63,12 +66,14 @@ def main() -> None:
     # Copy into pack staging directory with stable names
     bundle_out = out_dir / "bundle.json"
     report_out = out_dir / "report.md"
+    audit_out = out_dir / "audit.json"
     policy_out = out_dir / "policy.txt"
     readme_out = out_dir / "README.txt"
     manifest_out = out_dir / "manifest.json"
 
     bundle_out.write_bytes(evidence_path.read_bytes())
     report_out.write_bytes(report_path.read_bytes())
+    audit_out.write_bytes(audit_path.read_bytes())
 
     _write_text(policy_out, f"policy_version={policy_version}\n")
 
@@ -84,6 +89,7 @@ def main() -> None:
                 "Contents",
                 "- bundle.json: machine verifiable evidence bundle",
                 "- report.md: human readable audit report",
+                "- audit.json: machine verifiable combined audit index",
                 "- policy.txt: policy snapshot reference",
                 "- manifest.json: sha256 for each file in this pack",
                 "",
@@ -98,6 +104,7 @@ def main() -> None:
     entries: List[Tuple[str, Path]] = [
         ("bundle.json", bundle_out),
         ("report.md", report_out),
+        ("audit.json", audit_out),
         ("policy.txt", policy_out),
         ("README.txt", readme_out),
     ]
@@ -111,6 +118,7 @@ def main() -> None:
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
         z.write(bundle_out, arcname="bundle.json")
         z.write(report_out, arcname="report.md")
+        z.write(audit_out, arcname="audit.json")
         z.write(policy_out, arcname="policy.txt")
         z.write(readme_out, arcname="README.txt")
         z.write(manifest_out, arcname="manifest.json")

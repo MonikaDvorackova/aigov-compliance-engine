@@ -38,6 +38,11 @@ env_check:
 	@echo "SUPABASE_SERVICE_ROLE_KEY=$$(if [ -n "$(SUPABASE_SERVICE_ROLE_KEY)" ]; then echo "SET"; else echo "MISSING"; fi)"
 	@ls -la .env 2>/dev/null || true
 
+# Compliance "gate" check used by CI:
+# ensure that generated audit reports include the minimum required sections.
+gate:
+	@python3 scripts/gate_reports.py
+
 # ================================
 # Audit service
 # ================================
@@ -122,7 +127,8 @@ verify_log:
 # ================================
 
 run:
-	cd python && . .venv/bin/activate && python -m aigov_py.pipeline_train
+	cd python && . .venv/bin/activate && \
+	RUN_ID=$(RUN_ID) python -m aigov_py.pipeline_train
 
 require_run:
 	@if [ -z "$(RUN_ID)" ]; then \
@@ -155,15 +161,12 @@ report_new:
 
 ensure_evidence: require_run ensure_dirs
 	@set -euo pipefail; \
-	if [ -f "docs/evidence/$(RUN_ID).json" ]; then \
-		echo "evidence exists"; \
-		exit 0; \
-	fi; \
-	if [ "$(AIGOV_MODE)" = "prod" ]; then \
+	if [ ! -f "docs/evidence/$(RUN_ID).json" ] && [ "$(AIGOV_MODE)" = "prod" ]; then \
 		echo "ERROR: missing evidence in prod mode"; \
 		exit 2; \
 	fi; \
 	cd python && . .venv/bin/activate && \
+	AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.fetch_bundle_from_govai $(RUN_ID) || \
 	AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.ci_fallback $(RUN_ID)
 
 # ================================
@@ -206,13 +209,10 @@ audit_close: require_run
 report_prepare: require_run
 	@echo "Preparing report for RUN_ID=$(RUN_ID) (AIGOV_MODE=$(AIGOV_MODE))"
 	$(MAKE) ensure_evidence RUN_ID=$(RUN_ID)
-	$(MAKE) report_init RUN_ID=$(RUN_ID)
-	$(MAKE) bundle RUN_ID=$(RUN_ID)
-	$(MAKE) report_fill RUN_ID=$(RUN_ID)
-	$(MAKE) bundle RUN_ID=$(RUN_ID)
+	cd python && . .venv/bin/activate && \
+		RUN_ID=$(RUN_ID) AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.report
+	$(MAKE) export_bundle RUN_ID=$(RUN_ID)
 	$(MAKE) verify_cli RUN_ID=$(RUN_ID)
-	$(MAKE) evidence_pack RUN_ID=$(RUN_ID)
-	$(MAKE) audit_close RUN_ID=$(RUN_ID)
 
 report_prepare_new:
 	@set -euo pipefail; \
@@ -237,6 +237,9 @@ db_ingest: require_run
 demo: require_run check_audit
 	@set -euo pipefail; \
 	echo "DEMO: RUN_ID=$(RUN_ID) AIGOV_MODE=$(AIGOV_MODE)"; \
+	$(MAKE) run RUN_ID="$(RUN_ID)"; \
+	$(MAKE) approve RUN_ID="$(RUN_ID)"; \
+	$(MAKE) promote RUN_ID="$(RUN_ID)"; \
 	$(MAKE) report_prepare RUN_ID="$(RUN_ID)"; \
 	$(MAKE) db_ingest RUN_ID="$(RUN_ID)"; \
 	echo "OK: demo completed RUN_ID=$(RUN_ID)"; \
@@ -246,10 +249,39 @@ demo_new: check_audit
 	@set -euo pipefail; \
 	RUN_ID="$$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"; \
 	echo "DEMO: generated RUN_ID=$$RUN_ID AIGOV_MODE=$(AIGOV_MODE)"; \
+	$(MAKE) run RUN_ID="$$RUN_ID"; \
+	$(MAKE) approve RUN_ID="$$RUN_ID"; \
+	$(MAKE) promote RUN_ID="$$RUN_ID"; \
 	$(MAKE) report_prepare RUN_ID="$$RUN_ID"; \
 	$(MAKE) db_ingest RUN_ID="$$RUN_ID"; \
 	echo "OK: demo completed RUN_ID=$$RUN_ID"; \
 	echo "Dashboard: /runs/$$RUN_ID"
+
+# Train → approve → promote → report_prepare (evidence + report + bundle + verify_cli) → compliance summary (HTTP)
+flow_full: require_run check_audit
+	@set -euo pipefail; \
+	echo "flow_full: RUN_ID=$(RUN_ID) AIGOV_MODE=$(AIGOV_MODE)"; \
+	$(MAKE) run RUN_ID="$(RUN_ID)"; \
+	$(MAKE) approve RUN_ID="$(RUN_ID)"; \
+	$(MAKE) promote RUN_ID="$(RUN_ID)"; \
+	$(MAKE) report_prepare RUN_ID="$(RUN_ID)"; \
+	echo "GET $(AUDIT_URL)/compliance-summary?run_id=$(RUN_ID)"; \
+	curl -fsS "$(AUDIT_URL)/compliance-summary?run_id=$(RUN_ID)"; echo
+
+flow: flow_full
+
+# Thin wrappers around Python scripts (core flow glue)
+approve: require_run
+	cd python && . .venv/bin/activate && \
+		RUN_ID=$(RUN_ID) AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.approve
+
+promote: require_run
+	cd python && . .venv/bin/activate && \
+		RUN_ID=$(RUN_ID) AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.promote
+
+export_bundle: require_run ensure_dirs
+	cd python && . .venv/bin/activate && \
+		AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.export_bundle $(RUN_ID)
 
 # ================================
 # PR helpers
@@ -259,4 +291,26 @@ pr_report:
 	@set -euo pipefail; \
 	RUN_ID="$$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"; \
 	echo "Generated RUN_ID=$$RUN_ID"; \
-	$(MAKE) report_prepare RUN_ID="$$RUN
+	$(MAKE) report_prepare RUN_ID="$$RUN_ID"
+
+pr_report_commit: FORCE
+	@set -euo pipefail; \
+	BRANCH="$$(git rev-parse --abbrev-ref HEAD)"; \
+	if [ "$$BRANCH" = "main" ]; then \
+		echo "ERROR: do not run on main branch"; \
+		exit 2; \
+	fi; \
+	if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "ERROR: working tree not clean. Commit or stash first."; \
+		exit 2; \
+	fi; \
+	RUN_ID="$$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"; \
+	echo "Generated RUN_ID=$$RUN_ID"; \
+	$(MAKE) report_prepare RUN_ID="$$RUN_ID"; \
+	git add "docs/reports/$$RUN_ID.md"; \
+	if git diff --cached --quiet; then \
+		echo "ERROR: nothing staged (report not generated?)"; \
+		exit 2; \
+	fi; \
+	git commit -m "docs: add audit report ($$RUN_ID)"; \
+	git push

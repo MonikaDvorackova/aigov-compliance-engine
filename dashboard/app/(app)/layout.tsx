@@ -2,7 +2,7 @@ import React from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import AigovMarkStatic from "@/app/components/brand/AigovMarkStatic";
+import AigovMark from "@/app/components/brand/AigovMark";
 
 export const dynamic = "force-dynamic";
 
@@ -41,26 +41,33 @@ export default async function AppLayout({
           justifyContent: "space-between",
         }}
       >
-        <Link href="/runs" style={{ display: "inline-flex", alignItems: "center" }}>
-          <AigovMarkStatic
+        <Link
+          href="/runs"
+          aria-label="GovAI"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            textDecoration: "none",
+          }}
+        >
+          <span
             style={{
-              width: 120,
-              height: "auto",
-              opacity: 0.9,
-              transition: "opacity 120ms ease",
+              display: "inline-flex",
+              alignItems: "center",
+              lineHeight: 0,
+              transition: "opacity 120ms ease, transform 120ms ease",
+              opacity: 0.98,
             }}
-          />
+          >
+            <AigovMark size={26} glow neon neonStrength="soft" tone="blue" />
+          </span>
         </Link>
 
-        <div style={{ fontSize: 13, opacity: 0.6 }}>
-          Signed in as {user.email}
-        </div>
+        <div style={{ fontSize: 13, opacity: 0.6 }}>Signed in as {user.email}</div>
       </header>
 
       {/* CONTENT */}
-      <main style={{ flex: 1, padding: 24 }}>
-        {children}
-      </main>
+      <main style={{ flex: 1, padding: 24 }}>{children}</main>
     </div>
   );
 }

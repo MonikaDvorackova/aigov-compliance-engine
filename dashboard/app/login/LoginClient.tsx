@@ -4,7 +4,7 @@ import React, { useMemo, useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useRouter, useSearchParams } from "next/navigation";
-import AigovMarkStatic from "../components/brand/AigovMarkStatic";
+import AigovMark from "../components/brand/AigovMark";
 import InfraShell, { InfraPanel } from "../_ui/InfraShell";
 
 function createSupabaseBrowserClient(): SupabaseClient {
@@ -23,22 +23,22 @@ function IconGoogle({ size = 18, color = "#1D4ED8" }: { size?: number; color?: s
       <path
         d="M21.6 12.27c0-.74-.07-1.45-.2-2.13H12v4.03h5.38c-.23 1.23-.93 2.27-1.98 2.98v2.47h3.2c1.87-1.72 2.99-4.25 2.99-7.35Z"
         fill={color}
-        opacity="0.95"
+        opacity="0.9"
       />
       <path
         d="M12 22c2.7 0 4.97-.9 6.63-2.43l-3.2-2.47c-.9.6-2.05.96-3.43.96-2.64 0-4.88-1.78-5.68-4.17H3.02v2.56C4.66 19.78 8.06 22 12 22Z"
         fill={color}
-        opacity="0.78"
+        opacity="0.72"
       />
       <path
         d="M6.32 13.89c-.2-.6-.32-1.24-.32-1.89s.12-1.29.32-1.89V7.55H3.02C2.37 8.85 2 10.32 2 12s.37 3.15 1.02 4.45l3.3-2.56Z"
         fill={color}
-        opacity="0.66"
+        opacity="0.6"
       />
       <path
         d="M12 5.94c1.47 0 2.8.5 3.84 1.5l2.88-2.88C16.96 2.9 14.7 2 12 2 8.06 0 4.66 4.22 3.02 7.55l3.3 2.56c.8-2.39 3.04-4.17 5.68-4.17Z"
         fill={color}
-        opacity="0.88"
+        opacity="0.82"
       />
     </svg>
   );
@@ -107,8 +107,7 @@ export default function LoginClient() {
   const [message, setMessage] = useState<string | null>(initialMessage);
 
   const blue = "#1D4ED8";
-  const iconGlow =
-    "drop-shadow(0 0 8px rgba(59,130,246,0.90)) drop-shadow(0 0 18px rgba(59,130,246,0.65)) drop-shadow(0 0 40px rgba(29,78,216,0.45))";
+  const iconGlow = "drop-shadow(0 0 10px rgba(59,130,246,0.18))";
 
   async function signInEmailPassword(e: React.FormEvent) {
     e.preventDefault();
@@ -138,14 +137,14 @@ export default function LoginClient() {
     width: "100%",
     height: 44,
     borderRadius: 16,
-    border: "1px solid rgba(255,255,255,0.16)",
+    border: "1px solid rgba(255,255,255,0.14)",
     background: "rgba(255,255,255,0.03)",
     color: "white",
     fontSize: 14,
     padding: "0 12px",
     outline: "none",
     textAlign: "center",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
     backdropFilter: "blur(10px)",
     WebkitBackdropFilter: "blur(10px)",
   };
@@ -154,8 +153,8 @@ export default function LoginClient() {
     width: "100%",
     height: 46,
     borderRadius: 16,
-    border: "1px solid rgba(255,255,255,0.18)",
-    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.16)",
+    background: "rgba(255,255,255,0.05)",
     color: "white",
     fontSize: 15,
     cursor: busy ? "not-allowed" : "pointer",
@@ -163,7 +162,7 @@ export default function LoginClient() {
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10), 0 18px 40px rgba(0,0,0,0.30)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 14px 30px rgba(0,0,0,0.28)",
     transition: "transform 120ms ease, background 120ms ease, border-color 120ms ease",
     backdropFilter: "blur(10px)",
     WebkitBackdropFilter: "blur(10px)",
@@ -175,36 +174,44 @@ export default function LoginClient() {
   };
 
   const linkStyle: React.CSSProperties = {
-    color: "rgba(255,255,255,0.80)",
+    color: "rgba(255,255,255,0.78)",
     textDecoration: "underline",
     textUnderlineOffset: 4,
-    textDecorationColor: "rgba(29,78,216,0.65)",
+    textDecorationColor: "rgba(29,78,216,0.55)",
     fontSize: 12,
   };
 
   return (
     <InfraShell maxWidth={520} align="center" padding={18}>
       <style>{`
-        button[data-btn="1"]:hover { transform: translateY(-1px); background: rgba(255,255,255,0.075); border-color: rgba(255,255,255,0.22); }
-        button[data-btn="1"]:active { transform: translateY(0px); background: rgba(255,255,255,0.06); }
-        input:focus { border-color: rgba(59,130,246,0.70); box-shadow: 0 0 0 3px rgba(59,130,246,0.20); }
-        a:hover { color: rgba(255,255,255,0.92); text-decoration-color: rgba(59,130,246,0.95); }
+        button[data-btn="1"]:hover { transform: translateY(-1px); background: rgba(255,255,255,0.065); border-color: rgba(255,255,255,0.20); }
+        button[data-btn="1"]:active { transform: translateY(0px); background: rgba(255,255,255,0.05); }
+        input:focus { border-color: rgba(59,130,246,0.55); box-shadow: 0 0 0 3px rgba(59,130,246,0.14); }
+        a:hover { color: rgba(255,255,255,0.90); text-decoration-color: rgba(59,130,246,0.80); }
       `}</style>
 
       <div style={{ width: "100%", textAlign: "center" }}>
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-          <AigovMarkStatic style={{ width: 152, height: "auto", opacity: 0.92 }} />
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            marginBottom: 6,
+            height: 60,
+            alignItems: "center",
+          }}
+        >
+          <AigovMark size={50} glow={false} neon={false} neonStrength="off" tone="blue" style={{ opacity: 0.95 }} />
         </div>
 
-        <div style={{ opacity: 0.72, fontSize: 12, letterSpacing: "0.28em", marginBottom: 10 }}>GOVAI</div>
+        <div style={{ opacity: 0.68, fontSize: 11, letterSpacing: "0.24em", marginBottom: 8 }}>GOVAI</div>
 
         <h1
           style={{
             margin: 0,
-            letterSpacing: "-0.03em",
-            fontWeight: 500,
-            lineHeight: 1.06,
-            fontSize: "clamp(28px, 6.2vw, 40px)",
+            letterSpacing: "-0.02em",
+            fontWeight: 600,
+            lineHeight: 1.12,
+            fontSize: "clamp(26px, 5.0vw, 34px)",
             textWrap: "balance",
           }}
         >
@@ -213,11 +220,11 @@ export default function LoginClient() {
 
         <p
           style={{
-            margin: "12px auto 16px",
-            maxWidth: "42ch",
-            opacity: 0.78,
-            fontSize: 14,
-            lineHeight: 1.45,
+            margin: "10px auto 14px",
+            maxWidth: "44ch",
+            opacity: 0.76,
+            fontSize: 13,
+            lineHeight: 1.5,
             textWrap: "balance",
           }}
         >
@@ -231,12 +238,12 @@ export default function LoginClient() {
                 marginBottom: 12,
                 padding: "10px 12px",
                 borderRadius: 16,
-                border: "1px solid rgba(255,255,255,0.16)",
-                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.14)",
+                background: "rgba(255,255,255,0.045)",
                 fontSize: 12,
                 opacity: 0.95,
                 textAlign: "left",
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
               }}
             >
               {message}
@@ -263,7 +270,7 @@ export default function LoginClient() {
             </a>
           </div>
 
-          <div style={{ marginTop: 14, opacity: 0.65, fontSize: 12, textAlign: "center" }}>
+          <div style={{ marginTop: 14, opacity: 0.62, fontSize: 12, textAlign: "center" }}>
             Or email and password
           </div>
 
@@ -295,7 +302,7 @@ export default function LoginClient() {
               style={{
                 ...buttonStyle,
                 background:
-                  busy || !email.trim() || !password ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.06)",
+                  busy || !email.trim() || !password ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.055)",
               }}
             >
               Sign in
@@ -320,7 +327,7 @@ export default function LoginClient() {
             </div>
           </form>
 
-          <div style={{ marginTop: 10, opacity: 0.55, fontSize: 11, textAlign: "center" }}>
+          <div style={{ marginTop: 10, opacity: 0.52, fontSize: 11, textAlign: "center" }}>
             Secure sign in via Google or GitHub.
           </div>
         </InfraPanel>

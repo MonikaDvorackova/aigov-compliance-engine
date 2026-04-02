@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
   const next = safeNext(url.searchParams.get("next"));
   const redirectTo = `${origin}/auth/callback?next=${encodeURIComponent(next)}`;
 
-  const res = NextResponse.next();
+  const res = NextResponse.redirect(new URL("/auth/start", origin));
   const supabase = createSupabaseRouteClient(request, res);
 
   const { data, error } = await supabase.auth.signInWithOAuth({
@@ -31,5 +31,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(new URL("/login?message=OAuthStartFailed", origin));
   }
 
-  return NextResponse.redirect(data.url);
+  return NextResponse.redirect(data.url, { headers: res.headers });
 }

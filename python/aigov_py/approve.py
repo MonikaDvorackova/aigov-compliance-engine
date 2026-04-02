@@ -6,8 +6,11 @@ import uuid
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict
-
-from .events import emit_event
+from .prototype_domain import (
+    approved_human_event_id_for_run,
+    dataset_governance_iris,
+    risk_lifecycle_payloads,
+)
 
 
 def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -38,11 +41,22 @@ def main() -> None:
     actor = os.getenv("AIGOV_ACTOR", "monika")
     system = os.getenv("AIGOV_SYSTEM", "aigov_poc")
 
-    endpoint = (os.getenv("AIGOV_AUDIT_ENDPOINT", "http://127.0.0.1:8088") or "").rstrip("/")
+    endpoint = (
+        os.getenv("AIGOV_AUDIT_ENDPOINT") or os.getenv("AIGOV_AUDIT_URL") or "http://127.0.0.1:8088"
+    ).rstrip("/")
     url = f"{endpoint}/evidence"
 
     ts_utc = _utc_now_iso()
-    remote_event_id = _eid("ha", run_id)
+    remote_event_id = approved_human_event_id_for_run(run_id)
+
+    dataset_gov = dataset_governance_iris()
+    dataset_commitment = dataset_gov["dataset_governance_commitment"]
+    risk_recorded_payload, _, _ = risk_lifecycle_payloads(run_id)
+    assessment_id = risk_recorded_payload["assessment_id"]
+    risk_id = risk_recorded_payload["risk_id"]
+    model_version_id = risk_recorded_payload["model_version_id"]
+    ai_system_id = risk_recorded_payload["ai_system_id"]
+    dataset_id = risk_recorded_payload["dataset_id"]
 
     event: Dict[str, Any] = {
         "event_id": remote_event_id,
@@ -55,43 +69,20 @@ def main() -> None:
             "scope": "model_promoted",
             "decision": "approve",
             "approver": "compliance_officer",
-            "justification": "metrics meet threshold and dataset fingerprint verified",
+            "justification": "metrics meet threshold and dataset governance commitment verified",
+            "assessment_id": assessment_id,
+            "risk_id": risk_id,
+            "dataset_governance_commitment": dataset_commitment,
+          "ai_system_id": ai_system_id,
+          "dataset_id": dataset_id,
+          "model_version_id": model_version_id,
         },
     }
-
-    emit_event(
-        run_id=run_id,
-        event_id=_eid("approve_started", run_id),
-        event_type="approve_started",
-        actor=actor,
-        system=system,
-        payload={"approval_attempt_id": remote_event_id},
-        ts_utc=ts_utc,
-    )
 
     try:
         out = _post_json(url, event)
     except Exception as e:
-        emit_event(
-            run_id=run_id,
-            event_id=_eid("approve_failed", run_id),
-            event_type="approve_failed",
-            actor=actor,
-            system=system,
-            payload={"approval_attempt_id": remote_event_id, "error": str(e)},
-            ts_utc=_utc_now_iso(),
-        )
         raise
-
-    emit_event(
-        run_id=run_id,
-        event_id=_eid("human_approved", run_id),
-        event_type="human_approved",
-        actor=actor,
-        system=system,
-        payload={"approval_attempt_id": remote_event_id, "request": event, "response": out},
-        ts_utc=_utc_now_iso(),
-    )
 
     print(json.dumps(out, ensure_ascii=False))
 

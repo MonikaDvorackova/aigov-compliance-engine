@@ -48,8 +48,8 @@ def _events(bundle: Dict[str, Any]) -> List[Event]:
     return out
 
 
-def _pick(events: List[Event], t: str) -> Optional[Event]:
-    for e in events:
+def _pick_last(events: List[Event], t: str) -> Optional[Event]:
+    for e in reversed(events):
         if e.event_type == t:
             return e
     return None
@@ -73,11 +73,14 @@ def main() -> None:
     bundle = _load_bundle(bundle_path)
     events = _events(bundle)
 
-    run_started = _pick(events, "run_started")
-    data_registered = _pick(events, "data_registered")
-    evaluation_reported = _pick(events, "evaluation_reported")
-    human_approved = _pick(events, "human_approved")
-    model_promoted = _pick(events, "model_promoted")
+    run_started = _pick_last(events, "run_started")
+    data_registered = _pick_last(events, "data_registered")
+    evaluation_reported = _pick_last(events, "evaluation_reported")
+    risk_recorded = _pick_last(events, "risk_recorded")
+    risk_mitigated = _pick_last(events, "risk_mitigated")
+    risk_reviewed = _pick_last(events, "risk_reviewed")
+    human_approved = _pick_last(events, "human_approved")
+    model_promoted = _pick_last(events, "model_promoted")
 
     system = run_started.system if run_started else (events[0].system if events else "")
     actor = run_started.actor if run_started else (events[0].actor if events else "")
@@ -91,11 +94,19 @@ def main() -> None:
 
     dataset = ""
     dataset_fp = ""
+    dataset_version = ""
+    dataset_governance_commitment = ""
+    governance_status = ""
     n_rows = ""
     n_features = ""
     if data_registered:
         dataset = str(data_registered.payload.get("dataset", ""))
         dataset_fp = str(data_registered.payload.get("dataset_fingerprint", ""))
+        dataset_version = str(data_registered.payload.get("dataset_version", ""))
+        dataset_governance_commitment = str(
+            data_registered.payload.get("dataset_governance_commitment", "")
+        )
+        governance_status = str(data_registered.payload.get("governance_status", ""))
         n_rows = str(data_registered.payload.get("n_rows", ""))
         n_features = str(data_registered.payload.get("n_features", ""))
 
@@ -109,21 +120,62 @@ def main() -> None:
         threshold = str(evaluation_reported.payload.get("threshold", ""))
         passed = str(evaluation_reported.payload.get("passed", ""))
 
+    risk_id = ""
+    risk_class = ""
+    severity = ""
+    likelihood = ""
+    risk_status = ""
+    mitigation = ""
+    owner = ""
+    risk_decision = ""
+    risk_reviewer = ""
+    risk_justification = ""
+
+    if risk_recorded:
+        risk_id = str(risk_recorded.payload.get("risk_id", ""))
+        risk_class = str(risk_recorded.payload.get("risk_class", ""))
+        severity = str(risk_recorded.payload.get("severity", ""))
+        likelihood = str(risk_recorded.payload.get("likelihood", ""))
+        risk_status = str(risk_recorded.payload.get("status", ""))
+        mitigation = str(risk_recorded.payload.get("mitigation", ""))
+        owner = str(risk_recorded.payload.get("owner", ""))
+
+    if risk_mitigated:
+        risk_status = str(risk_mitigated.payload.get("status", risk_status))
+        mitigation = str(risk_mitigated.payload.get("mitigation", mitigation))
+
+    if risk_reviewed:
+        risk_decision = str(risk_reviewed.payload.get("decision", ""))
+        risk_reviewer = str(risk_reviewed.payload.get("reviewer", ""))
+        risk_justification = str(risk_reviewed.payload.get("justification", ""))
+
     approver = ""
     decision = ""
     justification = ""
     scope = ""
+    assessment_id = ""
+    approved_risk_id = ""
+    approved_dataset_commitment = ""
     if human_approved:
         scope = str(human_approved.payload.get("scope", ""))
         decision = str(human_approved.payload.get("decision", ""))
         approver = str(human_approved.payload.get("approver", ""))
         justification = str(human_approved.payload.get("justification", ""))
+        assessment_id = str(human_approved.payload.get("assessment_id", ""))
+        approved_risk_id = str(human_approved.payload.get("risk_id", ""))
+        approved_dataset_commitment = str(
+            human_approved.payload.get("dataset_governance_commitment", "")
+        )
 
     promoted_reason = ""
     promoted_artifact_path = ""
+    approved_human_event_id = ""
     if model_promoted:
         promoted_reason = str(model_promoted.payload.get("promotion_reason", ""))
         promoted_artifact_path = str(model_promoted.payload.get("artifact_path", ""))
+        approved_human_event_id = str(
+            model_promoted.payload.get("approved_human_event_id", "")
+        )
 
     report_dir = repo_root / "docs" / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -140,6 +192,29 @@ def main() -> None:
 
     lines.append("## Summary")
     lines.append("")
+    ids = bundle.get("identifiers")
+    if isinstance(ids, dict):
+        ais = ids.get("ai_system_id")
+        did = ids.get("dataset_id")
+        mvid = ids.get("model_version_id")
+        prid = ids.get("primary_risk_id")
+        if not isinstance(prid, str):
+            prid = ids.get("risk_id")
+        rlist = ids.get("risk_ids")
+        if isinstance(prid, str) or isinstance(ais, str) or isinstance(did, str) or isinstance(mvid, str):
+            lines.append("### Canonical identifiers (bundle)")
+            lines.append("")
+            if isinstance(ais, str) and ais:
+                lines.append(f"- `ai_system_id`: `{_md_escape(ais)}`")
+            if isinstance(did, str) and did:
+                lines.append(f"- `dataset_id`: `{_md_escape(did)}`")
+            if isinstance(mvid, str) and mvid:
+                lines.append(f"- `model_version_id`: `{_md_escape(mvid)}`")
+            if isinstance(prid, str) and prid:
+                lines.append(f"- `primary_risk_id`: `{_md_escape(prid)}`")
+            if isinstance(rlist, list) and rlist:
+                lines.append(f"- `risk_ids`: `{_md_escape(', '.join(str(x) for x in rlist))}`")
+            lines.append("")
     lines.append(f"- System: `{_md_escape(system)}`")
     lines.append(f"- Actor: `{_md_escape(actor)}`")
     lines.append(f"- Policy version: `{_md_escape(policy_version)}`")
@@ -155,8 +230,27 @@ def main() -> None:
     lines.append("|---|---|")
     lines.append(f"| Dataset | `{_md_escape(dataset)}` |")
     lines.append(f"| Dataset fingerprint | `{_md_escape(dataset_fp)}` |")
+    if dataset_version:
+        lines.append(f"| Dataset version | `{_md_escape(dataset_version)}` |")
+    if dataset_governance_commitment:
+        lines.append(
+            f"| Dataset governance commitment | `{_md_escape(dataset_governance_commitment)}` |"
+        )
+    if governance_status:
+        lines.append(f"| Governance status | `{_md_escape(governance_status)}` |")
     lines.append(f"| Rows | `{_md_escape(n_rows)}` |")
     lines.append(f"| Features | `{_md_escape(n_features)}` |")
+    lines.append("")
+
+    lines.append("## Risk review register")
+    lines.append("")
+    lines.append(
+        "| Risk ID | Risk class | Severity | Likelihood | Status | Owner | Mitigation | Review decision | Reviewer | Justification |"
+    )
+    lines.append("|---|---|---:|---:|---|---|---|---|---|---|")
+    lines.append(
+        f"| `{_md_escape(risk_id)}` | `{_md_escape(risk_class)}` | `{_md_escape(severity)}` | `{_md_escape(likelihood)}` | `{_md_escape(risk_status)}` | `{_md_escape(owner)}` | `{_md_escape(mitigation)}` | `{_md_escape(risk_decision)}` | `{_md_escape(risk_reviewer)}` | `{_md_escape(risk_justification)}` |"
+    )
     lines.append("")
 
     lines.append("## Evaluation gate")
@@ -177,11 +271,21 @@ def main() -> None:
     )
     lines.append("")
 
+    if assessment_id or approved_risk_id or approved_dataset_commitment:
+        lines.append("### Approval linkage fields")
+        lines.append("")
+        lines.append(f"- Assessment ID: `{_md_escape(assessment_id)}`")
+        lines.append(f"- Risk ID: `{_md_escape(approved_risk_id)}`")
+        lines.append(f"- Dataset governance commitment: `{_md_escape(approved_dataset_commitment)}`")
+        lines.append("")
+
     lines.append("## Promotion")
     lines.append("")
     lines.append(f"- Promotion reason: `{_md_escape(promoted_reason)}`")
     if promoted_artifact_path:
         lines.append(f"- Artifact path: `{_md_escape(promoted_artifact_path)}`")
+    if approved_human_event_id:
+        lines.append(f"- Approved human event id: `{_md_escape(approved_human_event_id)}`")
     lines.append("")
 
     lines.append("## Event timeline")

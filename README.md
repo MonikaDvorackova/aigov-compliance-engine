@@ -1,154 +1,90 @@
-AIGov Architecture
+# AIGov Compliance Engine (v0.1)
 
-Audit ready AI Governance Framework for the EU AI Act
+**Research prototype** — governance-by-design reference for ML runs: append-only, hash-chained evidence in a Rust service, policy checks before append, Python training and reporting, and optional Supabase-backed UI ingest. **This software does not provide legal compliance, certification, or a warranty of any kind.**
 
-Reference implementation of compliance by design machine learning systems aligned with Articles 9 to 13 of the EU AI Act.
+The **core abstractions** (identifiers, evidence events, bundle, projection, compliance summary) are **regulation-agnostic**. The [EU AI Act](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32024R1689) appears only as **illustrative mapping** for documentation and thesis context—not as legal advice or exhaustive compliance.
 
-What this is
+## What it does
 
-AIGov Architecture is an open reference framework for building audit ready, traceable and legally compliant AI systems.
-It translates the obligations of the EU AI Act directly into technical system design, so that governance, risk management, logging and accountability are enforced inside the machine learning pipeline, not added afterwards.
+- **Append-only audit ledger** — Rust service appends hash-chained JSONL (`rust/audit_log.jsonl`) on successful `POST /evidence`; policy version is `v0.4_human_approval` (see `rust/src/main.rs`).
+- **Bundle and compliance views** — `GET /bundle`, `/bundle-hash`, `/compliance-summary` derive from the log; `GET /verify` checks chain integrity.
+- **Reference Iris pipeline** — Python `pipeline_train` trains sklearn `LogisticRegression`, emits events to the audit URL, then stops for human approval; `approve` / `promote` complete the lifecycle.
+- **Reports and packs** — Markdown audit reports, audit manifest JSON, and ZIP packs under `docs/` via Makefile targets.
+- **Optional dashboard** — Next.js app reads runs from Supabase after `db_ingest` (see [DEMO_FLOW.md](DEMO_FLOW.md)).
 
-This is not documentation.
-This is infrastructure.
+**Core vs prototype:** the portable core is the Rust ledger + policy + bundle/summary HTTP surface and identifier contracts in [docs/strong-core-contract-note.md](docs/strong-core-contract-note.md). Iris, `prototype_domain`, and optional Supabase/dashboard paths are integration/demo layers. Boundary detail: [OPEN_SOURCE_SCOPE.md](OPEN_SOURCE_SCOPE.md).
 
-Regulatory scope
+## Prerequisites
 
-The framework is designed around Articles 9 to 13 of the EU AI Act, covering
-Risk management systems
-Data and model governance
-Technical documentation
-Record keeping and logging
-Transparency and traceability
-Human oversight
-The goal is to enable compliance by design, not after the fact compliance reporting.
+- **Rust** (2021) — `rust/`
+- **Python ≥ 3.10** — venv under `python/.venv`, `pip install -e .` from `python/`
+- **PostgreSQL** — **`DATABASE_URL`** required (Rust builds a pool at startup)
 
-Architecture
+Optional: **Supabase** credentials for `db_ingest` and the dashboard; Rust **`/api/me`** / **`/api/assessments`** need **`SUPABASE_URL`** (JWKS) and a valid Bearer JWT (see [ARCHITECTURE.md](ARCHITECTURE.md)).
 
-The system is split into two tightly coupled layers.
-1 Model and pipeline layer (Python)
-This layer contains
-Training and inference pipelines
-Feature and data lineage
-Evaluation and bias metrics
-Model versioning
-Experiment tracking
-It integrates with
-scikit learn
-PyTorch
-MLflow
-Custom training pipelines
-This layer produces structured machine verifiable evidence about how models are trained, evaluated and deployed.
-2 Governance and evidence layer (Rust)
-This layer is the legal backbone.
-It handles
-Immutable audit logs
-Cryptographic integrity of records
-Policy as code
-Compliance checks
-Regulatory evidence export
-Cross model traceability
-The Rust layer is designed to be
-Deterministic
-Tamper resistant
-Auditor friendly
-This is what makes the system legally defensible.
+```bash
+cd python && python -m venv .venv && . .venv/bin/activate && pip install -e .
+```
 
-Core idea
+## Quick start (five steps)
 
-Every high risk AI system must be able to answer
-What data was used
-Which model version was deployed
-Who approved it
-What risks were known
-What policies were applied
-What changed
-Who is responsible
-This framework makes those answers machine verifiable.
+1. **Set `DATABASE_URL`** to a reachable Postgres connection string.
 
-Use cases
+2. **Start the evidence service** (default `http://127.0.0.1:8088`, override with `AIGOV_BIND`):
 
-High risk AI under the EU AI Act
-Regulated industries
-Public sector AI
-Model auditing and certification
-Due diligence for investors
-Litigation and regulatory defense
+   ```bash
+   make audit_bg
+   ```
 
-Status
+   On success the server prints `govai listening on http://…` (see `rust/src/main.rs`); `make audit_bg` prints `ready on http://127.0.0.1:8088` when the `/status` probe succeeds.
 
-This repository is developed as a proof of concept and reference implementation.
-It is also used as the technical backbone of an academic LLM thesis on AI Governance Engineering and audit ready machine learning systems.
+3. **Sanity check:** `make status` → `{"ok":true,"policy_version":"v0.4_human_approval"}`; `make verify` → JSON with `"ok":true` and `"policy_version"` when the chain is valid.
 
-Quick start governance demo
+4. **Train:** `make run` → note `done run_id=<uuid> accuracy=<float> passed=<true|false>`, then `pending_human_approval`.
 
-This demo shows how an AI model is trained, evaluated, approved by a human and only then allowed to be promoted, with a cryptographically verifiable audit trail.
-1 Start the governance engine
-In the first terminal run
-make audit
-This starts the governance layer that enforces policies, verifies evidence and stores the immutable audit log.
-In a second terminal verify that the engine is running
-make verify
-make status
-You should see something like
-{"ok": true, "policy_version": "v0.4_human_approval"}
-2 Run a governed model training
-Start a training run
-make run
-The pipeline will
-Register the dataset
-Train the model
-Compute evaluation metrics
-Stop before promotion
-You will see output similar to
-done run_id=68460594-91c0-4e63-8722-bd4f2f54abe5 accuracy=0.96 passed=True
+5. **Finish the run:** use that `RUN_ID`:
 
-pending_human_approval
+   ```bash
+   RUN_ID=<uuid> make approve
+   RUN_ID=<uuid> make promote
+   RUN_ID=<uuid> make report_prepare
+   ```
 
-next:
-RUN_ID=68460594-91c0-4e63-8722-bd4f2f54abe5 make approve
-At this point the model is trained but cannot be promoted without human approval.
-3 Human approval gate
-Approve the model as a human compliance officer
-RUN_ID=<run_id> make approve
-This creates a legally traceable human approval linked to the run.
-4 Promote the model
-Only after approval the model can be promoted
-RUN_ID=<run_id> make promote
-If you try to promote without approval, the governance engine will block it.
-5 Export the legal evidence bundle
-Create the evidence bundle
-RUN_ID=<run_id> make bundle
-This produces
-docs/evidence/<run_id>.json
-This file contains a cryptographically chained, policy validated record of
-Dataset fingerprint
-Training parameters
-Evaluation results
-Human approval
-Model promotion
-This file is suitable for audits, regulators, due diligence and court proceedings.
-6 Generate the audit report
-Generate a human readable audit report
-RUN_ID=<run_id> make report
-This produces
-docs/reports/<run_id>.md
-This document is a legal grade technical report of the entire model lifecycle.
+   This produces `docs/evidence/<RUN_ID>.json`, `docs/reports/<RUN_ID>.md`, `docs/audit/<RUN_ID>.json`, `docs/packs/<RUN_ID>.zip` and runs CLI verification.
 
-What this proves
+**Optional:** `make flow_full` runs train → approve → promote → `report_prepare`, then prints **`GET /compliance-summary`** JSON (same prerequisites as `audit_bg`). `make demo_new` runs the same train → approve → promote → `report_prepare` → `db_ingest` (needs Supabase env for ingest). **`make gate`** checks that `docs/reports/*.md` contain `## Evaluation gate` and `## Human approval gate`.
 
-This system demonstrates that
-No model can be deployed without recorded human approval
-All training and data lineage is immutable
-Every decision is cryptographically verifiable
-Compliance is enforced at runtime
+## Demo commands and expected outputs
 
-This is not logging.
+| Step | Command | Expected (representative) |
+|------|---------|---------------------------|
+| Service up | `make audit_bg` | `starting aigov_audit…` then `ready on http://127.0.0.1:8088`, or `aigov_audit already running…` |
+| Liveness | `make status` | `{"ok":true,"policy_version":"v0.4_human_approval"}` |
+| Chain | `make verify` | `"ok":true` and `policy_version`, or `"ok":false` with `error` |
+| Train | `make run` | `done run_id=…`, `pending_human_approval`, printed `make bundle RUN_ID=…` hint |
+| Approve | `RUN_ID=… make approve` | JSON with `"ok":true` and `record_hash` on success |
+| Promote | `RUN_ID=… make promote` | JSON with `"ok":true` on success |
+| Report pack | `RUN_ID=… make report_prepare` | Writes under `docs/`; `verify_cli` prints `AIGOV VERIFICATION REPORT` and ends with `VERDICT VALID` or `VERDICT INVALID` |
+| Full flow + compliance summary | `RUN_ID=… make flow_full` | Same as report row, then stdout JSON from `/compliance-summary?run_id=…` (`ok`, `schema_version`, `current_state`, …) |
+| CI gate | `make gate` | `gate OK; checked N reports` or `gate: no reports found; OK` |
 
-This is compliance by design.
+UUIDs, accuracy, and hashes change every run. Full walkthrough: [DEMO_FLOW.md](DEMO_FLOW.md).
 
-License
+## Golden run reference path
 
-Apache 2.0
-You are free to use this framework commercially.
-You are not free to remove attribution or misrepresent authorship. 
+Stable location for optional pinned snapshots and notes: **[docs/demo/golden-run/](docs/demo/golden-run/)** (see README there). Live reproduction always uses the Makefile flow above.
+
+## Documentation
+
+| Doc | Purpose |
+|-----|---------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Components, routes, storage paths |
+| [DEMO_FLOW.md](DEMO_FLOW.md) | Commands and expected outputs in detail |
+| [OPEN_SOURCE_SCOPE.md](OPEN_SOURCE_SCOPE.md) | Core vs demo vs optional; out of scope |
+| [docs/THESIS_REFERENCE_SCOPE.md](docs/THESIS_REFERENCE_SCOPE.md) | Thesis vs repository |
+| [docs/strong-core-contract-note.md](docs/strong-core-contract-note.md) | Identifiers and compliance-summary contract |
+| [docs/technical-documentation.md](docs/technical-documentation.md) | Legacy notes (partially superseded for v0.1) |
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).

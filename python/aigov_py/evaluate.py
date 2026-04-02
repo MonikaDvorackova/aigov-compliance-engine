@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 import requests
 
 from .events import emit_event
+from .prototype_domain import dataset_governance_iris, model_version_id_for_run
 
 
 def _utc_now_iso() -> str:
@@ -36,6 +37,10 @@ def main() -> None:
 
     actor = (os.getenv("AIGOV_ACTOR", "monika") or "monika").strip() or "monika"
     system = (os.getenv("AIGOV_SYSTEM", "aigov_poc") or "aigov_poc").strip() or "aigov_poc"
+    dataset_gov = dataset_governance_iris()
+    ai_system_id = dataset_gov["ai_system_id"]
+    dataset_id = dataset_gov["dataset_id"]
+    model_version_id = model_version_id_for_run(run_id)
 
     endpoint = (os.getenv("AIGOV_AUDIT_ENDPOINT", "http://127.0.0.1:8088") or "").rstrip("/")
     url = f"{endpoint}/evidence"
@@ -68,6 +73,9 @@ def main() -> None:
             "threshold": threshold,
             "passed": passed,
             "remote_event_id": f"evaluation_{run_id}_{remote_event_id}",
+            "ai_system_id": ai_system_id,
+            "dataset_id": dataset_id,
+            "model_version_id": model_version_id,
         },
     }
 
@@ -108,6 +116,9 @@ def main() -> None:
             "value": value,
             "threshold": threshold,
             "passed": passed,
+            "ai_system_id": ai_system_id,
+            "dataset_id": dataset_id,
+            "model_version_id": model_version_id,
         },
         system=system,
         event_id=_eid("evaluation_reported", run_id),

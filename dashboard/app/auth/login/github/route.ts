@@ -12,6 +12,19 @@ function safeNext(raw: string | null): string {
   return "/runs";
 }
 
+function copySetCookie(from: NextResponse, to: NextResponse) {
+  const anyHeaders = from.headers as any;
+
+  if (typeof anyHeaders.getSetCookie === "function") {
+    const cookies: string[] = anyHeaders.getSetCookie();
+    for (const c of cookies) to.headers.append("set-cookie", c);
+    return;
+  }
+
+  const single = from.headers.get("set-cookie");
+  if (single) to.headers.set("set-cookie", single);
+}
+
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const origin = url.origin;
@@ -28,8 +41,12 @@ export async function GET(request: NextRequest) {
   });
 
   if (error || !data?.url) {
-    return NextResponse.redirect(new URL("/login?message=OAuthStartFailed", origin));
+    const fail = NextResponse.redirect(new URL("/login?message=OAuthStartFailed", origin));
+    copySetCookie(res, fail);
+    return fail;
   }
 
-  return NextResponse.redirect(data.url);
+  const redirect = NextResponse.redirect(data.url);
+  copySetCookie(res, redirect);
+  return redirect;
 }

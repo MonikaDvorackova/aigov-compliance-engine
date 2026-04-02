@@ -3,6 +3,13 @@ import json
 import os
 from datetime import datetime, timezone
 
+from .prototype_domain import (
+    approved_human_event_id_for_run,
+    dataset_governance_iris,
+    model_version_id_for_run,
+    risk_lifecycle_payloads,
+)
+
 API = "http://127.0.0.1:8088/evidence"
 
 
@@ -35,9 +42,18 @@ def main() -> None:
     actor = "monika"
     system = "aigov_poc"
 
+    dataset_gov = dataset_governance_iris()
+    ai_system_id = dataset_gov["ai_system_id"]
+    dataset_id = dataset_gov["dataset_id"]
+    model_version_id = model_version_id_for_run(run_id)
+    risk_recorded_payload, _, _ = risk_lifecycle_payloads(run_id)
+    assessment_id = risk_recorded_payload["assessment_id"]
+    risk_id = risk_recorded_payload["risk_id"]
+    dataset_commitment = risk_recorded_payload["dataset_governance_commitment"]
+
     ts1 = _now_ts()
     approve = {
-        "event_id": f"ha_{run_id}",
+        "event_id": approved_human_event_id_for_run(run_id),
         "event_type": "human_approved",
         "ts_utc": ts1,
         "actor": actor,
@@ -48,6 +64,12 @@ def main() -> None:
             "decision": "approve",
             "approver": "compliance_officer",
             "justification": "metrics meet threshold and dataset fingerprint verified",
+            "assessment_id": assessment_id,
+            "risk_id": risk_id,
+            "dataset_governance_commitment": dataset_commitment,
+            "ai_system_id": ai_system_id,
+            "dataset_id": dataset_id,
+            "model_version_id": model_version_id,
         },
     }
 
@@ -64,6 +86,14 @@ def main() -> None:
         "payload": {
             "artifact_path": f"python/artifacts/model_{run_id}.joblib",
             "promotion_reason": "approved_by_human",
+            "artifact_sha256": None,
+            "assessment_id": assessment_id,
+            "risk_id": risk_id,
+            "dataset_governance_commitment": dataset_commitment,
+            "ai_system_id": ai_system_id,
+            "dataset_id": dataset_id,
+            "model_version_id": model_version_id,
+            "approved_human_event_id": approved_human_event_id_for_run(run_id),
         },
     }
 

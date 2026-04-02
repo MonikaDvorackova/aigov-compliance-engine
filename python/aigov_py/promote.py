@@ -2,20 +2,28 @@ from __future__ import annotations
 
 import json
 import os
-import uuid
+import hashlib
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from .events import emit_event
+from .prototype_domain import (
+    approved_human_event_id_for_run,
+    dataset_governance_iris,
+    risk_lifecycle_payloads,
+)
 
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _eid(prefix: str, run_id: str) -> str:
-    return f"{prefix}_{run_id}_{uuid.uuid4()}"
+def _sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -38,11 +46,28 @@ def main() -> None:
     actor = os.getenv("AIGOV_ACTOR", "monika")
     system = os.getenv("AIGOV_SYSTEM", "aigov_poc")
 
-    endpoint = (os.getenv("AIGOV_AUDIT_ENDPOINT", "http://127.0.0.1:8088") or "").rstrip("/")
+    endpoint = (
+        os.getenv("AIGOV_AUDIT_ENDPOINT") or os.getenv("AIGOV_AUDIT_URL") or "http://127.0.0.1:8088"
+    ).rstrip("/")
     url = f"{endpoint}/evidence"
 
     ts_utc = _utc_now_iso()
-    remote_event_id = _eid("mp_after_approval", run_id)
+
+    dataset_gov = dataset_governance_iris()
+    dataset_commitment = dataset_gov["dataset_governance_commitment"]
+    ai_system_id = dataset_gov["ai_system_id"]
+    dataset_id = dataset_gov["dataset_id"]
+    risk_recorded_payload, _, _ = risk_lifecycle_payloads(run_id)
+    assessment_id = risk_recorded_payload["assessment_id"]
+    risk_id = risk_recorded_payload["risk_id"]
+    model_version_id = risk_recorded_payload["model_version_id"]
+
+    approved_human_event_id = approved_human_event_id_for_run(run_id)
+    remote_event_id = f"mp_after_approval_{run_id}"
+
+    artifact_path_fs_local = os.path.join("artifacts", f"model_{run_id}.joblib")
+    artifact_path_report = f"python/artifacts/model_{run_id}.joblib"
+    artifact_sha = _sha256_file(artifact_path_fs_local) if os.path.exists(artifact_path_fs_local) else None
 
     # Remote evidence event (audit service)
     event: Dict[str, Any] = {
@@ -53,46 +78,23 @@ def main() -> None:
         "system": system,
         "run_id": run_id,
         "payload": {
-            "artifact_path": f"python/artifacts/model_{run_id}.joblib",
+            "artifact_path": artifact_path_report,
+            "artifact_sha256": artifact_sha,
             "promotion_reason": "approved_by_human",
+            "assessment_id": assessment_id,
+            "risk_id": risk_id,
+            "dataset_governance_commitment": dataset_commitment,
+            "approved_human_event_id": approved_human_event_id,
+            "ai_system_id": ai_system_id,
+            "dataset_id": dataset_id,
+            "model_version_id": model_version_id,
         },
     }
-
-    # Local evidence log: promote_started
-    emit_event(
-        run_id=run_id,
-        event_id=_eid("promote_started", run_id),
-        event_type="promote_started",
-        actor=actor,
-        system=system,
-        payload={"promotion_attempt_id": remote_event_id},
-        ts_utc=ts_utc,
-    )
 
     try:
         out = _post_json(url, event)
     except Exception as e:
-        emit_event(
-            run_id=run_id,
-            event_id=_eid("promote_failed", run_id),
-            event_type="promote_failed",
-            actor=actor,
-            system=system,
-            payload={"promotion_attempt_id": remote_event_id, "error": str(e)},
-            ts_utc=_utc_now_iso(),
-        )
         raise
-
-    # Local evidence log: model_promoted
-    emit_event(
-        run_id=run_id,
-        event_id=_eid("model_promoted", run_id),
-        event_type="model_promoted",
-        actor=actor,
-        system=system,
-        payload={"promotion_attempt_id": remote_event_id, "request": event, "response": out},
-        ts_utc=_utc_now_iso(),
-    )
 
     print(json.dumps(out, ensure_ascii=False))
 
