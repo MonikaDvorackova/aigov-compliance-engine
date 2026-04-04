@@ -1,35 +1,43 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { createSupabaseRouteClient } from "@/lib/supabase/route";
+import { getAppOrigin, safeAuthNextPath } from "@/lib/appOrigin";
+import { createSupabaseRouteClientBuffered } from "@/lib/supabase/route";
 
 export const dynamic = "force-dynamic";
 
-function safeNext(raw: string | null): string {
-  if (!raw) return "/runs";
-  const v = raw.trim();
-  if (!v) return "/runs";
-  if (v.startsWith("/")) return v;
-  return "/runs";
-}
-
 export async function GET(request: NextRequest) {
-  const url = new URL(request.url);
-  const origin = url.origin;
-
-  const next = safeNext(url.searchParams.get("next"));
+  const origin = getAppOrigin(request);
+  const next = safeAuthNextPath(request.nextUrl.searchParams.get("next"));
   const redirectTo = `${origin}/auth/callback?next=${encodeURIComponent(next)}`;
 
-  const res = NextResponse.redirect(new URL("/auth/start", origin));
-  const supabase = createSupabaseRouteClient(request, res);
+  console.log("[auth:start] google", { requestUrl: request.url, origin, redirectTo });
+
+  const { client: supabase, applyBufferedCookies, debugCookies } =
+    createSupabaseRouteClientBuffered(request);
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
-    options: { redirectTo },
+    options: {
+      redirectTo,
+      skipBrowserRedirect: true,
+    },
   });
 
   if (error || !data?.url) {
+    console.log("[auth:start] google FAILED", error?.message);
     return NextResponse.redirect(new URL("/login?message=OAuthStartFailed", origin));
   }
 
-  return NextResponse.redirect(data.url, { headers: res.headers });
+  debugCookies("auth:start google");
+
+  const response = NextResponse.redirect(data.url);
+  applyBufferedCookies(response);
+
+  const setCookieHeaders = response.headers.getSetCookie();
+  console.log("[auth:start] google final Set-Cookie count:", setCookieHeaders.length);
+  for (const h of setCookieHeaders) {
+    console.log("[auth:start] google Set-Cookie:", h);
+  }
+
+  return response;
 }
