@@ -14,9 +14,7 @@ export const metadata: Metadata = {
       { url: "/icon-192.png", type: "image/png", sizes: "192x192" },
       { url: "/icon-512.png", type: "image/png", sizes: "512x512" },
     ],
-    apple: [
-      { url: "/apple-touch-icon.png", sizes: "180x180" },
-    ],
+    apple: [{ url: "/icon-180.png", sizes: "180x180" }],
   },
   manifest: "/site.webmanifest",
 };
@@ -29,11 +27,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        {/* Explicit fallback for browsers that ignore metadata.icons */}
         <link rel="icon" href="/favicon.ico" sizes="any" />
         <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192" />
         <link rel="icon" href="/icon-512.png" type="image/png" sizes="512x512" />
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+        <link rel="apple-touch-icon" href="/icon-180.png" sizes="180x180" />
       </head>
       <body>{children}</body>
     </html>

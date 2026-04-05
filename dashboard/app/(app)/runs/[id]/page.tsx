@@ -1,8 +1,6 @@
 import React from "react";
 import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import InfraShell, { InfraHeaderRow } from "@/app/_ui/InfraShell";
-import { InfraAigovMark } from "@/app/_ui/InfraShell";
 import {
   ComplianceReviewPanel,
   ComplianceReviewUnavailable,
@@ -58,13 +56,19 @@ function shortHash(v: string | null) {
   return `${v.slice(0, 10)}…${v.slice(-4)}`;
 }
 
+function shortId(v: string) {
+  const s = (v ?? "").trim();
+  if (!s) return "—";
+  if (s.length <= 18) return s;
+  return `${s.slice(0, 10)}…${s.slice(-6)}`;
+}
+
 function surfaceCardStyle(): React.CSSProperties {
   return {
-    borderRadius: 18,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.03)",
-    boxShadow: "0 18px 60px rgba(0,0,0,0.35)",
-    padding: 18,
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.02)",
+    padding: 14,
   };
 }
 
@@ -73,6 +77,16 @@ function sectionTitleStyle(): React.CSSProperties {
     fontWeight: 750,
     marginBottom: 10,
     letterSpacing: "-0.01em",
+  };
+}
+
+function sectionKickerStyle(): React.CSSProperties {
+  return {
+    fontSize: 12,
+    opacity: 0.62,
+    letterSpacing: "0.12em",
+    textTransform: "uppercase",
+    marginBottom: 8,
   };
 }
 
@@ -111,6 +125,25 @@ function monoStyle(): React.CSSProperties {
     wordBreak: "break-all",
     opacity: 0.92,
   };
+}
+
+function LabelValue({
+  label,
+  value,
+  mono = false,
+  borderTop = true,
+}: {
+  label: string;
+  value: React.ReactNode;
+  mono?: boolean;
+  borderTop?: boolean;
+}) {
+  return (
+    <div style={{ ...kvRowStyle(), borderTop: borderTop ? kvRowStyle().borderTop : "none" }}>
+      <div style={kvKeyStyle()}>{label}</div>
+      <div style={{ ...kvValStyle(), ...(mono ? monoStyle() : {}) }}>{value}</div>
+    </div>
+  );
 }
 
 function badgeStyle(kind: "neutral" | "ok" | "warn") {
@@ -164,8 +197,8 @@ function hashBlock(label: string, value: string | null) {
         style={{
           padding: 12,
           borderRadius: 14,
-          border: "1px solid rgba(255,255,255,0.14)",
-          background: "rgba(0,0,0,0.18)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          background: "rgba(0,0,0,0.16)",
           ...monoStyle(),
         }}
       >
@@ -181,10 +214,10 @@ function checkRowStyle(ok: boolean): React.CSSProperties {
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    padding: "10px 12px",
-    borderRadius: 14,
-    border: ok ? "1px solid rgba(255,255,255,0.16)" : "1px solid rgba(255,255,255,0.28)",
-    background: ok ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.09)",
+    padding: "8px 10px",
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "transparent",
     fontSize: 13,
   };
 }
@@ -205,8 +238,8 @@ function DownloadLink({ label, href }: { label: string; href: string | null | un
         style={{
           padding: "10px 12px",
           borderRadius: 14,
-          border: "1px solid rgba(255,255,255,0.14)",
-          background: "rgba(255,255,255,0.04)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          background: "rgba(255,255,255,0.03)",
           opacity: 0.78,
           fontSize: 13,
         }}
@@ -221,10 +254,10 @@ function DownloadLink({ label, href }: { label: string; href: string | null | un
       href={href}
       style={{
         display: "block",
-        padding: "10px 12px",
-        borderRadius: 14,
-        border: "1px solid rgba(255,255,255,0.18)",
-        background: "rgba(255,255,255,0.04)",
+        padding: "8px 10px",
+        borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.10)",
+        background: "transparent",
         textDecoration: "underline",
         textUnderlineOffset: 4,
         textDecorationColor: "rgba(29,78,216,0.65)",
@@ -290,140 +323,235 @@ export default async function RunDetailPage({ params }: { params: { id: string }
   const compliance = await fetchComplianceSummary(r.id);
 
   const isRunning = !hasClosed;
+  const titleId = shortId(r.id);
 
   return (
-    <InfraShell maxWidth={980} align="start" padding={22}>
-      <InfraHeaderRow
-        left={<InfraAigovMark href="/runs" size="md" isRunning={isRunning} alignY={-1} />}
-        right={
+    <div>
+      <div style={{ marginTop: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <a
+              href="/runs"
+              style={{
+                fontSize: 13,
+                opacity: 0.8,
+                textDecoration: "underline",
+                textUnderlineOffset: 4,
+                textDecorationColor: "rgba(29,78,216,0.65)",
+                color: "rgba(255,255,255,0.9)",
+              }}
+            >
+              Runs
+            </a>
+            <span style={{ opacity: 0.5 }}>／</span>
+            <span style={{ ...monoStyle(), opacity: 0.92 }}>{titleId}</span>
+          </div>
+
           <a
             href="/runs"
             style={{
-              fontSize: 14,
-              opacity: 0.82,
+              fontSize: 13,
+              opacity: 0.78,
               textDecoration: "underline",
               textUnderlineOffset: 4,
               textDecorationColor: "rgba(29,78,216,0.65)",
+              color: "rgba(255,255,255,0.9)",
             }}
           >
-            Back to runs
+            Back to list
           </a>
-        }
-      />
-
-      <div style={{ marginTop: 8 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "baseline" }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 28, letterSpacing: "-0.01em" }}>Run detail</h1>
-            <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <ModeBadge mode={r.mode} />
-              <StatusBadge status={r.status} />
-              {isRunning ? <span style={badgeStyle("neutral")}>processing</span> : <span style={badgeStyle("neutral")}>closed</span>}
-            </div>
-          </div>
         </div>
 
-        <div style={{ marginTop: 16 }}>
-          {compliance.available ? (
-            <ComplianceReviewPanel
-              runId={r.id}
-              rawBody={compliance.body}
-              storedBundleSha256={r.bundle_sha256}
-            />
-          ) : (
-            <ComplianceReviewUnavailable
-              reason={compliance.reason}
-              detail={compliance.detail}
-            />
-          )}
-        </div>
-
-        <div style={{ marginTop: 16, ...surfaceCardStyle() }}>
-          <div style={{ display: "grid", gap: 0 }}>
-            <div style={{ ...kvRowStyle(), borderTop: "none" }}>
-              <div style={kvKeyStyle()}>ID</div>
-              <div style={{ ...kvValStyle(), ...monoStyle() }}>{r.id}</div>
-            </div>
-
-            <div style={kvRowStyle()}>
-              <div style={kvKeyStyle()}>Created</div>
-              <div style={kvValStyle()}>{fmt(r.created_at)}</div>
-            </div>
-
-            <div style={kvRowStyle()}>
-              <div style={kvKeyStyle()}>Mode</div>
-              <div style={kvValStyle()}>{r.mode ?? "—"}</div>
-            </div>
-
-            <div style={kvRowStyle()}>
-              <div style={kvKeyStyle()}>Status</div>
-              <div style={kvValStyle()}>{r.status ?? "—"}</div>
-            </div>
-
-            <div style={kvRowStyle()}>
-              <div style={kvKeyStyle()}>Policy version</div>
-              <div style={kvValStyle()}>{r.policy_version ?? "—"}</div>
-            </div>
-
-            <div style={kvRowStyle()}>
-              <div style={kvKeyStyle()}>Evidence source</div>
-              <div style={kvValStyle()}>{r.evidence_source ?? "—"}</div>
-            </div>
-
-            <div style={kvRowStyle()}>
-              <div style={kvKeyStyle()}>Closed at</div>
-              <div style={kvValStyle()}>{fmt(r.closed_at)}</div>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 18 }}>
-            <div style={sectionTitleStyle()}>Integrity summary</div>
-
-            <div style={{ display: "grid", gap: 10 }}>
-              <CheckRow label="Mode allowed" ok={isProd || isCi} detail={isProd || isCi ? "ci or prod" : "unexpected"} />
-              <CheckRow label="Bundle hash present" ok={hasBundle} detail={hasBundle ? "present" : "missing"} />
-              <CheckRow label="Evidence hash present" ok={hasEvidence} detail={hasEvidence ? "present" : "missing"} />
-              <CheckRow label="Report hash present" ok={hasReport} detail={hasReport ? "present" : "missing"} />
-              <CheckRow label="Closed timestamp" ok={hasClosed} detail={hasClosed ? "set" : "missing"} />
-              <CheckRow label="Prod gate" ok={prodGateOk} detail={prodGateOk ? "ok" : "requires status=valid"} />
-            </div>
-          </div>
-
-          <div style={{ marginTop: 18 }}>
-            <div style={sectionTitleStyle()}>Downloads</div>
-
-            {!signed.ok ? (
-              <div
-                style={{
-                  padding: 12,
-                  borderRadius: 14,
-                  border: "1px solid rgba(255,255,255,0.18)",
-                  background: "rgba(255,255,255,0.04)",
-                  fontSize: 13,
-                  opacity: 0.9,
-                }}
-              >
-                Downloads are currently unavailable.
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+            <div>
+              <div style={sectionKickerStyle()}>Run</div>
+              <h1 style={{ margin: 0, fontSize: 22, letterSpacing: "-0.02em", lineHeight: 1.2 }}>{titleId}</h1>
+              <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <ModeBadge mode={r.mode} />
+                <StatusBadge status={r.status} />
+                {isRunning ? <span style={badgeStyle("neutral")}>open</span> : <span style={badgeStyle("neutral")}>closed</span>}
+                <span style={badgeStyle(prodGateOk ? "ok" : "warn")}>{prodGateOk ? "prod gate: ok" : "prod gate: attention"}</span>
               </div>
-            ) : (
+            </div>
+
+            <div style={{ display: "grid", justifyItems: "end", gap: 4 }}>
+              <div style={{ fontSize: 12, opacity: 0.72 }}>Created: {fmt(r.created_at) || "—"}</div>
+              <div style={{ fontSize: 12, opacity: 0.72 }}>Closed: {fmt(r.closed_at) || "—"}</div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            marginTop: 14,
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1.9fr) minmax(0, 1fr)",
+            gap: 14,
+            alignItems: "start",
+          }}
+        >
+          <div style={{ minWidth: 0, display: "grid", gap: 14 }}>
+            <div>
+              <div style={sectionKickerStyle()}>Compliance state</div>
+              {compliance.available ? (
+                <ComplianceReviewPanel runId={r.id} rawBody={compliance.body} storedBundleSha256={r.bundle_sha256} />
+              ) : (
+                <ComplianceReviewUnavailable reason={compliance.reason} detail={compliance.detail} />
+              )}
+            </div>
+
+            <div style={surfaceCardStyle()}>
+              <div style={sectionTitleStyle()}>Artifacts & downloads</div>
+              <div style={{ fontSize: 13, opacity: 0.7, marginTop: -6, marginBottom: 10, lineHeight: 1.45 }}>
+                Raw endpoints require authentication. Signed URLs expire.
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <a
+                  href={`/api/raw/audit/${encodeURIComponent(r.id)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    display: "block",
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: "transparent",
+                    color: "rgba(255,255,255,0.9)",
+                    textDecoration: "underline",
+                    textUnderlineOffset: 4,
+                    textDecorationColor: "rgba(29,78,216,0.65)",
+                    fontSize: 13,
+                  }}
+                >
+                  Open audit manifest (raw)
+                </a>
+                <a
+                  href={`/api/raw/evidence/${encodeURIComponent(r.id)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    display: "block",
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: "transparent",
+                    color: "rgba(255,255,255,0.9)",
+                    textDecoration: "underline",
+                    textUnderlineOffset: 4,
+                    textDecorationColor: "rgba(29,78,216,0.65)",
+                    fontSize: 13,
+                  }}
+                >
+                  Open evidence JSON (raw)
+                </a>
+                <a
+                  href={`/api/bundle/${encodeURIComponent(r.id)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    display: "block",
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: "transparent",
+                    color: "rgba(255,255,255,0.9)",
+                    textDecoration: "underline",
+                    textUnderlineOffset: 4,
+                    textDecorationColor: "rgba(29,78,216,0.65)",
+                    fontSize: 13,
+                  }}
+                >
+                  Download pack (raw)
+                </a>
+                <div
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: "transparent",
+                    fontSize: 13,
+                    opacity: 0.78,
+                  }}
+                >
+                  Run ID<br />
+                  <span style={monoStyle()}>{titleId}</span>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 12, opacity: 0.62, letterSpacing: "0.12em", textTransform: "uppercase" }}>
+                  Signed URLs (10 min)
+                </div>
+
+                {!signed.ok ? (
+                  <div
+                    style={{
+                      marginTop: 10,
+                      padding: 10,
+                      borderRadius: 10,
+                      border: "1px solid rgba(255,255,255,0.10)",
+                      background: "transparent",
+                      fontSize: 13,
+                      opacity: 0.9,
+                    }}
+                  >
+                    Downloads are currently unavailable.
+                    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.72 }}>{signed.message ?? "Storage signed URLs failed."}</div>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                    <DownloadLink label="Pack zip" href={signed.urls?.packZip} />
+                    <DownloadLink label="Audit JSON" href={signed.urls?.auditJson} />
+                    <DownloadLink label="Evidence JSON" href={signed.urls?.evidenceJson} />
+                    <div style={{ fontSize: 12, opacity: 0.7 }}>Links expire in {signed.expiresIn ?? 600}s.</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ minWidth: 0, display: "grid", gap: 14 }}>
+            <div style={surfaceCardStyle()}>
+              <div style={sectionTitleStyle()}>Run metadata</div>
+
+              <div style={{ display: "grid", gap: 0 }}>
+                <LabelValue label="ID" value={r.id} mono borderTop={false} />
+                <LabelValue label="Created" value={fmt(r.created_at) || "—"} />
+                <LabelValue label="Closed at" value={fmt(r.closed_at) || "—"} />
+                <LabelValue label="Mode" value={r.mode ?? "—"} />
+                <LabelValue label="Status" value={r.status ?? "—"} />
+                <LabelValue label="Policy version" value={r.policy_version ?? "—"} />
+                <LabelValue label="Evidence source" value={r.evidence_source ?? "—"} />
+              </div>
+            </div>
+
+            <div style={surfaceCardStyle()}>
+              <div style={sectionTitleStyle()}>Integrity checks</div>
+
               <div style={{ display: "grid", gap: 10 }}>
-                <DownloadLink label="Pack zip" href={signed.urls?.packZip} />
-                <DownloadLink label="Audit JSON" href={signed.urls?.auditJson} />
-                <DownloadLink label="Evidence JSON" href={signed.urls?.evidenceJson} />
-                <div style={{ fontSize: 12, opacity: 0.7 }}>Links expire in {signed.expiresIn ?? 600}s.</div>
+                <CheckRow label="Mode allowed" ok={isProd || isCi} detail={isProd || isCi ? "ci or prod" : "unexpected"} />
+                <CheckRow label="Bundle hash present" ok={hasBundle} detail={hasBundle ? "present" : "missing"} />
+                <CheckRow label="Evidence hash present" ok={hasEvidence} detail={hasEvidence ? "present" : "missing"} />
+                <CheckRow label="Report hash present" ok={hasReport} detail={hasReport ? "present" : "missing"} />
+                <CheckRow label="Closed timestamp" ok={hasClosed} detail={hasClosed ? "set" : "missing"} />
+                <CheckRow label="Prod gate" ok={prodGateOk} detail={prodGateOk ? "ok" : "requires status=valid"} />
               </div>
-            )}
-          </div>
+            </div>
 
-          <div style={{ marginTop: 18 }}>
-            <div style={sectionTitleStyle()}>Hashes</div>
-            {hashBlock("Bundle SHA256", r.bundle_sha256 ? shortHash(r.bundle_sha256) : null)}
-            {hashBlock("Evidence SHA256", r.evidence_sha256 ? shortHash(r.evidence_sha256) : null)}
-            {hashBlock("Report SHA256", r.report_sha256 ? shortHash(r.report_sha256) : null)}
-            <div style={{ marginTop: 12, opacity: 0.6, fontSize: 12 }}>Full hashes are available in the audit JSON.</div>
+            <div style={surfaceCardStyle()}>
+              <div style={sectionTitleStyle()}>Hashes (short)</div>
+              {hashBlock("Bundle SHA256", r.bundle_sha256 ? shortHash(r.bundle_sha256) : null)}
+              {hashBlock("Evidence SHA256", r.evidence_sha256 ? shortHash(r.evidence_sha256) : null)}
+              {hashBlock("Report SHA256", r.report_sha256 ? shortHash(r.report_sha256) : null)}
+              <div style={{ marginTop: 12, opacity: 0.62, fontSize: 12, lineHeight: 1.45 }}>
+                Full hashes are available in the audit JSON.
+              </div>
+            </div>
           </div>
         </div>
       </div>
-    </InfraShell>
+    </div>
   );
 }
