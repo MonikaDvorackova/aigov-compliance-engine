@@ -11,34 +11,9 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-/* ============================= */
-/* NEON LOGO STYLE               */
-/* ============================= */
-
+/* Optional wrapper for centered marks — no extra glow overlay (avoids fighting AigovMark filters). */
 .logo-wrap {
   position: relative;
   display: inline-grid;
   place-items: center;
-}
-
-.logo-wrap::before {
-  content: "";
-  position: absolute;
-  inset: -22px;
-  border-radius: 9999px;
-  background: radial-gradient(
-    circle,
-    rgba(0, 170, 255, 0.95) 0%,
-    rgba(0, 102, 255, 0.6) 35%,
-    rgba(0, 102, 255, 0.3) 60%,
-    rgba(0, 102, 255, 0.0) 80%
-  );
-  filter: blur(14px);
-  z-index: 0;
-  pointer-events: none;
-}
-
-.logo-wrap > * {
-  position: relative;
-  z-index: 1;
 }

@@ -45,10 +45,10 @@ export function InfraPanel({ children }: { children: React.ReactNode }) {
     <section
       style={{
         marginTop: 12,
-        borderRadius: 24,
-        border: "1px solid rgba(255,255,255,0.14)",
-        background: "rgba(255,255,255,0.04)",
-        boxShadow: "0 28px 80px rgba(0,0,0,0.45)",
+        borderRadius: 20,
+        border: "1px solid rgba(255,255,255,0.12)",
+        background: "rgba(255,255,255,0.035)",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), 0 28px 80px rgba(0,0,0,0.45)",
         padding: 20,
         backdropFilter: "blur(16px)",
         WebkitBackdropFilter: "blur(16px)",
@@ -63,11 +63,11 @@ export function InfraCard({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
-        borderRadius: 20,
-        border: "1px solid rgba(255,255,255,0.14)",
-        background: "rgba(255,255,255,0.03)",
+        borderRadius: 18,
+        border: "1px solid rgba(255,255,255,0.12)",
+        background: "rgba(255,255,255,0.028)",
         padding: "16px 14px",
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
       }}
     >
       {children}
@@ -161,7 +161,7 @@ export function InfraAigovMark({
   isRunning?: boolean;
   alignY?: number;
 }) {
-  const iconSize = size === "xl" ? 26 : size === "lg" ? 24 : 22;
+  const iconSize = size === "xl" ? 34 : size === "lg" ? 30 : 26;
   const pad = size === "xl" ? "10px 14px" : size === "lg" ? "9px 13px" : "8px 12px";
 
   const wrap: React.CSSProperties = {
@@ -203,13 +203,14 @@ export function InfraAigovMark({
           inset: -28,
           borderRadius: 30,
           filter: "blur(26px)",
-          opacity: 0.95,
+          opacity: 0.68,
           pointerEvents: "none",
-          background: "radial-gradient(circle, rgba(96,165,250,0.55) 0%, rgba(59,130,246,0) 65%)",
+          background: "radial-gradient(circle, rgba(96,165,250,0.42) 0%, rgba(59,130,246,0) 68%)",
         }}
       />
       <AigovMark
         isRunning={isRunning}
+        animationMode={isRunning ? "assemble" : "static"}
         size={iconSize}
         glow
         neon
