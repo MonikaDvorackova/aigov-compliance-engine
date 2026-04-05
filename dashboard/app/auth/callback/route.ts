@@ -8,7 +8,10 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const origin = getAppOrigin(request);
   const code = request.nextUrl.searchParams.get("code");
-  const next = safeAuthNextPath(request.nextUrl.searchParams.get("next"));
+
+  const nextFromCookie = request.cookies.get("oauth_next")?.value ?? null;
+  const nextFromParam = request.nextUrl.searchParams.get("next");
+  const next = safeAuthNextPath(nextFromCookie || nextFromParam);
 
   const allCookies = request.cookies.getAll();
   const cookieNames = allCookies.map((c) => c.name);
@@ -20,6 +23,8 @@ export async function GET(request: NextRequest) {
     requestUrl: request.url,
     origin,
     next,
+    nextFromCookie,
+    nextFromParam,
     hasCode: Boolean(code),
     cookieCount: allCookies.length,
     cookieNames,
@@ -34,6 +39,8 @@ export async function GET(request: NextRequest) {
   const target = new URL(next, origin);
   const res = NextResponse.redirect(target);
   const supabase = createSupabaseRouteClient(request, res);
+
+  res.cookies.set("oauth_next", "", { path: "/", maxAge: 0 });
 
   const { data, error } = await supabase.auth.exchangeCodeForSession(code);
 

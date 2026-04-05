@@ -8,9 +8,9 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const origin = getAppOrigin(request);
   const next = safeAuthNextPath(request.nextUrl.searchParams.get("next"));
-  const redirectTo = `${origin}/auth/callback?next=${encodeURIComponent(next)}`;
+  const redirectTo = `${origin}/auth/callback`;
 
-  console.log("[auth:start] github", { requestUrl: request.url, origin, redirectTo });
+  console.log("[auth:start] github", { requestUrl: request.url, origin, redirectTo, next });
 
   const { client: supabase, applyBufferedCookies, debugCookies } =
     createSupabaseRouteClientBuffered(request);
@@ -33,11 +33,15 @@ export async function GET(request: NextRequest) {
   const response = NextResponse.redirect(data.url);
   applyBufferedCookies(response);
 
-  const setCookieHeaders = response.headers.getSetCookie();
-  console.log("[auth:start] github final Set-Cookie count:", setCookieHeaders.length);
-  for (const h of setCookieHeaders) {
-    console.log("[auth:start] github Set-Cookie:", h);
-  }
+  response.cookies.set("oauth_next", next, {
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax",
+    secure: !origin.startsWith("http://localhost"),
+    maxAge: 600,
+  });
+
+  console.log("[auth:start] github data.url:", data.url);
 
   return response;
 }
