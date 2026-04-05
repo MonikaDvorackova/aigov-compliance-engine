@@ -1,4 +1,5 @@
 import React from "react";
+import { ComplianceEvaluationMark } from "@/app/components/ComplianceEvaluationMark";
 
 type ComplianceSummaryOk = {
   ok: true;
@@ -65,11 +66,10 @@ type ComplianceCurrentState = {
 
 function surfaceCardStyle(): React.CSSProperties {
   return {
-    borderRadius: 18,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.03)",
-    boxShadow: "0 18px 60px rgba(0,0,0,0.35)",
-    padding: 18,
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.02)",
+    padding: 14,
   };
 }
 
@@ -78,6 +78,16 @@ function sectionTitleStyle(): React.CSSProperties {
     fontWeight: 750,
     marginBottom: 10,
     letterSpacing: "-0.01em",
+  };
+}
+
+function sectionKickerStyle(): React.CSSProperties {
+  return {
+    fontSize: 12,
+    opacity: 0.62,
+    letterSpacing: "0.12em",
+    textTransform: "uppercase",
+    marginBottom: 8,
   };
 }
 
@@ -120,15 +130,58 @@ function monoStyle(): React.CSSProperties {
 
 function artifactLinkStyle(): React.CSSProperties {
   return {
-    display: "inline-block",
-    marginRight: 12,
-    marginBottom: 6,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "8px 10px",
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "transparent",
+    marginRight: 10,
+    marginBottom: 8,
     fontSize: 13,
     textDecoration: "underline",
     textUnderlineOffset: 4,
     textDecorationColor: "rgba(29,78,216,0.65)",
     color: "rgba(255,255,255,0.9)",
   };
+}
+
+function badgeStyle(kind: "neutral" | "ok" | "warn") {
+  const border =
+    kind === "ok"
+      ? "1px solid rgba(255,255,255,0.26)"
+      : kind === "warn"
+      ? "1px solid rgba(255,255,255,0.34)"
+      : "1px solid rgba(255,255,255,0.16)";
+
+  const bg =
+    kind === "ok"
+      ? "rgba(255,255,255,0.06)"
+      : kind === "warn"
+      ? "rgba(255,255,255,0.07)"
+      : "rgba(255,255,255,0.04)";
+
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "2px 10px",
+    borderRadius: 999,
+    border,
+    background: bg,
+    fontSize: 12,
+    lineHeight: "18px",
+    whiteSpace: "nowrap" as const,
+  };
+}
+
+function Chip({ label, kind = "neutral" }: { label: string; kind?: "neutral" | "ok" | "warn" }) {
+  return <span style={badgeStyle(kind)}>{label}</span>;
+}
+
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === "string" && v.trim().length > 0;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -167,6 +220,60 @@ function RiskClassChips({
           {k}: {n}
         </span>
       ))}
+    </div>
+  );
+}
+
+function RiskList({
+  risks,
+}: {
+  risks: ComplianceCurrentState["risks"] | undefined | null;
+}) {
+  const list = risks?.risks ?? [];
+  if (!list.length) return <div style={{ fontSize: 13, opacity: 0.75 }}>No risk rows present.</div>;
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr style={{ background: "rgba(255,255,255,0.03)" }}>
+            <th style={{ textAlign: "left", padding: "10px 10px", opacity: 0.82 }}>Risk</th>
+            <th style={{ textAlign: "left", padding: "10px 10px", opacity: 0.82 }}>Class</th>
+            <th style={{ textAlign: "left", padding: "10px 10px", opacity: 0.82 }}>Status</th>
+            <th style={{ textAlign: "right", padding: "10px 10px", opacity: 0.82 }}>Sev</th>
+            <th style={{ textAlign: "right", padding: "10px 10px", opacity: 0.82 }}>Lik</th>
+            <th style={{ textAlign: "left", padding: "10px 10px", opacity: 0.82 }}>Latest review</th>
+          </tr>
+        </thead>
+        <tbody>
+          {list.slice(0, 12).map((r, idx) => (
+            <tr key={`${r.risk_id ?? "risk"}-${idx}`} style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+              <td style={{ padding: "10px 10px", ...monoStyle() }}>{r.risk_id ?? "—"}</td>
+              <td style={{ padding: "10px 10px", opacity: 0.9 }}>{r.risk_class ?? "—"}</td>
+              <td style={{ padding: "10px 10px", opacity: 0.9 }}>{r.status ?? "—"}</td>
+              <td style={{ padding: "10px 10px", textAlign: "right", opacity: 0.9 }}>{r.severity ?? "—"}</td>
+              <td style={{ padding: "10px 10px", textAlign: "right", opacity: 0.9 }}>{r.likelihood ?? "—"}</td>
+              <td style={{ padding: "10px 10px", opacity: 0.9 }}>
+                {r.latest_review?.decision || r.latest_review?.reviewer ? (
+                  <span>
+                    {r.latest_review?.decision ?? "—"}
+                    {r.latest_review?.reviewer ? (
+                      <span style={{ opacity: 0.72 }}> · {r.latest_review.reviewer}</span>
+                    ) : null}
+                  </span>
+                ) : (
+                  "—"
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {list.length > 12 ? (
+        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.65 }}>
+          Showing 12 of {list.length} risk rows.
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -223,6 +330,7 @@ export function ComplianceReviewPanel({
   const approval = cs.approval;
   const risks = cs.risks;
   const ev = cs.evidence;
+  const isEvaluating = cs.model != null && cs.model.evaluation_passed === null;
   const coreHash = (ev?.bundle_hash ?? "").trim();
   const stored = (storedBundleSha256 ?? "").trim();
   const hashCompare =
@@ -232,63 +340,95 @@ export function ComplianceReviewPanel({
         : { ok: false as const, text: "Differs from bundle hash stored with this run — compare ledger vs ingest." }
       : null;
 
+  const approvalSignal = (() => {
+    const d = (approval?.human_approval_decision ?? "").toString().trim().toLowerCase();
+    if (!d) return { kind: "neutral" as const, label: "approval: —" };
+    if (d.includes("approve") || d === "approved" || d === "allow") return { kind: "ok" as const, label: `approval: ${d}` };
+    if (d.includes("deny") || d.includes("reject") || d === "blocked") return { kind: "warn" as const, label: `approval: ${d}` };
+    return { kind: "neutral" as const, label: `approval: ${d}` };
+  })();
+
+  const promotionSignal = (() => {
+    const state = (promo?.state ?? "").toString().trim().toLowerCase();
+    if (!state) return { kind: "neutral" as const, label: "promotion: —" };
+    if (state.includes("promot") || state.includes("allow") || state.includes("ready")) return { kind: "ok" as const, label: `promotion: ${state}` };
+    if (state.includes("block") || state.includes("deny") || state.includes("hold")) return { kind: "warn" as const, label: `promotion: ${state}` };
+    return { kind: "neutral" as const, label: `promotion: ${state}` };
+  })();
+
+  const evidenceSignal = (() => {
+    const n = ev?.events_total;
+    if (typeof n !== "number") return { kind: "neutral" as const, label: "evidence: —" };
+    if (n > 0) return { kind: "ok" as const, label: `evidence events: ${n}` };
+    return { kind: "warn" as const, label: "evidence events: 0" };
+  })();
+
   return (
     <div style={surfaceCardStyle()}>
-      <div style={sectionTitleStyle()}>Compliance review (core summary)</div>
+      <div style={sectionKickerStyle()}>Compliance review</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+        <div style={{ ...sectionTitleStyle(), marginBottom: 0 }}>Core summary</div>
+        <ComplianceEvaluationMark active={isEvaluating} />
+      </div>
       <div style={{ fontSize: 12, opacity: 0.65, marginBottom: 14 }}>
         {parsed.schema_version ?? "aigov.compliance_summary.v2"} · inner{" "}
         {cs.schema_version ?? "aigov.compliance_current_state.v2"} · policy{" "}
         {parsed.policy_version ?? "—"}
       </div>
 
-      <div style={{ ...kvRowStyle(), borderTop: "none" }}>
-        <div style={kvKeyStyle()}>Identifiers</div>
-        <div style={kvValStyle()}>
-          <div style={monoStyle()}>ai_system_id: {ids?.ai_system_id ?? "—"}</div>
-          <div style={{ ...monoStyle(), marginTop: 6 }}>dataset_id: {ids?.dataset_id ?? "—"}</div>
-          <div style={{ ...monoStyle(), marginTop: 6 }}>model_version_id: {ids?.model_version_id ?? "—"}</div>
-          <div style={{ ...monoStyle(), marginTop: 6 }}>primary_risk_id: {ids?.primary_risk_id ?? "—"}</div>
-          <div style={{ ...monoStyle(), marginTop: 6 }}>
-            risk_ids ({ids?.risk_ids?.length ?? 0}):{" "}
-            {(ids?.risk_ids ?? []).length ? ids?.risk_ids?.join(", ") : "—"}
-          </div>
-        </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        <Chip label={approvalSignal.label} kind={approvalSignal.kind} />
+        <Chip label={promotionSignal.label} kind={promotionSignal.kind} />
+        <Chip label={`risks: ${risks?.total_risks ?? 0}`} kind={(risks?.total_risks ?? 0) > 0 ? "warn" : "neutral"} />
+        <Chip label={evidenceSignal.label} kind={evidenceSignal.kind} />
       </div>
 
-      <div style={kvRowStyle()}>
-        <div style={kvKeyStyle()}>Risk summary</div>
+      <div style={{ ...kvRowStyle(), borderTop: "none" }}>
+        <div style={kvKeyStyle()}>Risk signals</div>
         <div style={kvValStyle()}>
-          <div>Total: {risks?.total_risks ?? 0}</div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "baseline" }}>
+            <div>Total: {risks?.total_risks ?? 0}</div>
+            <div style={{ opacity: 0.65 }}>·</div>
+            <div style={{ opacity: 0.85 }}>By class</div>
+          </div>
           <div style={{ marginTop: 8 }}>
-            <div style={{ fontSize: 12, opacity: 0.72, marginBottom: 6 }}>By class</div>
             <RiskClassChips byClass={risks?.by_risk_class} />
           </div>
+          <details style={{ marginTop: 10 }}>
+            <summary style={{ cursor: "pointer", fontSize: 13, opacity: 0.85 }}>
+              View risk rows
+            </summary>
+            <div style={{ marginTop: 10 }}>
+              <RiskList risks={risks} />
+            </div>
+          </details>
         </div>
       </div>
 
       <div style={kvRowStyle()}>
-        <div style={kvKeyStyle()}>Approval</div>
+        <div style={kvKeyStyle()}>Approval context</div>
         <div style={kvValStyle()}>
           <div>scope: {approval?.scope ?? "—"}</div>
           <div style={{ marginTop: 6 }}>approver: {approval?.approver ?? "—"}</div>
           <div style={{ marginTop: 6 }}>approved_at: {approval?.approved_at ?? "—"}</div>
-          <div style={{ marginTop: 6 }}>
-            risk_review_decision: {approval?.risk_review_decision ?? "—"}
-          </div>
-          <div style={{ marginTop: 6 }}>
-            human_approval_decision: {approval?.human_approval_decision ?? "—"}
-          </div>
+          <div style={{ marginTop: 6 }}>risk_review_decision: {approval?.risk_review_decision ?? "—"}</div>
+          <div style={{ marginTop: 6 }}>human_approval_decision: {approval?.human_approval_decision ?? "—"}</div>
+          {isNonEmptyString(approval?.approved_human_event_id) ? (
+            <div style={{ marginTop: 10, ...monoStyle() }}>approved_human_event_id: {approval?.approved_human_event_id}</div>
+          ) : null}
         </div>
       </div>
 
       <div style={kvRowStyle()}>
-        <div style={kvKeyStyle()}>Promotion</div>
+        <div style={kvKeyStyle()}>Promotion context</div>
         <div style={kvValStyle()}>
           <div>state: {promo?.state ?? "—"}</div>
-          <div style={{ marginTop: 6 }}>
-            model_promoted_present: {promo?.model_promoted_present === true ? "true" : "false"}
-          </div>
+          <div style={{ marginTop: 6 }}>reason: {promo?.reason ?? "—"}</div>
+          <div style={{ marginTop: 6 }}>model_promoted_present: {promo?.model_promoted_present === true ? "true" : "false"}</div>
           <div style={{ marginTop: 6 }}>evaluation_passed: {String(cs.model?.evaluation_passed ?? "—")}</div>
+          {isNonEmptyString(cs.model?.model_version_id) ? (
+            <div style={{ marginTop: 10, ...monoStyle() }}>model_version_id: {cs.model?.model_version_id}</div>
+          ) : null}
         </div>
       </div>
 
@@ -304,13 +444,31 @@ export function ComplianceReviewPanel({
               style={{
                 marginTop: 10,
                 fontSize: 13,
-                opacity: hashCompare.ok ? 0.85 : 0.95,
+                opacity: 0.95,
                 color: hashCompare.ok ? "rgba(200,255,210,0.95)" : "rgba(255,210,160,0.95)",
               }}
             >
               {hashCompare.text}
             </div>
           )}
+        </div>
+      </div>
+
+      <div style={kvRowStyle()}>
+        <div style={kvKeyStyle()}>Identifiers</div>
+        <div style={kvValStyle()}>
+          <details>
+            <summary style={{ cursor: "pointer", fontSize: 13, opacity: 0.88 }}>View identifiers</summary>
+            <div style={{ marginTop: 10 }}>
+              <div style={monoStyle()}>ai_system_id: {ids?.ai_system_id ?? "—"}</div>
+              <div style={{ ...monoStyle(), marginTop: 6 }}>dataset_id: {ids?.dataset_id ?? "—"}</div>
+              <div style={{ ...monoStyle(), marginTop: 6 }}>model_version_id: {ids?.model_version_id ?? "—"}</div>
+              <div style={{ ...monoStyle(), marginTop: 6 }}>primary_risk_id: {ids?.primary_risk_id ?? "—"}</div>
+              <div style={{ ...monoStyle(), marginTop: 6 }}>
+                risk_ids ({ids?.risk_ids?.length ?? 0}): {(ids?.risk_ids ?? []).length ? ids?.risk_ids?.join(", ") : "—"}
+              </div>
+            </div>
+          </details>
         </div>
       </div>
 
