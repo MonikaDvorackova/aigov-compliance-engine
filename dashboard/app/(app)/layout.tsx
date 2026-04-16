@@ -28,7 +28,7 @@ export default async function AppLayout({
       style={{
         minHeight: "100vh",
         background: "var(--govai-bg-app)",
-        color: "var(--govai-text)",
+        color: "var(--govai-text-primary)",
         display: "flex",
         flexDirection: "row",
       }}
