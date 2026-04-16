@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
 import {
-  filterAndSortStoredScans,
-  pageHistoryScanResults,
-  parseHistoryQuery,
+  filterAndSortTargetStatuses,
+  parseTargetStatusQuery,
 } from "@/lib/ai-discovery/aiDiscoveryListQuery.server";
 import { requireAiDiscoverySession } from "@/lib/ai-discovery/aiDiscoveryRouteAuth.server";
+import { deriveDiscoveryTargetStatuses } from "@/lib/ai-discovery/deriveDiscoveryTargetStatus.server";
 import { listStoredScans } from "@/lib/ai-discovery/scanHistoryPersistence.server";
 
 export const dynamic = "force-dynamic";
@@ -16,12 +16,9 @@ export async function GET(request: Request) {
   if (!auth.ok) return auth.response;
 
   const scans = listStoredScans();
+  const derived = deriveDiscoveryTargetStatuses(scans);
   const url = new URL(request.url);
-  const q = parseHistoryQuery(url.searchParams);
-  const ordered = filterAndSortStoredScans(scans, q);
-  const { page, totalFiltered, hasMore } = pageHistoryScanResults(ordered, q);
-  return NextResponse.json(
-    { ok: true, scans: page, totalFiltered, hasMore },
-    { status: 200 }
-  );
+  const q = parseTargetStatusQuery(url.searchParams);
+  const targets = filterAndSortTargetStatuses(derived, q);
+  return NextResponse.json({ ok: true, targets }, { status: 200 });
 }

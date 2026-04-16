@@ -295,6 +295,12 @@ export default function LoginClient() {
               style={inputStyle}
             />
 
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -4 }}>
+              <a href="/forgot-password" style={{ ...linkStyle, fontSize: 12 }}>
+                Forgot password?
+              </a>
+            </div>
+
             <button
               type="submit"
               data-btn="1"
