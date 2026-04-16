@@ -1,49 +1,69 @@
 # Branching strategy
 
-## Flow
+Related: [Deployment environments](deployment-environments.md) · [Database environments](database-environments.md)
+
+## Branches
+
+| Branch | Role |
+|--------|------|
+| `feature/*`, `fix/*`, `chore/*`, … | Short-lived work. Open a **pull request into `staging`**. |
+| `staging` | **Integration and pre-production.** Merges from features; deploys to the **staging / preview** stack (see deployment doc). |
+| `main` | **Production only.** Updated only by merging **`staging` → `main`** via PR. Deploys to **production**. |
 
 ```text
 feature/*  ──PR──▶  staging  ──PR──▶  main
+                     (staging)      (production)
 ```
-
-1. **Feature branches** (`feature/*`, `fix/*`, `chore/*`, etc.) are the default place for product and infrastructure work.
-2. **Merge features into `staging` first** via pull request. `staging` is the integration branch: it should carry the next release candidate and catch conflicts between parallel features early.
-3. **Promote to `main` only through a pull request from `staging`**. Treat merges to `main` as production-facing: they should reflect code that has already been integrated and validated on `staging`.
-
-Direct merges from feature branches into `main` are not part of this workflow. The compliance workflow enforces that pull requests **targeting `main`** must have **`staging` as the head branch**, so accidental feature→`main` PRs fail CI.
 
 ## Why `staging` exists
 
-- **Integration**: combine multiple feature branches and resolve integration issues before production.
-- **Pre-production validation**: run the same CI and manual checks against a single, stable integration point that is not yet `main`.
+- **Integration**: surface merge conflicts and cross-feature issues before they hit `main`.
+- **Pre-production validation**: run CI, manual QA, and staging-only data against a single integration branch.
+- **Deployment safety**: bind preview/staging infrastructure and secrets to this branch, not to every feature branch.
 
-## GitHub Actions
+## Why `main` is production-only
 
-The `compliance` workflow runs on:
+`main` should always represent what is **released or release-ready**. Keeping production deploys and production databases tied to `main` avoids accidental promotion of unreviewed work.
 
-- Pull requests whose **base** branch is `main` or `staging`.
-- Pushes to `main` or `staging`.
+The **`compliance`** GitHub Actions workflow enforces that **pull requests targeting `main` must have head branch `staging`**, so feature→`main` PRs fail CI until work flows through `staging`.
 
-PRs to `main` additionally require the head branch to be `staging` (see workflow).
+## Recommended PR policy
 
-## Branch protection (recommended)
+- **Into `staging`**: required for routine feature work; use small, reviewable PRs.
+- **Into `main`**: only **`staging` → `main`** promotion PRs after staging is validated.
+- **Do not merge automatically** in CI; humans (or an explicit merge queue) merge after review.
 
-These are **suggestions** for repository settings. They are not applied by automation in this repo.
+## Hotfixes
+
+Treat urgent fixes like normal delivery unless you have an **documented exception**:
+
+1. Branch from `main` or from `staging` (team choice), implement the fix.
+2. Merge to **`staging` first** (PR), verify on the staging deployment.
+3. Promote **`staging` → `main`** (PR).
+
+If process latency is unacceptable, **document** an emergency path (e.g. temporary branch protection bypass, incident owner) outside this file—do not rely on ad-hoc feature→`main` merges while the workflow guard is enabled.
+
+## CI
+
+The **`compliance`** workflow runs on:
+
+- **Pull requests** with base `staging` or `main`.
+- **Pushes** to `staging` and `main`.
+
+## Branch protection (recommended, not applied by repo automation)
 
 ### `main`
 
-- Require a pull request before merging.
-- Require status checks to pass (required checks: the jobs from the compliance workflow you rely on, e.g. `make_verify` and any other gates you mark as required).
-- Restrict who can push (or disallow direct pushes) so `main` only moves via PR.
-- Optionally require linear history or squash merge, per team preference.
+- Require pull request before merging.
+- Require status checks to pass (mark the jobs your team trusts, e.g. `make_verify`).
+- Block direct pushes; restrict who can merge.
 
 ### `staging`
 
-- Allow merges via pull request from feature branches.
-- Keep required checks **lighter or optional** if you want faster iteration on integration; tighten over time as the branch stabilizes.
-- Allow direct pushes only if your team needs hotfixes; otherwise prefer PRs for auditability.
+- Require pull request (supports controlled integration).
+- Require **basic** CI checks (e.g. same workflow with a subset marked required, if you want faster iteration than `main`).
+- Allow the integration flow: feature PRs merge into `staging`, then `staging` promotes to `main`.
 
 ### Optional
 
-- Use **rulesets** or classic branch protection consistently for both branches.
-- Add a **merge queue** for `main` if you need serialized, always-green merges.
+- Rulesets for both branches; merge queue for `main` if you need serialized merges.

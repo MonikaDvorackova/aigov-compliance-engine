@@ -1,4 +1,6 @@
 # .github/workflows/compliance.yml
+# CI only (no deploy). Runs on PRs into main/staging and on pushes to main/staging.
+# PRs targeting main must have head branch staging (integration before production).
 name: compliance
 
 on:

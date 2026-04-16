@@ -13,6 +13,8 @@ function getSupabaseUrlAndKey(): { url: string; key: string } | null {
 }
 
 export async function updateSession(request: NextRequest) {
+  console.log("[supabase/proxy] updateSession", request.nextUrl.pathname, { origin: request.nextUrl.origin });
+
   const response = NextResponse.next({
     request: {
       headers: request.headers,

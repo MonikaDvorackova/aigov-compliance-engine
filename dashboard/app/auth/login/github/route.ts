@@ -1,52 +1,47 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { createSupabaseRouteClient } from "@/lib/supabase/route";
+import { getAppOrigin, safeAuthNextPath } from "@/lib/appOrigin";
+import { createSupabaseRouteClientBuffered } from "@/lib/supabase/route";
 
 export const dynamic = "force-dynamic";
 
-function safeNext(raw: string | null): string {
-  if (!raw) return "/runs";
-  const v = raw.trim();
-  if (!v) return "/runs";
-  if (v.startsWith("/")) return v;
-  return "/runs";
-}
-
-function copySetCookie(from: NextResponse, to: NextResponse) {
-  const anyHeaders = from.headers as any;
-
-  if (typeof anyHeaders.getSetCookie === "function") {
-    const cookies: string[] = anyHeaders.getSetCookie();
-    for (const c of cookies) to.headers.append("set-cookie", c);
-    return;
-  }
-
-  const single = from.headers.get("set-cookie");
-  if (single) to.headers.set("set-cookie", single);
-}
-
 export async function GET(request: NextRequest) {
-  const url = new URL(request.url);
-  const origin = url.origin;
+  const origin = getAppOrigin(request);
+  const next = safeAuthNextPath(request.nextUrl.searchParams.get("next"));
+  const redirectTo = `${origin}/auth/callback`;
 
-  const next = safeNext(url.searchParams.get("next"));
-  const redirectTo = `${origin}/auth/callback?next=${encodeURIComponent(next)}`;
+  console.log("[auth:start] github", { requestUrl: request.url, origin, redirectTo, next });
 
-  const res = NextResponse.next();
-  const supabase = createSupabaseRouteClient(request, res);
+  const { client: supabase, applyBufferedCookies, debugCookies } =
+    createSupabaseRouteClientBuffered(request);
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "github",
-    options: { redirectTo },
+    options: {
+      redirectTo,
+      skipBrowserRedirect: true,
+    },
   });
 
   if (error || !data?.url) {
-    const fail = NextResponse.redirect(new URL("/login?message=OAuthStartFailed", origin));
-    copySetCookie(res, fail);
-    return fail;
+    console.log("[auth:start] github FAILED", error?.message);
+    return NextResponse.redirect(new URL("/login?message=OAuthStartFailed", origin));
   }
 
-  const redirect = NextResponse.redirect(data.url);
-  copySetCookie(res, redirect);
-  return redirect;
+  debugCookies("auth:start github");
+
+  const response = NextResponse.redirect(data.url);
+  applyBufferedCookies(response);
+
+  response.cookies.set("oauth_next", next, {
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax",
+    secure: !origin.startsWith("http://localhost"),
+    maxAge: 600,
+  });
+
+  console.log("[auth:start] github data.url:", data.url);
+
+  return response;
 }

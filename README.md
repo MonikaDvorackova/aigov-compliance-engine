@@ -1,4 +1,58 @@
-# AIGov Compliance Engine (v0.1)
+# GovAI
+
+GovAI turns compliance evidence into a production decision.
+
+Most systems log compliance.  
+GovAI enforces it.
+
+## Decision-Oriented Compliance
+
+The run detail page is designed to answer a single question:
+
+Can this model be promoted to production?
+
+Each run resolves to one of three states:
+
+- VALID – all requirements met (evaluation passed, approval granted, promotion allowed)
+- INVALID – evaluation failed
+- BLOCKED – at least one required step is missing or unresolved
+
+The decision follows a strict rule order:
+
+evaluation → approval → promotion
+
+## What the UI shows
+
+- a dominant decision (VALID / INVALID / BLOCKED)
+- a single-line explanation
+- readiness signals:
+  - Evaluation
+  - Approval
+  - Promotion
+  - Primary risk (if present)
+
+All technical details (hashes, raw payloads, audit diagnostics) are separated into a secondary view.
+
+## Design guarantees
+
+- No inconsistent states between decision and signals
+- No false VALID results when audit data is missing or invalid
+- Decisions are scannable in seconds
+
+## Example
+
+VALID  
+All requirements met. Promotion is allowed.
+
+BLOCKED  
+Approval required before promotion.
+
+INVALID  
+Evaluation failed. Do not promote.
+
+---
+
+## AIGov Compliance Engine (v0.1)
 
 **Research prototype** — governance-by-design reference for ML runs: append-only, hash-chained evidence in a Rust service, policy checks before append, Python training and reporting, and optional Supabase-backed UI ingest. **This software does not provide legal compliance, certification, or a warranty of any kind.**
 

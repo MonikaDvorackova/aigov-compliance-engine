@@ -2,142 +2,281 @@
 
 import React from "react";
 
-export type AigovIconTone = "blue" | "teal";
+/** App Router serves `app/icon.svg` at this URL — single visual source of truth. */
+export const AIGOV_ICON_SRC = "/icon.svg";
 
-export type AigovIconProps = Omit<React.SVGProps<SVGSVGElement>, "width" | "height"> & {
+export type AigovIconTone = "blue" | "steel" | "teal";
+export type AigovIconNeonStrength = "off" | "soft" | "strong";
+
+export type AigovIconProps = Omit<
+  React.ImgHTMLAttributes<HTMLImageElement>,
+  "src" | "width" | "height" | "alt"
+> & {
   size?: number;
   glow?: boolean;
-  neon?: boolean;
+  neonStrength?: AigovIconNeonStrength;
   tone?: AigovIconTone;
 };
 
-function iconFilter(glow: boolean, neon: boolean, tone: AigovIconTone): string | undefined {
-  if (!glow && !neon) return undefined;
+/** Shadow footprint scales down for small marks so edges stay crisp. */
+type ShadowTier = "compact" | "standard" | "hero";
 
-  if (tone === "teal") {
-    if (neon) {
+function shadowTierForSize(size: number): ShadowTier {
+  if (size >= 96) return "hero";
+  if (size < 32) return "compact";
+  return "standard";
+}
+
+function dropShadowStack(
+  tone: AigovIconTone,
+  level: "glow" | "soft" | "strong",
+  tier: ShadowTier,
+): string {
+  const isTeal = tone === "teal";
+  const isSteel = tone === "steel";
+
+  if (isTeal) {
+    if (level === "strong") {
+      if (tier === "hero") {
+        return (
+          "drop-shadow(0 0 6px rgba(153,246,228,0.88)) " +
+          "drop-shadow(0 0 16px rgba(45,212,191,0.72)) " +
+          "drop-shadow(0 0 34px rgba(20,184,166,0.48)) " +
+          "drop-shadow(0 0 58px rgba(20,184,166,0.32))"
+        );
+      }
+      if (tier === "standard") {
+        return (
+          "drop-shadow(0 0 4px rgba(153,246,228,0.78)) " +
+          "drop-shadow(0 0 12px rgba(45,212,191,0.52)) " +
+          "drop-shadow(0 0 22px rgba(20,184,166,0.32))"
+        );
+      }
       return (
-        "drop-shadow(0 0 10px rgba(153,246,228,0.98)) " +
-        "drop-shadow(0 0 22px rgba(45,212,191,0.92)) " +
-        "drop-shadow(0 0 44px rgba(20,184,166,0.78)) " +
-        "drop-shadow(0 0 92px rgba(20,184,166,0.55))"
+        "drop-shadow(0 0 3px rgba(153,246,228,0.72)) " +
+        "drop-shadow(0 0 10px rgba(45,212,191,0.42)) " +
+        "drop-shadow(0 0 18px rgba(20,184,166,0.22))"
       );
     }
-
+    if (level === "soft") {
+      if (tier === "hero") {
+        return (
+          "drop-shadow(0 0 8px rgba(153,246,228,0.82)) " +
+          "drop-shadow(0 0 18px rgba(45,212,191,0.58)) " +
+          "drop-shadow(0 0 36px rgba(20,184,166,0.36))"
+        );
+      }
+      if (tier === "standard") {
+        return (
+          "drop-shadow(0 0 5px rgba(153,246,228,0.72)) " +
+          "drop-shadow(0 0 14px rgba(45,212,191,0.48)) " +
+          "drop-shadow(0 0 26px rgba(20,184,166,0.28))"
+        );
+      }
+      return (
+        "drop-shadow(0 0 4px rgba(153,246,228,0.65)) " +
+        "drop-shadow(0 0 10px rgba(45,212,191,0.38))"
+      );
+    }
+    if (tier === "compact") {
+      return (
+        "drop-shadow(0 0 4px rgba(153,246,228,0.62)) " +
+        "drop-shadow(0 0 10px rgba(45,212,191,0.34))"
+      );
+    }
     return (
-      "drop-shadow(0 0 8px rgba(153,246,228,0.78)) " +
-      "drop-shadow(0 0 18px rgba(45,212,191,0.60)) " +
-      "drop-shadow(0 0 40px rgba(20,184,166,0.40))"
+      "drop-shadow(0 0 6px rgba(153,246,228,0.68)) " +
+      "drop-shadow(0 0 14px rgba(45,212,191,0.42)) " +
+      "drop-shadow(0 0 28px rgba(20,184,166,0.26))"
     );
   }
 
-  if (neon) {
+  if (isSteel) {
+    if (level === "strong") {
+      if (tier === "hero") {
+        return (
+          "drop-shadow(0 0 6px rgba(226,232,240,0.88)) " +
+          "drop-shadow(0 0 16px rgba(148,163,184,0.72)) " +
+          "drop-shadow(0 0 34px rgba(100,116,139,0.46)) " +
+          "drop-shadow(0 0 58px rgba(71,85,105,0.30))"
+        );
+      }
+      if (tier === "standard") {
+        return (
+          "drop-shadow(0 0 4px rgba(226,232,240,0.78)) " +
+          "drop-shadow(0 0 12px rgba(148,163,184,0.50)) " +
+          "drop-shadow(0 0 22px rgba(100,116,139,0.30))"
+        );
+      }
+      return (
+        "drop-shadow(0 0 3px rgba(226,232,240,0.70)) " +
+        "drop-shadow(0 0 9px rgba(148,163,184,0.38)) " +
+        "drop-shadow(0 0 16px rgba(100,116,139,0.20))"
+      );
+    }
+    if (level === "soft") {
+      if (tier === "hero") {
+        return (
+          "drop-shadow(0 0 8px rgba(226,232,240,0.80)) " +
+          "drop-shadow(0 0 18px rgba(148,163,184,0.56)) " +
+          "drop-shadow(0 0 36px rgba(100,116,139,0.34))"
+        );
+      }
+      if (tier === "standard") {
+        return (
+          "drop-shadow(0 0 5px rgba(226,232,240,0.66)) " +
+          "drop-shadow(0 0 14px rgba(148,163,184,0.42)) " +
+          "drop-shadow(0 0 26px rgba(100,116,139,0.24))"
+        );
+      }
+      return (
+        "drop-shadow(0 0 4px rgba(226,232,240,0.56)) " +
+        "drop-shadow(0 0 10px rgba(148,163,184,0.30))"
+      );
+    }
+    if (tier === "compact") {
+      return (
+        "drop-shadow(0 0 4px rgba(226,232,240,0.52)) " +
+        "drop-shadow(0 0 10px rgba(148,163,184,0.26))"
+      );
+    }
     return (
-      "drop-shadow(0 0 10px rgba(219,234,254,0.98)) " +
-      "drop-shadow(0 0 22px rgba(191,219,254,0.94)) " +
-      "drop-shadow(0 0 44px rgba(147,197,253,0.82)) " +
-      "drop-shadow(0 0 92px rgba(96,165,250,0.62))"
+      "drop-shadow(0 0 5px rgba(226,232,240,0.60)) " +
+      "drop-shadow(0 0 14px rgba(148,163,184,0.36)) " +
+      "drop-shadow(0 0 24px rgba(100,116,139,0.22))"
     );
   }
 
+  if (level === "strong") {
+    if (tier === "hero") {
+      return (
+        "drop-shadow(0 0 6px rgba(219,234,254,0.92)) " +
+        "drop-shadow(0 0 16px rgba(191,219,254,0.78)) " +
+        "drop-shadow(0 0 34px rgba(147,197,253,0.52)) " +
+        "drop-shadow(0 0 58px rgba(96,165,250,0.34))"
+      );
+    }
+    if (tier === "standard") {
+      return (
+        "drop-shadow(0 0 4px rgba(219,234,254,0.78)) " +
+        "drop-shadow(0 0 12px rgba(191,219,254,0.52)) " +
+        "drop-shadow(0 0 22px rgba(147,197,253,0.30))"
+      );
+    }
+    return (
+      "drop-shadow(0 0 3px rgba(219,234,254,0.72)) " +
+      "drop-shadow(0 0 9px rgba(191,219,254,0.40)) " +
+      "drop-shadow(0 0 16px rgba(147,197,253,0.22))"
+    );
+  }
+  if (level === "soft") {
+    if (tier === "hero") {
+      return (
+        "drop-shadow(0 0 8px rgba(219,234,254,0.82)) " +
+        "drop-shadow(0 0 18px rgba(191,219,254,0.58)) " +
+        "drop-shadow(0 0 36px rgba(147,197,253,0.36))"
+      );
+    }
+    if (tier === "standard") {
+      return (
+        "drop-shadow(0 0 5px rgba(219,234,254,0.68)) " +
+        "drop-shadow(0 0 14px rgba(191,219,254,0.44)) " +
+        "drop-shadow(0 0 26px rgba(147,197,253,0.26))"
+      );
+    }
+    return (
+      "drop-shadow(0 0 4px rgba(219,234,254,0.58)) " +
+      "drop-shadow(0 0 10px rgba(191,219,254,0.32))"
+    );
+  }
+  if (tier === "compact") {
+    return (
+      "drop-shadow(0 0 4px rgba(191,219,254,0.55)) " +
+      "drop-shadow(0 0 10px rgba(147,197,253,0.28))"
+    );
+  }
+  if (tier === "standard") {
+    return (
+      "drop-shadow(0 0 5px rgba(191,219,254,0.62)) " +
+      "drop-shadow(0 0 14px rgba(147,197,253,0.38)) " +
+      "drop-shadow(0 0 26px rgba(96,165,250,0.22))"
+    );
+  }
   return (
-    "drop-shadow(0 0 8px rgba(191,219,254,0.72)) " +
-    "drop-shadow(0 0 18px rgba(147,197,253,0.55)) " +
-    "drop-shadow(0 0 40px rgba(96,165,250,0.36))"
+    "drop-shadow(0 0 6px rgba(191,219,254,0.68)) " +
+    "drop-shadow(0 0 16px rgba(147,197,253,0.48)) " +
+    "drop-shadow(0 0 32px rgba(96,165,250,0.28))"
   );
+}
+
+function iconFilter(
+  glow: boolean,
+  neonStrength: AigovIconNeonStrength,
+  tone: AigovIconTone,
+  size: number,
+): string | undefined {
+  const tier = shadowTierForSize(size);
+  if (neonStrength === "strong") {
+    return dropShadowStack(tone, "strong", tier);
+  }
+  if (neonStrength === "soft") {
+    return dropShadowStack(tone, "soft", tier);
+  }
+  if (glow) {
+    return dropShadowStack(tone, "glow", tier);
+  }
+  return undefined;
+}
+
+function toneFilter(tone: AigovIconTone): string | undefined {
+  if (tone === "teal") {
+    return "hue-rotate(-20deg) saturate(1.08)";
+  }
+  if (tone === "steel") {
+    return "grayscale(0.18) saturate(0.88) brightness(1.02)";
+  }
+  return undefined;
+}
+
+/** Subtle clarity lift on large hero mark only. */
+function heroPolish(size: number, neonStrength: AigovIconNeonStrength): string | undefined {
+  if (size < 96 || neonStrength === "off") return undefined;
+  return "contrast(1.03) saturate(1.04)";
 }
 
 export default function AigovIcon({
   size = 18,
   glow = true,
-  neon = false,
+  neonStrength = "off",
   tone = "blue",
   style,
+  className,
   ...rest
 }: AigovIconProps) {
-  const isTeal = tone === "teal";
-
-  const strokeSoft = isTeal ? "rgba(185,255,244,0.72)" : "rgba(205,228,255,0.72)";
-  const dotFill = isTeal ? "rgba(185,255,244,0.98)" : "rgba(191,219,254,0.98)";
-  const bgCircle = neon ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.05)";
-
-  const gradA = isTeal ? "rgba(185,255,244,0.98)" : "rgba(219,234,254,0.99)";
-  const gradB = isTeal ? "rgba(45,212,191,0.92)" : "rgba(191,219,254,0.92)";
-  const gradC = isTeal ? "rgba(20,184,166,0.70)" : "rgba(147,197,253,0.78)";
-
-  const filter = iconFilter(glow, neon, tone);
+  const shadow = iconFilter(glow, neonStrength, tone, size);
+  const tint = toneFilter(tone);
+  const polish = heroPolish(size, neonStrength);
+  const filter = [shadow, tint, polish].filter(Boolean).join(" ") || undefined;
 
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="84 -20 160 160"
+    <img
+      src={AIGOV_ICON_SRC}
       width={size}
       height={size}
-      preserveAspectRatio="xMidYMid meet"
+      alt=""
       aria-hidden="true"
-      focusable="false"
+      decoding="async"
+      draggable={false}
+      className={className}
       style={{
         display: "block",
-        overflow: "visible",
+        width: size,
+        height: size,
+        objectFit: "contain",
         filter,
         ...style,
       }}
       {...rest}
-    >
-      <defs>
-        <linearGradient id="aigovStroke" x1="110" y1="44" x2="210" y2="92" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor={gradB} />
-          <stop offset="55%" stopColor={gradA} />
-          <stop offset="100%" stopColor={gradB} />
-        </linearGradient>
-
-        <radialGradient id="aigovBg" cx="50%" cy="45%" r="70%">
-          <stop offset="0%" stopColor={gradA} stopOpacity={neon ? 0.10 : 0.06} />
-          <stop offset="55%" stopColor={gradC} stopOpacity={neon ? 0.08 : 0.05} />
-          <stop offset="100%" stopColor="rgba(0,0,0,0)" stopOpacity="0" />
-        </radialGradient>
-      </defs>
-
-      <circle cx="160" cy="60" r="68" fill={bgCircle} />
-      <circle cx="160" cy="60" r="68" fill="url(#aigovBg)" />
-
-      <path
-        stroke={strokeSoft}
-        strokeWidth="9"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M118 36 L96 60 L118 84"
-      />
-      <path
-        stroke={strokeSoft}
-        strokeWidth="9"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M202 36 L224 60 L202 84"
-      />
-
-      <path
-        stroke="url(#aigovStroke)"
-        strokeWidth="5.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M118 36 L96 60 L118 84"
-      />
-      <path
-        stroke="url(#aigovStroke)"
-        strokeWidth="5.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-        d="M202 36 L224 60 L202 84"
-      />
-
-      <circle fill={dotFill} cx="144" cy="77.6" r="6.4" />
-      <circle fill={dotFill} cx="160" cy="77.6" r="6.4" />
-      <circle fill={dotFill} cx="176" cy="77.6" r="6.4" />
-    </svg>
+    />
   );
 }

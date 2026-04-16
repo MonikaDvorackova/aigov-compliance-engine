@@ -1,45 +1,61 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { getAppOrigin, safeAuthNextPath } from "@/lib/appOrigin";
 import { createSupabaseRouteClient } from "@/lib/supabase/route";
 
 export const dynamic = "force-dynamic";
 
-function safeNext(raw: string | null): string {
-  if (!raw) return "/runs";
-  const v = raw.trim();
-  if (!v) return "/runs";
-  if (v.startsWith("/")) return v;
-  return "/runs";
-}
-
 export async function GET(request: NextRequest) {
-  const url = new URL(request.url);
-  const origin = url.origin;
+  const origin = getAppOrigin(request);
+  const code = request.nextUrl.searchParams.get("code");
 
-  const next = safeNext(url.searchParams.get("next"));
-  const code = url.searchParams.get("code");
+  const nextFromCookie = request.cookies.get("oauth_next")?.value ?? null;
+  const nextFromParam = request.nextUrl.searchParams.get("next");
+  const next = safeAuthNextPath(nextFromCookie || nextFromParam);
 
-  const oauthError = url.searchParams.get("error");
-  const oauthErrorDescription = url.searchParams.get("error_description");
+  const allCookies = request.cookies.getAll();
+  const cookieNames = allCookies.map((c) => c.name);
+  const hasVerifier = allCookies.some(
+    (c) => c.name.includes("code-verifier") || c.name.includes("code_verifier"),
+  );
 
-  if (oauthError) {
-    const msg = encodeURIComponent(oauthErrorDescription || oauthError);
-    return NextResponse.redirect(new URL(`/login?message=${msg}`, origin));
-  }
+  console.log("[auth:callback]", {
+    requestUrl: request.url,
+    origin,
+    next,
+    nextFromCookie,
+    nextFromParam,
+    hasCode: Boolean(code),
+    cookieCount: allCookies.length,
+    cookieNames,
+    hasVerifier,
+  });
 
   if (!code) {
+    console.log("[auth:callback] NO CODE → /login");
     return NextResponse.redirect(new URL("/login?message=MissingOAuthCode", origin));
   }
 
-  const res = NextResponse.redirect(new URL(next, origin));
+  const target = new URL(next, origin);
+  const res = NextResponse.redirect(target);
   const supabase = createSupabaseRouteClient(request, res);
 
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  res.cookies.set("oauth_next", "", { path: "/", maxAge: 0 });
+
+  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+
+  console.log("[auth:callback] exchange", {
+    ok: !error,
+    hasSession: Boolean(data?.session),
+    error: error?.message ?? null,
+  });
 
   if (error) {
     const msg = encodeURIComponent(error.message || "OAuthExchangeFailed");
+    console.log("[auth:callback] EXCHANGE ERROR → /login");
     return NextResponse.redirect(new URL(`/login?message=${msg}`, origin));
   }
 
-  return NextResponse.redirect(new URL(next, origin), { headers: res.headers });
+  console.log("[auth:callback] SUCCESS → redirect", target.toString());
+  return res;
 }
