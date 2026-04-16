@@ -1,1 +1,16 @@
 export { DashboardPageShell } from "./DashboardPageShell";
+export { DashboardHero } from "./DashboardHero";
+export { DashboardActionStrip, DashboardTertiaryLink } from "./DashboardActionStrip";
+export { DashboardTwoColumn } from "./DashboardTwoColumn";
+export { DashboardSectionTitle } from "./DashboardSectionTitle";
+export { DashboardSectionHeader } from "./DashboardSectionHeader";
+export { DashboardPageIntroduction } from "./DashboardPageIntroduction";
+export { DashboardContentSection } from "./DashboardContentSection";
+export { DashboardStatChips } from "./DashboardStatChips";
+export type { StatChip } from "./DashboardStatChips";
+export { ConsoleModuleCard } from "./ConsoleModuleCard";
+export type { ConsoleModuleSurface } from "./ConsoleModuleCard";
+export { DashboardCompactCard } from "./DashboardCompactCard";
+export { EvidencePostureBars } from "./EvidencePostureBars";
+export * from "./dashboardTokens";
+export { colors } from "@/app/_ui/theme/govaiPalette";

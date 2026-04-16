@@ -219,7 +219,7 @@ export function badgeToneStyle(kind: "neutral" | "ok" | "issue" | "error"): CSSP
     lineHeight: "15px",
     letterSpacing: "0.04em",
     color,
-    opacity: 1,
+    opacity: kind === "neutral" ? 1 : 0.9,
     whiteSpace: "nowrap",
   };
 }
