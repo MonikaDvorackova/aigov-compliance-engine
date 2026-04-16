@@ -7,6 +7,7 @@ import {
   getDiscoveryRepoRoot,
   safeResolveScanPath,
 } from "@/lib/ai-discovery/safeScanPath";
+import { gatherScanContextFromEnvironment } from "@/lib/ai-discovery/scanContextMetadata.server";
 import { appendSuccessfulScan } from "@/lib/ai-discovery/scanHistoryPersistence.server";
 import { loadRunDiscovery } from "@/lib/ai-discovery/loadEngine";
 
@@ -76,11 +77,19 @@ export async function POST(request: Request) {
       relative(repoRoot, resolved.absolutePath) || ".";
 
     try {
+      const envCtx = gatherScanContextFromEnvironment();
+      const triggeredBy =
+        user.email?.trim() ||
+        (typeof user.id === "string" ? user.id.trim() : null) ||
+        null;
       appendSuccessfulScan({
         scanRoot: scanRootDisplay,
         detections: result.detections,
         groupedSummary: result.groupedSummary,
         notes: result.notes,
+        ...envCtx,
+        triggeredBy,
+        triggerType: "manual",
       });
     } catch (e) {
       console.error("[ai-discovery] scan history persist failed:", e);

@@ -17,6 +17,7 @@ import type { RunLedgerRecord, RunSignedUrlsState } from "@/app/components/Compl
 import { InlineMono } from "@/app/_ui/console/primitives";
 import { DashboardPageShell } from "@/app/_ui/dashboard";
 import { RunDetailBody } from "./RunDetailBody";
+import { devNavigationInspectDelay } from "@/lib/devNavigationInspectDelay";
 
 function fmt(ts: string | null) {
   if (!ts) return "";
@@ -72,6 +73,8 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
   if (!runIdTrimmed) {
     notFound();
   }
+
+  await devNavigationInspectDelay();
 
   let data: RunLedgerRecord | null = null;
 
