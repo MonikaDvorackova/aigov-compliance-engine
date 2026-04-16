@@ -6,6 +6,7 @@ import { createSupabaseRouteClientBuffered } from "@/lib/supabase/route";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  console.log("[auth:flow] 1-google-route");
   const origin = getAppOrigin(request);
   const next = safeAuthNextPath(request.nextUrl.searchParams.get("next"));
   const redirectTo = `${origin}/auth/callback`;
