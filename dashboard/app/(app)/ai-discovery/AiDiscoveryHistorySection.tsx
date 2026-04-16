@@ -4,16 +4,18 @@ import type { CSSProperties } from "react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import { compareDiscoveryRuns } from "@/lib/ai-discovery/compareDiscoveryRuns";
+import {
+  AI_DISCOVERY_HISTORY_PAGE_SIZE,
+  historyFetchQuery,
+} from "@/lib/ai-discovery/aiDiscoveryListFilterQuery";
 import { countsFromDiscoveryResult } from "@/lib/ai-discovery/scanHistoryCounts";
 import type { DiscoveryScanChangeSummary } from "@/lib/ai-discovery/scanChangeSummary";
 import type { StoredDiscoveryScan } from "@/lib/ai-discovery/scanHistoryTypes";
 import type { DiscoveryScanDecision } from "@/lib/ai-discovery/scanReviewTypes";
 
-import { AiDiscoveryScanReviewModal } from "./AiDiscoveryScanReviewModal";
-
 function panelStyle(): CSSProperties {
   return {
-    marginTop: 20,
+    marginTop: 28,
     padding: 16,
     borderRadius: 10,
     border: "1px solid var(--govai-border-faint)",
@@ -229,39 +231,110 @@ function RunContextCaption({ label, scan }: { label: string; scan: StoredDiscove
 
 type Props = {
   refreshTrigger: number;
+  /** Serialized query string for `/api/ai-discovery/history` (no leading `?`). */
+  listQuery: string;
+  filtersActive: boolean;
+  /** When set, show a banner that the list is narrowed (matches `target` query param). */
+  targetFilter?: string | null;
+  onClearTargetFilter?: () => void;
+  onOpenReview: (scan: StoredDiscoveryScan) => void;
 };
 
-export function AiDiscoveryHistorySection({ refreshTrigger }: Props) {
+type HistoryJson = {
+  ok?: boolean;
+  scans?: StoredDiscoveryScan[];
+  hasMore?: boolean;
+  totalFiltered?: number;
+};
+
+export function AiDiscoveryHistorySection({
+  refreshTrigger,
+  listQuery,
+  filtersActive,
+  targetFilter,
+  onClearTargetFilter,
+  onOpenReview,
+}: Props) {
   const [scans, setScans] = useState<StoredDiscoveryScan[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalFiltered, setTotalFiltered] = useState<number | null>(null);
   const [compareA, setCompareA] = useState("");
   const [compareB, setCompareB] = useState("");
   const [diffShown, setDiffShown] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [reviewScan, setReviewScan] = useState<StoredDiscoveryScan | null>(null);
   const [expandedContextId, setExpandedContextId] = useState<string | null>(null);
   const [expandedChangeSummaryId, setExpandedChangeSummaryId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
     setLoading(true);
+    setHasMore(false);
+    setLoadingMore(false);
     try {
-      const res = await fetch("/api/ai-discovery/history", { credentials: "same-origin" });
-      const json = (await res.json()) as { ok?: boolean; scans?: StoredDiscoveryScan[] };
+      const qs = historyFetchQuery(listQuery, {
+        offset: 0,
+        limit: AI_DISCOVERY_HISTORY_PAGE_SIZE,
+      });
+      const path = `/api/ai-discovery/history?${qs}`;
+      const res = await fetch(path, { credentials: "same-origin" });
+      const json = (await res.json()) as HistoryJson;
       if (!res.ok || !json.ok || !Array.isArray(json.scans)) {
         setError("Could not load scan history.");
         setScans([]);
+        setTotalFiltered(null);
         return;
       }
       setScans(json.scans);
+      setHasMore(json.hasMore ?? false);
+      setTotalFiltered(
+        typeof json.totalFiltered === "number" ? json.totalFiltered : json.scans.length
+      );
     } catch {
       setError("Could not load scan history.");
       setScans([]);
+      setTotalFiltered(null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [listQuery]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const qs = historyFetchQuery(listQuery, {
+        offset: scans.length,
+        limit: AI_DISCOVERY_HISTORY_PAGE_SIZE,
+      });
+      const path = `/api/ai-discovery/history?${qs}`;
+      const res = await fetch(path, { credentials: "same-origin" });
+      const json = (await res.json()) as HistoryJson;
+      if (!res.ok || !json.ok || !Array.isArray(json.scans)) {
+        setError("Could not load more history.");
+        return;
+      }
+      const batch = json.scans;
+      setScans((prev) => {
+        const seen = new Set(prev.map((s) => s.id));
+        const next = [...prev];
+        for (const s of batch) {
+          if (!seen.has(s.id)) next.push(s);
+        }
+        return next;
+      });
+      setHasMore(json.hasMore ?? false);
+      if (typeof json.totalFiltered === "number") {
+        setTotalFiltered(json.totalFiltered);
+      }
+    } catch {
+      setError("Could not load more history.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [hasMore, listQuery, loadingMore, scans.length]);
 
   useEffect(() => {
     void load();
@@ -292,12 +365,51 @@ export function AiDiscoveryHistorySection({ refreshTrigger }: Props) {
   }, [orderedPair]);
 
   return (
-    <div style={panelStyle()}>
-      <h2 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 600 }}>Previous scans</h2>
+    <div id="ai-discovery-history" style={panelStyle()}>
+      <h2 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 600 }}>Scan history</h2>
       <p style={{ margin: "0 0 12px", fontSize: 11.5, color: "var(--govai-text-tertiary)", lineHeight: 1.45 }}>
-        Successful runs for this repository (stored on the server under <code style={{ fontSize: 11 }}>.govai/</code>
-        ). Newest first. Reviews are saved with each scan record.
+        Full scan history with comparison, review, and filtering. Runs are stored under{" "}
+        <code style={{ fontSize: 11 }}>.govai/</code> on the server.
       </p>
+
+      {targetFilter?.trim() ? (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "8px 10px",
+            borderRadius: 8,
+            border: "1px solid var(--govai-border-faint)",
+            background: "rgba(59, 130, 246, 0.08)",
+            fontSize: 12,
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 8,
+            justifyContent: "space-between",
+          }}
+        >
+          <span style={{ color: "var(--govai-text-secondary)" }}>
+            Filtered to target <code style={{ fontSize: 11 }}>{targetFilter.trim()}</code>
+          </span>
+          {onClearTargetFilter ? (
+            <button
+              type="button"
+              onClick={onClearTargetFilter}
+              style={{
+                padding: "4px 10px",
+                borderRadius: 6,
+                border: "1px solid var(--govai-border-faint)",
+                background: "rgba(255,255,255,0.06)",
+                color: "var(--govai-text-secondary)",
+                fontSize: 11.5,
+                cursor: "pointer",
+              }}
+            >
+              Show all
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {loading ? (
         <p style={{ fontSize: 12.5, color: "var(--govai-text-tertiary)" }}>Loading history…</p>
@@ -307,7 +419,11 @@ export function AiDiscoveryHistorySection({ refreshTrigger }: Props) {
       ) : null}
 
       {!loading && !error && scans.length === 0 ? (
-        <p style={{ fontSize: 12.5, color: "var(--govai-text-tertiary)" }}>No saved scans yet. Run a discovery scan to record one.</p>
+        <p style={{ fontSize: 12.5, color: "var(--govai-text-tertiary)" }}>
+          {filtersActive
+            ? "No results match the current filters."
+            : "No saved scans yet. Run a discovery scan to record one."}
+        </p>
       ) : null}
 
       {!loading && scans.length > 0 ? (
@@ -327,7 +443,7 @@ export function AiDiscoveryHistorySection({ refreshTrigger }: Props) {
                 <th style={{ padding: "6px 8px" }}>Branch / commit</th>
                 <th style={{ padding: "6px 8px" }}>Trigger</th>
                 <th style={{ padding: "6px 8px" }}>Triggered by</th>
-                <th style={{ padding: "6px 8px" }}>Δ vs prior</th>
+                <th style={{ padding: "6px 8px" }}>Changes vs prior</th>
                 <th style={{ padding: "6px 8px" }}>OpenAI</th>
                 <th style={{ padding: "6px 8px" }}>Transformers</th>
                 <th style={{ padding: "6px 8px" }}>Artifacts</th>
@@ -346,7 +462,10 @@ export function AiDiscoveryHistorySection({ refreshTrigger }: Props) {
                 const ch = changesBadge(s);
                 return (
                   <Fragment key={s.id}>
-                    <tr style={{ borderBottom: "1px solid var(--govai-border-faint)" }}>
+                    <tr
+                      id={`govai-discovery-scan-${s.id}`}
+                      style={{ borderBottom: "1px solid var(--govai-border-faint)" }}
+                    >
                       <td style={{ padding: "8px 8px 8px 0", verticalAlign: "top", whiteSpace: "nowrap" }}>
                         {formatWhen(s.createdAt)}
                       </td>
@@ -418,8 +537,7 @@ export function AiDiscoveryHistorySection({ refreshTrigger }: Props) {
                           <button
                             type="button"
                             onClick={() => {
-                              setReviewScan(s);
-                              setReviewOpen(true);
+                              onOpenReview(s);
                             }}
                             style={{
                               padding: "4px 10px",
@@ -511,15 +629,33 @@ export function AiDiscoveryHistorySection({ refreshTrigger }: Props) {
         </div>
       ) : null}
 
-      <AiDiscoveryScanReviewModal
-        open={reviewOpen}
-        scan={reviewScan}
-        onClose={() => {
-          setReviewOpen(false);
-          setReviewScan(null);
-        }}
-        onSaved={() => void load()}
-      />
+      {!loading && scans.length > 0 && totalFiltered !== null && totalFiltered > scans.length ? (
+        <p style={{ marginTop: 10, fontSize: 12, color: "var(--govai-text-tertiary)" }}>
+          Showing {scans.length} of {totalFiltered} matching scans.
+        </p>
+      ) : null}
+
+      {!loading && hasMore ? (
+        <div style={{ marginTop: 12 }}>
+          <button
+            type="button"
+            disabled={loadingMore}
+            onClick={() => void loadMore()}
+            style={{
+              padding: "8px 14px",
+              borderRadius: 8,
+              border: "1px solid var(--govai-border-faint)",
+              background: "rgba(255,255,255,0.04)",
+              color: "var(--govai-text-secondary)",
+              fontSize: 12.5,
+              cursor: loadingMore ? "wait" : "pointer",
+              opacity: loadingMore ? 0.7 : 1,
+            }}
+          >
+            {loadingMore ? "Loading…" : "Load more"}
+          </button>
+        </div>
+      ) : null}
 
       {scans.length >= 2 ? (
         <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--govai-border-faint)" }}>

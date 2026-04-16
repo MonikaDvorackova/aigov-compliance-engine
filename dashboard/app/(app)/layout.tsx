@@ -111,8 +111,8 @@ export default async function AppLayout({
     <div
       style={{
         minHeight: "100vh",
-        background: "#0B0F18",
-        color: "rgba(255,255,255,0.92)",
+        background: "var(--govai-bg-app)",
+        color: "var(--govai-text-primary)",
         display: "flex",
         flexDirection: "row",
       }}
@@ -121,8 +121,8 @@ export default async function AppLayout({
         style={{
           width: 256,
           minWidth: 256,
-          borderRight: "1px solid rgba(255,255,255,0.08)",
-          background: "#0A0E16",
+          borderRight: "1px solid var(--govai-border-ink-faint)",
+          background: "var(--govai-bg-sidebar)",
           display: "flex",
           flexDirection: "column",
           padding: 14,
@@ -142,7 +142,7 @@ export default async function AppLayout({
           }}
         >
           <span style={{ display: "inline-flex", alignItems: "center", lineHeight: 0 }}>
-            <AigovMark size={30} glow neon neonStrength="soft" tone="blue" />
+            <AigovMark size={30} glow={false} neon={false} tone="blue" />
           </span>
           <span style={{ display: "grid", gap: 2 }}>
             <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "-0.01em" }}>GovAI Console</span>
@@ -238,11 +238,11 @@ export default async function AppLayout({
           style={{
             height: 56,
             padding: "0 18px",
-            borderBottom: "1px solid rgba(255,255,255,0.08)",
+            borderBottom: "1px solid var(--govai-border-ink-faint)",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            background: "#0B0F18",
+            background: "var(--govai-bg-app)",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
@@ -267,7 +267,7 @@ export default async function AppLayout({
           </div>
         </header>
 
-        <main style={{ flex: 1, minWidth: 0, padding: "18px 18px 26px" }}>
+        <main style={{ flex: 1, minWidth: 0, padding: "22px 24px 36px" }}>
           {children}
         </main>
       </div>

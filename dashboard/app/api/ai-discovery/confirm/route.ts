@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { requireAiDiscoverySession } from "@/lib/ai-discovery/aiDiscoveryRouteAuth.server";
 import { loadConfirmedStore } from "@/lib/ai-discovery/loadConfirmedStore";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,9 @@ type Body = {
 };
 
 export async function POST(request: Request) {
+  const auth = await requireAiDiscoverySession();
+  if (!auth.ok) return auth.response;
+
   let body: Body = {};
   try {
     body = (await request.json()) as Body;
