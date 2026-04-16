@@ -25,6 +25,26 @@ export const EMPTY_DISCOVERY_SCAN_CONTEXT: DiscoveryScanContextFields = {
 
 export type { DiscoveryScanChangeSummary } from "./scanChangeSummary";
 
+export type DiscoveryScanAlertDeliveryStatus =
+  | "not_attempted"
+  | "sent"
+  | "failed";
+
+/** Slack (or future channels): delivery audit for change alerts on scheduled scans. */
+export type DiscoveryScanAlertFields = {
+  alertAttemptedAt: string | null;
+  alertDeliveredAt: string | null;
+  alertDeliveryStatus: DiscoveryScanAlertDeliveryStatus;
+  alertDeliveryError: string | null;
+};
+
+export const DEFAULT_DISCOVERY_SCAN_ALERT: DiscoveryScanAlertFields = {
+  alertAttemptedAt: null,
+  alertDeliveredAt: null,
+  alertDeliveryStatus: "not_attempted",
+  alertDeliveryError: null,
+};
+
 /** One persisted successful scan row (JSON store), including optional review metadata. */
 export type StoredDiscoveryScan = {
   id: string;
@@ -38,4 +58,5 @@ export type StoredDiscoveryScan = {
   /** Populated for scheduled runs: diff vs prior for the same target. */
   changeSummary: DiscoveryScanChangeSummary | null;
 } & DiscoveryScanReviewFields &
-  DiscoveryScanContextFields;
+  DiscoveryScanContextFields &
+  DiscoveryScanAlertFields;
