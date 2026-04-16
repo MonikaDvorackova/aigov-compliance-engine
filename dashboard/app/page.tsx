@@ -1,270 +1,564 @@
 import React from "react";
 import Link from "next/link";
-import InfraShell, { InfraPanel } from "./_ui/InfraShell";
+import AigovMark from "./components/brand/AigovMark";
+import {
+  CapabilityProofStrip,
+  EvidenceBundlesSecondary,
+  EvidenceLedgerHero,
+  PolicyEnforcementSecondary,
+} from "./_ui/console/CapabilityPrimaryPanel";
+import { Panel } from "./_ui/console/primitives";
+import { primaryCardDescription } from "./_ui/console/surfaces";
+import InfraShell from "./_ui/InfraShell";
 
-type Feature = {
-  title: string;
-  description: string;
-  icon: React.ReactNode;
-};
+/** Muted shell — no chromatic gradients; optional neutral lift only */
+const LANDING_SHELL_BACKGROUND = [
+  "radial-gradient(900px 480px at 50% -8%, rgba(255,255,255,0.035) 0%, transparent 58%)",
+  "var(--govai-bg-app)",
+].join(", ");
 
-function IconList({ size = 20 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M6 7h15M6 12h15M6 17h15"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-      />
-      <path
-        d="M3.2 7h.1M3.2 12h.1M3.2 17h.1"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function IconShield({ size = 20 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M12 2.4l7 3.2v6.3c0 5-3.2 9.4-7 10.7-3.8-1.3-7-5.7-7-10.7V5.6l7-3.2Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function IconBolt({ size = 20 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M13 2L3 14h8l-1 8 11-14h-8l0-6Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function IconDownload({ size = 20 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 3v10" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-      <path
-        d="M8 11l4 4 4-4"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="M4 20h16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-    </svg>
-  );
-}
+const PROOF_ITEMS = [
+  { label: "Compliance Summary", detail: "Derived projection · regulation mapping" },
+  { label: "Replayable state", detail: "Deterministic replay from ledger" },
+  { label: "Audit-ready exports", detail: "Reproducible outputs for review" },
+] as const;
 
 export default function Page() {
-  const accent = "#0066FF";
-
-  const features: Feature[] = [
-    {
-      title: "Open runs",
-      description: "Browse recent runs, inspect hashes, and open run detail.",
-      icon: <IconList />,
-    },
-    {
-      title: "Sign in",
-      description: "Authenticate to access private runs and protected artifacts.",
-      icon: <IconShield />,
-    },
-    {
-      title: "Integrity",
-      description: "Mode, status, hashes, and close timestamp in one place.",
-      icon: <IconBolt />,
-    },
-    {
-      title: "Artifacts",
-      description: "Evidence pack, audit JSON, and evidence JSON ready to ship.",
-      icon: <IconDownload />,
-    },
-  ];
-
   return (
-    <InfraShell maxWidth={920} align="start">
-      <div style={{ textAlign: "center", paddingTop: 4 }}>
-        <div style={{ letterSpacing: "0.26em", fontSize: 11, opacity: 0.72, marginBottom: 8 }}>
-          GOVAI
+    <InfraShell maxWidth={720} align="start" padding={20} background={LANDING_SHELL_BACKGROUND}>
+      <div className="govai_landing_hero" style={{ textAlign: "center", paddingTop: 2 }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+          <span style={{ display: "inline-flex", lineHeight: 0 }}>
+            <AigovMark size={30} glow={false} neon={false} neonStrength="off" tone="steel" isRunning={false} />
+          </span>
         </div>
+        <div style={{ letterSpacing: "0.2em", fontSize: 10, opacity: 0.62, marginBottom: 8 }}>GOVAI</div>
 
         <h1
           style={{
             margin: 0,
             letterSpacing: "-0.03em",
-            fontWeight: 500,
-            lineHeight: 1.08,
-            fontSize: "clamp(28px, 5.2vw, 46px)",
+            fontWeight: 600,
+            lineHeight: 1.12,
+            fontSize: "clamp(22px, 3.6vw, 30px)",
+            color: "var(--govai-text)",
           }}
         >
-          Compliance Evidence
-          <br />
-          Dashboard
+          GovAI turns compliance evidence into a production decision.
         </h1>
 
         <p
           style={{
-            margin: "12px auto 14px",
-            maxWidth: "46ch",
-            opacity: 0.78,
-            fontSize: "clamp(13px, 2.1vw, 16px)",
-            lineHeight: 1.5,
+            margin: "8px auto 0",
+            maxWidth: "48ch",
+            fontSize: 13,
+            lineHeight: 1.45,
+            color: "var(--govai-text-secondary)",
           }}
         >
-          Generate runs, verify integrity, and ship auditable evidence bundles.
+          Each run resolves to VALID, INVALID, or BLOCKED — based on evaluation, approval, and promotion rules.
         </p>
 
         <div
           style={{
             display: "flex",
-            gap: 10,
+            gap: 8,
             justifyContent: "center",
             alignItems: "center",
             flexWrap: "wrap",
-            marginTop: 8,
-            marginBottom: 14,
+            marginTop: 16,
           }}
         >
-          <Link className="govai_btn" href="/runs">
+          <Link className="govai_btn govai_btnPrimary" href="/runs">
             Open runs
           </Link>
-          <Link className="govai_btn govai_btnSoft" href="/login">
+          <Link className="govai_btn govai_btnGhost" href="/login">
             Sign in
           </Link>
         </div>
       </div>
 
-      <InfraPanel>
+      <div
+        className="govai_landing_positioning"
+        style={{
+          marginTop: 28,
+          padding: "18px 16px 16px",
+          textAlign: "left",
+          maxWidth: 520,
+          marginLeft: "auto",
+          marginRight: "auto",
+          borderRadius: 10,
+          border: "1px solid var(--govai-border-faint)",
+          background: "var(--govai-bg-panel)",
+          boxShadow: "0 1px 0 rgba(255,255,255,0.03) inset",
+        }}
+      >
+        <p style={{ margin: "0 0 10px", fontSize: 13, lineHeight: 1.55, color: "var(--govai-text)" }}>
+          Most AI systems produce compliance data.
+          <br />
+          Few tell you what to do next.
+        </p>
+        <p style={{ margin: "0 0 14px", fontSize: 13, lineHeight: 1.5, color: "var(--govai-text-secondary)" }}>
+          GovAI does.
+        </p>
+        <p style={{ margin: "0 0 10px", fontSize: 13, lineHeight: 1.55, color: "var(--govai-text-secondary)" }}>
+          Every run is evaluated into a clear outcome:
+          <br />
+          VALID, INVALID, or BLOCKED.
+        </p>
+        <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6, color: "var(--govai-text-tertiary)" }}>
+          No ambiguity.
+          <br />
+          No hidden states.
+          <br />
+          No false positives.
+        </p>
+      </div>
+
+      <div style={{ marginTop: 26, maxWidth: 560, marginLeft: "auto", marginRight: "auto" }}>
         <div
           style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: 12,
+            fontSize: 9.5,
+            fontWeight: 600,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: "var(--govai-text-label)",
+            marginBottom: 12,
+            textAlign: "center",
           }}
         >
-          {features.map((f) => (
-            <div
-              key={f.title}
+          How GovAI decides
+        </div>
+        <ul
+          style={{
+            margin: 0,
+            padding: 0,
+            listStyle: "none",
+            display: "grid",
+            gap: 14,
+          }}
+        >
+          {[
+            {
+              title: "Decision-first interface",
+              detail: "Know in seconds whether a model can be deployed.",
+            },
+            {
+              title: "Strict rule engine",
+              detail: "Evaluation → approval → promotion. No shortcuts.",
+            },
+            {
+              title: "Consistent state model",
+              detail: "No contradictions between signals and decisions.",
+            },
+            {
+              title: "Separation of concerns",
+              detail: "Decision surface on top, technical audit below.",
+            },
+          ].map((item) => (
+            <li
+              key={item.title}
               style={{
-                borderRadius: 16,
-                border: "1px solid rgba(255,255,255,0.14)",
-                background: "rgba(255,255,255,0.03)",
-                padding: "12px 10px 12px",
-                textAlign: "center",
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
-                minHeight: 140,
-                display: "grid",
-                alignContent: "start",
-                justifyItems: "center",
+                padding: "12px 14px",
+                borderRadius: 8,
+                border: "1px solid var(--govai-border-faint)",
+                background: "var(--govai-bg-elevated)",
               }}
             >
-              <div
-                aria-hidden="true"
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 14,
-                  border: "1px solid rgba(255,255,255,0.14)",
-                  background: "rgba(0,102,255,0.18)",
-                  boxShadow: `
-                    0 0 14px rgba(0,102,255,0.6),
-                    0 0 32px rgba(0,102,255,0.45),
-                    0 0 60px rgba(0,102,255,0.35),
-                    inset 0 1px 0 rgba(255,255,255,0.12)
-                  `,
-                  display: "grid",
-                  placeItems: "center",
-                  marginBottom: 8,
-                }}
-              >
-                <span
-                  style={{
-                    color: accent,
-                    filter: `
-                      drop-shadow(0 0 6px rgba(0,102,255,0.95))
-                      drop-shadow(0 0 18px rgba(0,102,255,0.8))
-                      drop-shadow(0 0 36px rgba(0,102,255,0.6))
-                    `,
-                    display: "inline-flex",
-                  }}
-                >
-                  {f.icon}
-                </span>
-              </div>
-
-              <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-0.01em", marginBottom: 5 }}>
-                {f.title}
-              </div>
-
-              <div
-                style={{
-                  fontSize: 13,
-                  opacity: 0.76,
-                  lineHeight: 1.45,
-                  maxWidth: "22ch",
-                }}
-              >
-                {f.description}
-              </div>
-            </div>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--govai-text)", marginBottom: 4 }}>{item.title}</div>
+              <div style={{ fontSize: 12, lineHeight: 1.45, color: "var(--govai-text-secondary)" }}>{item.detail}</div>
+            </li>
           ))}
-        </div>
+        </ul>
+      </div>
 
-        <div style={{ textAlign: "center", marginTop: 12, fontSize: 12.5, opacity: 0.7, lineHeight: 1.45 }}>
-          Minimal surface, strong guarantees. Everything is hashed.
-          <br />
-          Everything is traceable.
+      <Panel
+        style={{
+          padding: "10px 12px 11px",
+          marginTop: 26,
+          background: "var(--govai-bg-panel)",
+          border: "1px solid var(--govai-border-faint)",
+          boxShadow: "0 1px 0 rgba(255,255,255,0.03) inset",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            flexWrap: "wrap",
+            marginBottom: 4,
+          }}
+        >
+          <span style={{ fontSize: 12.5, fontWeight: 600, letterSpacing: "-0.02em", color: "var(--govai-text)" }}>
+            How it works
+          </span>
+          <span
+            style={{
+              fontSize: 9.5,
+              fontWeight: 500,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "var(--govai-text-label)",
+            }}
+          >
+            Walkthrough video
+          </span>
         </div>
-      </InfraPanel>
+        <p style={{ ...primaryCardDescription(), margin: "0 0 8px", fontSize: 11.5, lineHeight: 1.4 }}>
+          Ingest → verify → export.
+        </p>
+        <div role="presentation" aria-hidden="true" className="govai_walkthrough_shell" />
+      </Panel>
+
+      <div style={{ marginTop: 28 }}>
+        <div
+          style={{
+            fontSize: 9.5,
+            fontWeight: 600,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: "var(--govai-text-label)",
+            marginBottom: 10,
+          }}
+        >
+          Core system
+        </div>
+        <EvidenceLedgerHero />
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        <div className="govai_secondary_pair">
+          <PolicyEnforcementSecondary />
+          <EvidenceBundlesSecondary />
+        </div>
+      </div>
+
+      <div style={{ marginTop: 28 }}>
+        <div
+          style={{
+            fontSize: 9.5,
+            fontWeight: 600,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: "var(--govai-text-label)",
+            marginBottom: 10,
+            textAlign: "center",
+          }}
+        >
+          Proof & export
+        </div>
+        <CapabilityProofStrip items={PROOF_ITEMS} />
+      </div>
+
+      <p
+        style={{
+          textAlign: "center",
+          marginTop: 22,
+          marginBottom: 0,
+          fontSize: 11,
+          lineHeight: 1.45,
+          color: "var(--govai-text-tertiary)",
+        }}
+      >
+        Hash-backed ledger · policy-bound transitions · exportable audit trail
+      </p>
 
       <style>{`
         .govai_btn {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          height: 40px;
+          height: 34px;
           padding: 0 14px;
-          border-radius: 14px;
-          border: 1px solid rgba(255,255,255,0.18);
-          background: rgba(255,255,255,0.06);
-          color: rgba(255,255,255,0.92);
+          border-radius: 8px;
           text-decoration: none;
-          font-size: 15px;
+          font-size: 13px;
           font-weight: 600;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 16px 34px rgba(0,0,0,0.28);
-          backdrop-filter: blur(10px);
-          -webkit-backdrop-filter: blur(10px);
+          transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+        }
+        .govai_btn:focus-visible {
+          outline: 2px solid var(--govai-border-focus);
+          outline-offset: 2px;
+        }
+        .govai_btnPrimary {
+          border: 1px solid color-mix(in srgb, var(--govai-accent) 55%, transparent);
+          background: color-mix(in srgb, var(--govai-accent) 18%, var(--govai-bg-elevated));
+          color: var(--govai-text);
+        }
+        .govai_btnPrimary:hover {
+          background: color-mix(in srgb, var(--govai-accent) 28%, var(--govai-bg-elevated));
+          border-color: color-mix(in srgb, var(--govai-accent) 70%, transparent);
+        }
+        .govai_btnGhost {
+          border: 1px solid var(--govai-border);
+          background: transparent;
+          color: var(--govai-text-secondary);
+        }
+        .govai_btnGhost:hover {
+          background: var(--govai-bg-panel);
+          border-color: var(--govai-border);
+          color: var(--govai-text);
         }
 
-        .govai_btnSoft {
-          background: rgba(255,255,255,0.04);
+        .govai_walkthrough_shell {
+          position: relative;
+          height: 44px;
+          border-radius: 7px;
+          border: 1px solid var(--govai-border-faint);
+          background: var(--govai-bg-elevated);
+          box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+          overflow: hidden;
+        }
+        .govai_walkthrough_shell::after {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(
+            105deg,
+            transparent 0%,
+            transparent 42%,
+            rgba(255, 255, 255, 0.07) 50%,
+            transparent 58%,
+            transparent 100%
+          );
+          background-size: 220% 100%;
+          animation: govai_preview_sheen 7s ease-in-out infinite;
+          pointer-events: none;
         }
 
-        .govai_btn:hover {
-          transform: translateY(-1px);
+        .govai_hero_cap {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(128px, 36%);
+          align-items: stretch;
+        }
+        .govai_hero_cap__left {
+          padding: 18px 18px 20px 16px;
+          border-right: 1px solid var(--govai-border-faint);
+        }
+        .govai_hero_cap__right {
+          padding: 12px;
+          background: var(--govai-bg-panel);
+          min-width: 0;
         }
 
-        .govai_btn:active {
-          transform: translateY(0px);
+        .govai_ledger_viewport {
+          position: relative;
+          height: 124px;
+          border-radius: 8px;
+          border: 1px solid var(--govai-border-faint);
+          background: var(--govai-bg-elevated);
+          box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+          overflow: hidden;
+        }
+        .govai_ledger_track {
+          height: 100%;
+          overflow: hidden;
+        }
+        .govai_ledger_track_inner {
+          will-change: transform;
+          animation: govai_ledger_drift 20s linear infinite;
+        }
+        .govai_ledger_row {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 5px 8px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: 10px;
+          color: var(--govai-text-secondary);
+        }
+        .govai_ledger_pipe {
+          width: 12px;
+          text-align: center;
+          color: var(--govai-text-muted);
+          opacity: 0.85;
+          flex-shrink: 0;
+        }
+        .govai_ledger_hash {
+          flex: 1;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .govai_ledger_tag {
+          font-size: 9px;
+          opacity: 0.45;
+          flex-shrink: 0;
+        }
+        .govai_ledger_scan {
+          position: absolute;
+          top: 14%;
+          left: 10%;
+          right: 10%;
+          height: 1px;
+          z-index: 1;
+          pointer-events: none;
+          background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+          animation: govai_ledger_scan 5s ease-in-out infinite;
+        }
+        .govai_ledger_verify {
+          position: absolute;
+          z-index: 2;
+          bottom: 7px;
+          left: 9px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 9px;
+          letter-spacing: 0.02em;
+          color: var(--govai-text-tertiary);
+        }
+        .govai_ledger_verify_dot {
+          width: 5px;
+          height: 5px;
+          border-radius: 50%;
+          background: var(--govai-accent-muted);
+          opacity: 0.75;
+          animation: govai_verify_pulse 3s ease-in-out infinite;
+        }
+
+        .govai_secondary_pair {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+          align-items: stretch;
+        }
+
+        .govai_policy_gate {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          font-size: 10px;
+          color: var(--govai-text-tertiary);
+        }
+        .govai_policy_tx {
+          opacity: 0.65;
+        }
+        .govai_policy_arrow {
+          opacity: 0.45;
+          font-size: 9px;
+        }
+        .govai_policy_gate_box {
+          padding: 3px 8px;
+          border-radius: 5px;
+          border: 1px solid color-mix(in srgb, var(--govai-accent) 32%, transparent);
+          color: var(--govai-text-secondary);
+          font-weight: 600;
+          letter-spacing: 0.04em;
+        }
+        .govai_policy_out {
+          opacity: 0.75;
+          font-size: 9px;
+        }
+
+        .govai_bundle_line {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          align-items: flex-start;
+        }
+        .govai_bundle_label {
+          font-size: 9px;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          color: var(--govai-text-label);
+        }
+        .govai_bundle_hash {
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: 10px;
+          color: var(--govai-text-secondary);
+          animation: govai_bundle_soft 8s ease-in-out infinite;
+        }
+
+        .govai_proof_light {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: center;
+          gap: 22px 36px;
+          padding: 16px 18px 14px;
+          border-radius: 10px;
+          border: 1px solid var(--govai-border-faint);
+          background: var(--govai-bg-panel);
+          box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+        }
+        .govai_proof_light__item {
+          min-width: 140px;
+          max-width: 220px;
+          text-align: center;
+        }
+        .govai_proof_light__label {
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: 0.07em;
+          text-transform: uppercase;
+          color: var(--govai-text-label);
+          margin-bottom: 6px;
+        }
+        .govai_proof_light__detail {
+          font-size: 12px;
+          line-height: 1.45;
+          color: var(--govai-text);
+          opacity: 0.78;
+        }
+
+        @keyframes govai_preview_sheen {
+          0%, 100% { background-position: 100% 0; opacity: 0.5; }
+          50% { background-position: 0% 0; opacity: 1; }
+        }
+        @keyframes govai_ledger_drift {
+          0% { transform: translateY(0); }
+          100% { transform: translateY(-50%); }
+        }
+        @keyframes govai_ledger_scan {
+          0%, 100% { top: 14%; opacity: 0; }
+          12% { opacity: 1; }
+          50% { top: 72%; }
+          88% { opacity: 1; }
+        }
+        @keyframes govai_verify_pulse {
+          0%, 100% { opacity: 0.45; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.08); }
+        }
+        @keyframes govai_bundle_soft {
+          0%, 100% { opacity: 0.65; }
+          50% { opacity: 1; }
+        }
+
+        @media (max-width: 640px) {
+          .govai_hero_cap {
+            grid-template-columns: 1fr;
+          }
+          .govai_hero_cap__left {
+            border-right: none;
+            border-bottom: 1px solid var(--govai-border-faint);
+            padding-bottom: 18px;
+          }
+          .govai_hero_cap__right {
+            padding: 12px 12px 14px;
+          }
+        }
+        @media (max-width: 560px) {
+          .govai_secondary_pair {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .govai_walkthrough_shell::after,
+          .govai_ledger_track_inner,
+          .govai_ledger_scan,
+          .govai_ledger_verify_dot,
+          .govai_policy_gate_box,
+          .govai_bundle_hash {
+            animation: none !important;
+          }
+          .govai_walkthrough_shell::after {
+            opacity: 0;
+          }
         }
       `}</style>
     </InfraShell>

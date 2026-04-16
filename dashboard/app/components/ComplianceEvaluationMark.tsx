@@ -15,15 +15,7 @@ export function ComplianceEvaluationMark({ active }: { active: boolean }) {
       title="Evaluation in progress"
       aria-label="Evaluation in progress"
     >
-      <AigovMark
-        isRunning
-        animationMode="assemble"
-        size={36}
-        glow
-        neon
-        neonStrength="soft"
-        tone="blue"
-      />
+      <AigovMark isRunning animationMode="assemble" size={36} glow={false} neon={false} tone="steel" />
     </span>
   );
 }

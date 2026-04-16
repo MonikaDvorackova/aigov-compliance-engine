@@ -1,14 +1,416 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0a0a0a;
-  --foreground: #ededed;
+  /* Dark ink-navy atmosphere — control plane (not flat black) */
+  --govai-bg-base: #0b1220;
+  --govai-bg-sidebar: #0e1625;
+  --govai-bg-elevated: #131d30;
+  --govai-bg-card: #111a2b;
+  --govai-bg-card2: #0f1726;
+  --govai-bg-inner: #131d30;
+
+  --govai-text-primary: #f3f2ee;
+  --govai-text-secondary: #b6bdc7;
+  --govai-text-muted: #7e8794;
+
+  /* Primary UI steel — muted, no chromatic loud accents */
+  --govai-accent: #5f6b7a;
+  --govai-accent-hover: #8c95a1;
+  --govai-accent-muted: #4a525d;
+  --govai-accent-underline: rgba(95, 107, 122, 0.35);
+
+  /* Links: neutral text; underline only (no hue) */
+  --govai-link: var(--govai-text-secondary);
+  --govai-link-hover: var(--govai-text-primary);
+  --govai-link-decoration: rgba(255, 255, 255, 0.14);
+
+  --govai-state-success: #5e7a67;
+  --govai-state-warning: #8a6a43;
+  --govai-state-danger: #8a5a5a;
+
+  /* Blue-ink borders — structure without saturation */
+  --govai-border-ink: rgba(120, 144, 180, 0.16);
+  --govai-border-ink-faint: rgba(120, 144, 180, 0.1);
+  --govai-border-ink-strong: rgba(120, 144, 180, 0.24);
+  --govai-border-subtle: var(--govai-border-ink-faint);
+  --govai-border-strong: var(--govai-border-ink);
+  --govai-border-focus: rgba(160, 184, 214, 0.35);
+
+  /* Legacy aliases */
+  --background: var(--govai-bg-base);
+  --foreground: var(--govai-text-primary);
+  --govai-bg-app: var(--govai-bg-base);
+  --govai-bg-panel: var(--govai-bg-sidebar);
+  --govai-bg-table-head: rgba(120, 144, 180, 0.04);
+
+  --govai-border: var(--govai-border-strong);
+  --govai-border-faint: var(--govai-border-ink-faint);
+  --govai-divider: rgba(120, 144, 180, 0.12);
+
+  --govai-text: var(--govai-text-primary);
+  --govai-text-tertiary: var(--govai-text-muted);
+  --govai-text-label: var(--govai-text-muted);
+
+  --govai-row-attention: rgba(120, 144, 180, 0.09);
+
+  --govai-badge-neutral-bg: rgba(120, 144, 180, 0.06);
+  --govai-badge-neutral-border: var(--govai-border-ink-faint);
+  --govai-badge-ok-bg: rgba(94, 122, 103, 0.09);
+  --govai-badge-ok-border: rgba(94, 122, 103, 0.22);
+  --govai-badge-issue-bg: rgba(138, 106, 67, 0.08);
+  --govai-badge-issue-border: rgba(138, 106, 67, 0.2);
+  --govai-badge-error-bg: rgba(138, 90, 90, 0.08);
+  --govai-badge-error-border: rgba(138, 90, 90, 0.2);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--govai-bg-base);
+  color: var(--govai-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+}
+
+/* Console shell — sidebar */
+.govai-app-sidebar {
+  flex-shrink: 0;
+  width: min(256px, 100%);
+  min-width: min(220px, 100%);
+  max-width: 280px;
+  border-right: 1px solid var(--govai-border-ink-faint);
+  background: var(--govai-bg-sidebar);
+  display: flex;
+  flex-direction: column;
+  padding: 12px 12px 14px;
+}
+
+.govai-nav-link {
+  color: var(--govai-text-secondary);
+  background: transparent;
+}
+
+.govai-nav-link:hover {
+  background: rgba(120, 144, 180, 0.06);
+  color: var(--govai-text-primary);
+}
+
+.govai-nav-link--active {
+  color: var(--govai-text-primary);
+  font-weight: 500;
+  background: rgba(120, 144, 180, 0.08);
+  box-shadow: inset 2px 0 0 rgba(140, 168, 204, 0.45);
+}
+
+.govai-nav-link--active svg {
+  color: var(--govai-text-primary);
+  opacity: 0.85;
+  stroke-width: 2.25;
+}
+
+/* Primary control — graphite surface, not marketing CTA */
+.govai-btn--primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.375rem;
+  padding: 0.625rem 1.2rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  color: var(--govai-text-primary) !important;
+  background: var(--govai-bg-card2);
+  border: 1px solid var(--govai-border-strong);
+  box-shadow: none;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.govai-btn--primary:hover {
+  background: #182238;
+  border-color: var(--govai-border-ink-strong);
+}
+
+.govai-btn--primary:active {
+  opacity: 0.97;
+}
+
+.govai-btn--primary:focus-visible {
+  outline: 1px solid var(--govai-border-focus);
+  outline-offset: 2px;
+}
+
+.govai-btn--secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.375rem;
+  padding: 0.625rem 1.1rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.2;
+  text-decoration: none;
+  color: var(--govai-text-secondary) !important;
+  background: transparent;
+  border: 1px solid var(--govai-border-subtle);
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.govai-btn--secondary:hover {
+  background: rgba(120, 144, 180, 0.06);
+  border-color: var(--govai-border-ink);
+  color: var(--govai-text-primary) !important;
+}
+
+.govai-btn--secondary:focus-visible {
+  outline: 1px solid var(--govai-border-focus);
+  outline-offset: 2px;
+}
+
+.govai-link {
+  font-weight: 500;
+  color: var(--govai-link);
+  text-decoration: underline;
+  text-decoration-color: var(--govai-link-decoration);
+  text-underline-offset: 3px;
+  transition: color 0.12s ease, text-decoration-color 0.12s ease;
+}
+
+.govai-link:hover {
+  color: var(--govai-link-hover);
+  text-decoration-color: rgba(255, 255, 255, 0.28);
+}
+
+.govai-section-card {
+  border-radius: 0.5rem;
+  border: 1px solid var(--govai-border-ink);
+  background: var(--govai-bg-card);
+  padding: 1.5rem;
+}
+
+@media (min-width: 768px) {
+  .govai-section-card {
+    padding: 1.75rem 2rem;
+  }
+}
+
+.govai-insight-panel {
+  border-radius: 0.5rem;
+  border: 1px solid var(--govai-border-ink-faint);
+  background: var(--govai-bg-inner);
+  padding: 1.35rem 1.5rem 1.5rem;
+}
+
+/* Nested inside `.govai-console-module` — avoid double frame */
+.govai-insight-panel--embedded {
+  border: none;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+/* Console — modular panels (Runs, shared IA) */
+.govai-console-module {
+  border: 1px solid var(--govai-border-ink);
+  border-radius: 10px;
+  background: var(--govai-bg-card);
+}
+
+.govai-console-module--secondary {
+  background: var(--govai-bg-card2);
+}
+
+.govai-console-module--inner {
+  background: var(--govai-bg-inner);
+  border-color: var(--govai-border-ink-faint);
+}
+
+.govai-console-module--emphasis {
+  box-shadow: inset 0 2px 0 0 rgba(130, 158, 196, 0.35);
+}
+
+.govai-console-module__list {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--govai-text-secondary);
+}
+
+.govai-console-module__list li {
+  margin: 0.25rem 0;
+}
+
+.govai-console-kv {
+  display: grid;
+  gap: 0.35rem 1rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.govai-console-kv__row {
+  display: grid;
+  grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+  align-items: baseline;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--govai-divider);
+}
+
+.govai-console-kv__row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.govai-console-kv dt {
+  margin: 0;
+  color: var(--govai-text-label);
+  font-weight: 500;
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.govai-console-kv dd {
+  margin: 0;
+  color: var(--govai-text-primary);
+  font-weight: 500;
+}
+
+.govai-console-status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  margin-right: 0.35rem;
+  vertical-align: 0.05em;
+  background: rgba(120, 144, 180, 0.45);
+}
+
+.govai-console-status-dot--ok {
+  background: var(--govai-state-success);
+  opacity: 0.85;
+}
+
+.govai-console-status-dot--warn {
+  background: var(--govai-state-warning);
+  opacity: 0.85;
+}
+
+.govai-console-status-dot--err {
+  background: var(--govai-state-danger);
+  opacity: 0.85;
+}
+
+.govai-stat-value--neutral {
+  color: var(--govai-text-primary);
+}
+
+/* Semantic numerals — soft signal only; most metrics stay neutral via parent */
+.govai-stat-value--success {
+  color: var(--govai-state-success);
+  opacity: 0.78;
+}
+
+.govai-stat-value--warning {
+  color: var(--govai-state-warning);
+  opacity: 0.78;
+}
+
+.govai-stat-value--danger {
+  color: var(--govai-state-danger);
+  opacity: 0.78;
+}
+
+/* System chips — dark surface, subtle border, muted text (reference pattern) */
+.govai-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  line-height: 1.35;
+  border: 1px solid var(--govai-border-subtle);
+  background: var(--govai-bg-card2);
+  color: var(--govai-text-muted);
+}
+
+.govai-chip--neutral {
+  border-color: var(--govai-border-subtle);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--govai-text-muted);
+}
+
+.govai-chip--ok {
+  border-color: var(--govai-badge-ok-border);
+  background: var(--govai-badge-ok-bg);
+  color: var(--govai-state-success);
+  opacity: 0.9;
+}
+
+.govai-chip--issue {
+  border-color: var(--govai-badge-issue-border);
+  background: var(--govai-badge-issue-bg);
+  color: var(--govai-state-warning);
+  opacity: 0.9;
+}
+
+.govai-chip--error {
+  border-color: var(--govai-badge-error-border);
+  background: var(--govai-badge-error-bg);
+  color: var(--govai-state-danger);
+  opacity: 0.9;
+}
+
+/* Posture — technical readout; matte steel / bronze / oxidized */
+.govai-posture-track {
+  height: 2px;
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.govai-posture-fill {
+  height: 100%;
+  border-radius: 0;
+  transition: width 0.2s ease;
+}
+
+.govai-posture-fill--bar-bundle {
+  background: var(--govai-accent-muted);
+  opacity: 0.7;
+}
+
+.govai-posture-fill--bar-warning {
+  background: var(--govai-state-warning);
+  opacity: 0.55;
+}
+
+.govai-posture-fill--bar-warning-artifact {
+  background: var(--govai-state-warning);
+  opacity: 0.45;
+}
+
+.govai-posture-fill--bar-success {
+  background: var(--govai-state-success);
+  opacity: 0.55;
+}
+
+.govai-posture-fill--bar-danger {
+  background: var(--govai-state-danger);
+  opacity: 0.52;
 }
 
 /* Optional wrapper for centered marks — no extra glow overlay (avoids fighting AigovMark filters). */
@@ -16,4 +418,515 @@ body {
   position: relative;
   display: inline-grid;
   place-items: center;
+}
+
+/* Runs ledger — full-row links, no horizontal scroll */
+.govai-run-row {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.govai-run-row:hover {
+  background: rgba(255, 255, 255, 0.035);
+  border-color: var(--govai-border-faint);
+}
+
+.govai-run-row:focus-visible {
+  outline: 1px solid var(--govai-border-focus);
+  outline-offset: 2px;
+}
+
+/* Run detail — decision hierarchy */
+.govai-run-hero {
+  margin-top: 1.1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--govai-border-faint);
+}
+
+.govai-run-hero__question {
+  margin: 0 0 0.35rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--govai-text-label);
+  max-width: 42rem;
+}
+
+.govai-run-hero__label {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.govai-run-hero--valid .govai-run-hero__label {
+  color: var(--govai-state-success);
+  opacity: 0.92;
+}
+
+.govai-run-hero--invalid .govai-run-hero__label {
+  color: var(--govai-state-danger);
+  opacity: 0.92;
+}
+
+.govai-run-hero--blocked .govai-run-hero__label {
+  color: rgba(161, 161, 170, 0.95);
+}
+
+.govai-run-hero__explain {
+  margin: 0.55rem 0 0;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--govai-text-secondary);
+  max-width: 42rem;
+}
+
+.govai-run-readiness__hint {
+  margin: 0 0 0.55rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--govai-text-tertiary);
+  max-width: 42rem;
+}
+
+/* Readiness follows decision zone — separator from parent */
+.govai-run-readiness-slot {
+  margin-top: 0;
+}
+
+.govai-run-detail__zone--readiness {
+  margin-top: 1.5rem;
+  padding-top: 1.35rem;
+  border-top: 1px solid var(--govai-divider);
+}
+
+.govai-run-detail__zone--technical {
+  margin-top: 1.5rem;
+  padding-top: 1.35rem;
+  border-top: 1px solid var(--govai-divider);
+}
+
+.govai-run-detail__zone--technical .govai-run-decision-grid {
+  margin-top: 0;
+}
+
+.govai-run-signals__metaSep {
+  margin: 0 0.4rem;
+  opacity: 0.45;
+}
+
+/* Compact status — under hero; subtle surface, no heavy card */
+.govai-run-compact-status {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  margin-top: 1rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--govai-border-faint);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.govai-run-compact-status--valid {
+  border-color: rgba(94, 122, 103, 0.28);
+}
+
+.govai-run-compact-status--invalid {
+  border-color: rgba(138, 90, 90, 0.28);
+}
+
+.govai-run-compact-status--blocked {
+  border-color: rgba(110, 124, 143, 0.22);
+}
+
+.govai-run-compact-status__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-top: 0.35rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: var(--govai-text-tertiary);
+}
+
+.govai-run-compact-status--valid .govai-run-compact-status__dot {
+  background: rgba(94, 122, 103, 0.65);
+}
+
+.govai-run-compact-status--invalid .govai-run-compact-status__dot {
+  background: rgba(138, 90, 90, 0.65);
+}
+
+.govai-run-compact-status--blocked .govai-run-compact-status__dot {
+  background: rgba(110, 124, 143, 0.55);
+}
+
+.govai-run-compact-status__state {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--govai-text-secondary);
+}
+
+.govai-run-compact-status__reason {
+  margin-top: 0.2rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--govai-text);
+  line-height: 1.35;
+}
+
+.govai-run-compact-status__interpret {
+  margin: 0.35rem 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--govai-text-secondary);
+}
+
+/* Next action — decision CTA */
+.govai-run-next-action {
+  margin-top: 1.15rem;
+  padding: 0.65rem 0;
+}
+
+.govai-run-next-action--prominent {
+  margin-top: 1.25rem;
+  padding: 1rem 1.1rem 1.1rem;
+  border-radius: 10px;
+  border: 1px solid var(--govai-border-faint);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.govai-run-next-action__title {
+  margin: 0;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--govai-text-label);
+}
+
+.govai-run-next-action__why {
+  margin: 0.55rem 0 0;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--govai-text);
+  max-width: 40rem;
+}
+
+.govai-run-next-action__step {
+  margin: 0.45rem 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--govai-text-secondary);
+  max-width: 40rem;
+}
+
+.govai-run-next-action__ctas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+  align-items: center;
+  margin-top: 0.85rem;
+}
+
+.govai-run-next-action__primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1.1rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  border-radius: 0.375rem;
+  text-decoration: none;
+  color: var(--govai-text-primary) !important;
+  background: var(--govai-bg-card2);
+  border: 1px solid var(--govai-border-strong);
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.govai-run-next-action__primary:hover {
+  background: #182238;
+  border-color: var(--govai-border-ink-strong);
+}
+
+.govai-run-next-action__primary:active {
+  opacity: 0.97;
+}
+
+.govai-run-next-action__primary:focus-visible {
+  outline: 1px solid var(--govai-border-focus);
+  outline-offset: 2px;
+}
+
+.govai-run-next-action__secondary {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--govai-link);
+  text-decoration: none;
+  border-bottom: 1px solid var(--govai-link-decoration);
+  padding-bottom: 0.1rem;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.govai-run-next-action__secondary:hover {
+  color: var(--govai-link-hover);
+  border-bottom-color: rgba(255, 255, 255, 0.22);
+}
+
+/* Two-column decision layout: primary column first in DOM (mobile), artifacts left on wide screens */
+.govai-run-decision-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  margin-top: 1.75rem;
+}
+
+@media (min-width: 920px) {
+  .govai-run-decision-grid {
+    display: grid;
+    grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+    gap: 2rem 2.5rem;
+    align-items: start;
+  }
+
+  .govai-run-decision-grid__primary {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .govai-run-decision-grid__secondary {
+    grid-column: 1;
+    grid-row: 1;
+  }
+}
+
+.govai-run-grouped-status {
+  margin: 0;
+  padding: 0;
+}
+
+.govai-run-grouped-status__row {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.govai-run-grouped-status__row:last-of-type {
+  border-bottom: none;
+}
+
+.govai-run-grouped-status__row dt {
+  margin: 0;
+  color: var(--govai-text-label);
+  font-weight: 500;
+}
+
+.govai-run-grouped-status__row dd {
+  margin: 0;
+  color: var(--govai-text);
+  font-weight: 500;
+}
+
+.govai-run-status-summary__explain {
+  margin: 0.75rem 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--govai-text-secondary);
+  max-width: 40rem;
+}
+
+.govai-run-status-summary__conflict {
+  margin: 0.55rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border-radius: 4px;
+  border-left: 2px solid rgba(95, 107, 122, 0.35);
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--govai-text-secondary);
+  max-width: 40rem;
+}
+
+.govai-run-status-summary__meta {
+  margin-top: 0.65rem;
+  font-size: 0.6875rem;
+  color: var(--govai-text-tertiary);
+  line-height: 1.45;
+}
+
+.govai-run-checklist {
+  margin: 0.35rem 0 0;
+  padding-left: 1.15rem;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--govai-text-secondary);
+}
+
+.govai-run-checklist li {
+  margin: 0.25rem 0;
+}
+
+.govai-run-decision-grid__secondary .govai-run-details {
+  margin-top: 1rem;
+}
+
+.govai-run-decision-grid__primary > .govai-run-section:first-child,
+.govai-run-decision-grid__secondary > .govai-run-section:first-child {
+  margin-top: 0;
+}
+
+.govai-run-section {
+  margin-top: 1.25rem;
+}
+
+.govai-run-section__title {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--govai-text-label);
+  margin-bottom: 0.5rem;
+}
+
+.govai-compliance-summary--error {
+  padding: 0.15rem 0;
+}
+
+.govai-run-artifacts__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  align-items: center;
+}
+
+.govai-run-artifact-link {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--govai-link);
+  text-decoration: none;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--govai-link-decoration);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.govai-run-artifact-link:hover {
+  color: var(--govai-link-hover);
+  border-bottom-color: rgba(255, 255, 255, 0.22);
+}
+
+.govai-run-artifacts__note {
+  margin: 0.5rem 0 0;
+  font-size: 0.6875rem;
+  color: var(--govai-text-tertiary);
+  line-height: 1.4;
+}
+
+.govai-run-details {
+  margin-top: 1.35rem;
+  border-top: 1px solid var(--govai-border-faint);
+  padding-top: 0.35rem;
+}
+
+.govai-run-details__summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--govai-text-label);
+  padding: 0.5rem 0;
+  user-select: none;
+}
+
+.govai-run-details__summary::-webkit-details-marker {
+  display: none;
+}
+
+.govai-run-details__summary::before {
+  content: "▸ ";
+  opacity: 0.55;
+  font-size: 0.65rem;
+}
+
+.govai-run-details[open] .govai-run-details__summary::before {
+  content: "▾ ";
+}
+
+.govai-run-details__body {
+  padding: 0.25rem 0 0.5rem;
+}
+
+.govai-run-tech-heading {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--govai-text-label);
+  margin: 0.75rem 0 0.35rem;
+}
+
+.govai-run-tech-pre {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.65rem;
+  line-height: 1.45;
+  overflow: auto;
+  max-height: min(48vh, 420px);
+  border-radius: 6px;
+  border: 1px solid var(--govai-border-faint);
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--govai-text-secondary);
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+}
+
+.govai-run-tech-block .govai-run-tech-pre {
+  margin-top: 0.35rem;
+}
+
+/* Compliance summary — single scannable row */
+.govai-compliance-summary__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  row-gap: 0.45rem;
+}
+
+.govai-compliance-summary__row > span {
+  flex-shrink: 0;
+}
+
+.govai-compliance-summary__row > span.govai-compliance-summary__risk {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: min(100%, 22rem);
+}
+
+/* AI Discovery — printable report modal */
+@media print {
+  .ai-discovery-report-modal__backdrop {
+    position: static !important;
+    background: transparent !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  .ai-discovery-report-modal__panel {
+    box-shadow: none !important;
+    max-height: none !important;
+    border: none !important;
+  }
 }
