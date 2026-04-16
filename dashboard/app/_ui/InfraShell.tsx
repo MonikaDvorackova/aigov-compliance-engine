@@ -11,6 +11,26 @@ type Props = {
   background?: string;
 };
 
+type InfraPanelProps = {
+  children: ReactNode;
+  style?: CSSProperties;
+};
+
+export function InfraPanel({ children, style }: InfraPanelProps) {
+  const panelStyle: CSSProperties = {
+    borderRadius: 18,
+    border: "1px solid rgba(148,163,184,0.18)",
+    background: "rgba(15,23,42,0.72)",
+    boxShadow:
+      "0 10px 30px rgba(2,6,23,0.30), inset 0 1px 0 rgba(255,255,255,0.04)",
+    backdropFilter: "blur(10px)",
+    WebkitBackdropFilter: "blur(10px)",
+    ...style,
+  };
+
+  return <div style={panelStyle}>{children}</div>;
+}
+
 export function InfraShell({
   children,
   maxWidth = 1120,
