@@ -5,8 +5,7 @@ import React from "react";
 /** App Router serves `app/icon.svg` at this URL — single visual source of truth. */
 export const AIGOV_ICON_SRC = "/icon.svg";
 
-export type AigovIconTone = "blue" | "teal";
-
+export type AigovIconTone = "blue" | "steel" | "teal";
 export type AigovIconNeonStrength = "off" | "soft" | "strong";
 
 export type AigovIconProps = Omit<
@@ -34,6 +33,7 @@ function dropShadowStack(
   tier: ShadowTier,
 ): string {
   const isTeal = tone === "teal";
+  const isSteel = tone === "steel";
 
   if (isTeal) {
     if (level === "strong") {
@@ -88,6 +88,62 @@ function dropShadowStack(
       "drop-shadow(0 0 6px rgba(153,246,228,0.68)) " +
       "drop-shadow(0 0 14px rgba(45,212,191,0.42)) " +
       "drop-shadow(0 0 28px rgba(20,184,166,0.26))"
+    );
+  }
+
+  if (isSteel) {
+    if (level === "strong") {
+      if (tier === "hero") {
+        return (
+          "drop-shadow(0 0 6px rgba(226,232,240,0.88)) " +
+          "drop-shadow(0 0 16px rgba(148,163,184,0.72)) " +
+          "drop-shadow(0 0 34px rgba(100,116,139,0.46)) " +
+          "drop-shadow(0 0 58px rgba(71,85,105,0.30))"
+        );
+      }
+      if (tier === "standard") {
+        return (
+          "drop-shadow(0 0 4px rgba(226,232,240,0.78)) " +
+          "drop-shadow(0 0 12px rgba(148,163,184,0.50)) " +
+          "drop-shadow(0 0 22px rgba(100,116,139,0.30))"
+        );
+      }
+      return (
+        "drop-shadow(0 0 3px rgba(226,232,240,0.70)) " +
+        "drop-shadow(0 0 9px rgba(148,163,184,0.38)) " +
+        "drop-shadow(0 0 16px rgba(100,116,139,0.20))"
+      );
+    }
+    if (level === "soft") {
+      if (tier === "hero") {
+        return (
+          "drop-shadow(0 0 8px rgba(226,232,240,0.80)) " +
+          "drop-shadow(0 0 18px rgba(148,163,184,0.56)) " +
+          "drop-shadow(0 0 36px rgba(100,116,139,0.34))"
+        );
+      }
+      if (tier === "standard") {
+        return (
+          "drop-shadow(0 0 5px rgba(226,232,240,0.66)) " +
+          "drop-shadow(0 0 14px rgba(148,163,184,0.42)) " +
+          "drop-shadow(0 0 26px rgba(100,116,139,0.24))"
+        );
+      }
+      return (
+        "drop-shadow(0 0 4px rgba(226,232,240,0.56)) " +
+        "drop-shadow(0 0 10px rgba(148,163,184,0.30))"
+      );
+    }
+    if (tier === "compact") {
+      return (
+        "drop-shadow(0 0 4px rgba(226,232,240,0.52)) " +
+        "drop-shadow(0 0 10px rgba(148,163,184,0.26))"
+      );
+    }
+    return (
+      "drop-shadow(0 0 5px rgba(226,232,240,0.60)) " +
+      "drop-shadow(0 0 14px rgba(148,163,184,0.36)) " +
+      "drop-shadow(0 0 24px rgba(100,116,139,0.22))"
     );
   }
 
@@ -175,6 +231,9 @@ function iconFilter(
 function toneFilter(tone: AigovIconTone): string | undefined {
   if (tone === "teal") {
     return "hue-rotate(-20deg) saturate(1.08)";
+  }
+  if (tone === "steel") {
+    return "grayscale(0.18) saturate(0.88) brightness(1.02)";
   }
   return undefined;
 }
