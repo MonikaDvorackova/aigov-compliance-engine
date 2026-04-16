@@ -1,17 +1,17 @@
 @import "tailwindcss";
 
 :root {
-  /* Page: subtle blue ink — cards/panels: neutral charcoal (layered contrast) */
+  /* Dark ink-navy atmosphere — control plane (not flat black) */
   --govai-bg-base: #0b1220;
-  --govai-bg-sidebar: #101318;
-  --govai-bg-elevated: #1e2229;
-  --govai-bg-card: #1a1d24;
-  --govai-bg-card2: #14161d;
-  --govai-bg-inner: #242930;
+  --govai-bg-sidebar: #0e1625;
+  --govai-bg-elevated: #131d30;
+  --govai-bg-card: #111a2b;
+  --govai-bg-card2: #0f1726;
+  --govai-bg-inner: #131d30;
 
-  --govai-text-primary: #f6f5f2;
-  --govai-text-secondary: #b9c2cc;
-  --govai-text-muted: #8b95a3;
+  --govai-text-primary: #f3f2ee;
+  --govai-text-secondary: #b6bdc7;
+  --govai-text-muted: #7e8794;
 
   /* Primary UI steel — muted, no chromatic loud accents */
   --govai-accent: #5f6b7a;
@@ -22,52 +22,45 @@
   /* Links: neutral text; underline only (no hue) */
   --govai-link: var(--govai-text-secondary);
   --govai-link-hover: var(--govai-text-primary);
-  --govai-link-decoration: rgba(255, 255, 255, 0.16);
+  --govai-link-decoration: rgba(255, 255, 255, 0.14);
 
-  /* Semantic — brighter for glance readability; saturation stays low */
-  --govai-state-success: #86b092;
-  --govai-state-warning: #c49a62;
-  --govai-state-danger: #c09090;
+  --govai-state-success: #5e7a67;
+  --govai-state-warning: #8a6a43;
+  --govai-state-danger: #8a5a5a;
 
-  /* Shell / atmosphere — blue-gray (page & sidebar edge only) */
-  --govai-border-ink: rgba(120, 144, 180, 0.2);
-  --govai-border-ink-faint: rgba(120, 144, 180, 0.12);
-  --govai-border-ink-strong: rgba(120, 144, 180, 0.28);
-
-  /* Surfaces — neutral (cards, modules, rows) */
-  --govai-border-surface: rgba(255, 255, 255, 0.09);
-  --govai-border-surface-strong: rgba(255, 255, 255, 0.14);
-
-  --govai-border-subtle: var(--govai-border-surface);
-  --govai-border-strong: var(--govai-border-surface-strong);
-  --govai-border-focus: rgba(200, 210, 225, 0.45);
+  /* Blue-ink borders — structure without saturation */
+  --govai-border-ink: rgba(120, 144, 180, 0.16);
+  --govai-border-ink-faint: rgba(120, 144, 180, 0.1);
+  --govai-border-ink-strong: rgba(120, 144, 180, 0.24);
+  --govai-border-subtle: var(--govai-border-ink-faint);
+  --govai-border-strong: var(--govai-border-ink);
+  --govai-border-focus: rgba(160, 184, 214, 0.35);
 
   /* Legacy aliases */
   --background: var(--govai-bg-base);
   --foreground: var(--govai-text-primary);
   --govai-bg-app: var(--govai-bg-base);
   --govai-bg-panel: var(--govai-bg-sidebar);
-  --govai-bg-table-head: rgba(255, 255, 255, 0.045);
+  --govai-bg-table-head: rgba(120, 144, 180, 0.04);
 
   --govai-border: var(--govai-border-strong);
-  --govai-border-faint: rgba(255, 255, 255, 0.065);
-  --govai-divider: rgba(255, 255, 255, 0.09);
+  --govai-border-faint: var(--govai-border-ink-faint);
+  --govai-divider: rgba(120, 144, 180, 0.12);
 
   --govai-text: var(--govai-text-primary);
   --govai-text-tertiary: var(--govai-text-muted);
-  --govai-text-label: #9aa3b0;
+  --govai-text-label: var(--govai-text-muted);
 
-  /* Prod row attention — muted green wash (not blue) */
-  --govai-row-attention: rgba(134, 176, 146, 0.1);
+  --govai-row-attention: rgba(120, 144, 180, 0.09);
 
-  --govai-badge-neutral-bg: rgba(255, 255, 255, 0.06);
-  --govai-badge-neutral-border: var(--govai-border-surface-strong);
-  --govai-badge-ok-bg: rgba(134, 176, 146, 0.16);
-  --govai-badge-ok-border: rgba(134, 176, 146, 0.38);
-  --govai-badge-issue-bg: rgba(196, 154, 98, 0.14);
-  --govai-badge-issue-border: rgba(196, 154, 98, 0.36);
-  --govai-badge-error-bg: rgba(192, 144, 144, 0.14);
-  --govai-badge-error-border: rgba(192, 144, 144, 0.36);
+  --govai-badge-neutral-bg: rgba(120, 144, 180, 0.06);
+  --govai-badge-neutral-border: var(--govai-border-ink-faint);
+  --govai-badge-ok-bg: rgba(94, 122, 103, 0.09);
+  --govai-badge-ok-border: rgba(94, 122, 103, 0.22);
+  --govai-badge-issue-bg: rgba(138, 106, 67, 0.08);
+  --govai-badge-issue-border: rgba(138, 106, 67, 0.2);
+  --govai-badge-error-bg: rgba(138, 90, 90, 0.08);
+  --govai-badge-error-border: rgba(138, 90, 90, 0.2);
 }
 
 body {
@@ -105,15 +98,15 @@ body {
 }
 
 .govai-nav-link:hover {
-  background: rgba(255, 255, 255, 0.055);
+  background: rgba(120, 144, 180, 0.06);
   color: var(--govai-text-primary);
 }
 
 .govai-nav-link--active {
   color: var(--govai-text-primary);
-  font-weight: 600;
-  background: rgba(255, 255, 255, 0.06);
-  box-shadow: inset 2px 0 0 rgba(255, 255, 255, 0.28);
+  font-weight: 500;
+  background: rgba(120, 144, 180, 0.08);
+  box-shadow: inset 2px 0 0 rgba(140, 168, 204, 0.45);
 }
 
 .govai-nav-link--active svg {
@@ -135,15 +128,15 @@ body {
   letter-spacing: 0.01em;
   text-decoration: none;
   color: var(--govai-text-primary) !important;
-  background: var(--govai-bg-card);
-  border: 1px solid var(--govai-border-surface-strong);
+  background: var(--govai-bg-card2);
+  border: 1px solid var(--govai-border-strong);
   box-shadow: none;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
 
 .govai-btn--primary:hover {
-  background: #2a303a;
-  border-color: rgba(255, 255, 255, 0.2);
+  background: #182238;
+  border-color: var(--govai-border-ink-strong);
 }
 
 .govai-btn--primary:active {
@@ -172,8 +165,8 @@ body {
 }
 
 .govai-btn--secondary:hover {
-  background: rgba(255, 255, 255, 0.055);
-  border-color: var(--govai-border-surface-strong);
+  background: rgba(120, 144, 180, 0.06);
+  border-color: var(--govai-border-ink);
   color: var(--govai-text-primary) !important;
 }
 
@@ -198,7 +191,7 @@ body {
 
 .govai-section-card {
   border-radius: 0.5rem;
-  border: 1px solid var(--govai-border-surface-strong);
+  border: 1px solid var(--govai-border-ink);
   background: var(--govai-bg-card);
   padding: 1.5rem;
 }
@@ -211,7 +204,7 @@ body {
 
 .govai-insight-panel {
   border-radius: 0.5rem;
-  border: 1px solid var(--govai-border-surface);
+  border: 1px solid var(--govai-border-ink-faint);
   background: var(--govai-bg-inner);
   padding: 1.35rem 1.5rem 1.5rem;
 }
@@ -226,7 +219,7 @@ body {
 
 /* Console — modular panels (Runs, shared IA) */
 .govai-console-module {
-  border: 1px solid var(--govai-border-surface-strong);
+  border: 1px solid var(--govai-border-ink);
   border-radius: 10px;
   background: var(--govai-bg-card);
 }
@@ -237,11 +230,11 @@ body {
 
 .govai-console-module--inner {
   background: var(--govai-bg-inner);
-  border-color: var(--govai-border-surface);
+  border-color: var(--govai-border-ink-faint);
 }
 
 .govai-console-module--emphasis {
-  box-shadow: inset 0 2px 0 0 rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 2px 0 0 rgba(130, 158, 196, 0.35);
 }
 
 .govai-console-module__list {
@@ -294,45 +287,47 @@ body {
 
 .govai-console-status-dot {
   display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
-  margin-right: 0.4rem;
+  margin-right: 0.35rem;
   vertical-align: 0.05em;
-  background: rgba(255, 255, 255, 0.35);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  background: rgba(120, 144, 180, 0.45);
 }
 
 .govai-console-status-dot--ok {
   background: var(--govai-state-success);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+  opacity: 0.85;
 }
 
 .govai-console-status-dot--warn {
   background: var(--govai-state-warning);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+  opacity: 0.85;
 }
 
 .govai-console-status-dot--err {
   background: var(--govai-state-danger);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+  opacity: 0.85;
 }
 
 .govai-stat-value--neutral {
   color: var(--govai-text-primary);
 }
 
-/* Semantic numerals — readable at a glance; still muted hues */
+/* Semantic numerals — soft signal only; most metrics stay neutral via parent */
 .govai-stat-value--success {
   color: var(--govai-state-success);
+  opacity: 0.78;
 }
 
 .govai-stat-value--warning {
   color: var(--govai-state-warning);
+  opacity: 0.78;
 }
 
 .govai-stat-value--danger {
   color: var(--govai-state-danger);
+  opacity: 0.78;
 }
 
 /* System chips — dark surface, subtle border, muted text (reference pattern) */
@@ -347,33 +342,36 @@ body {
   font-weight: 500;
   letter-spacing: 0.04em;
   line-height: 1.35;
-  border: 1px solid var(--govai-border-surface);
+  border: 1px solid var(--govai-border-subtle);
   background: var(--govai-bg-card2);
   color: var(--govai-text-muted);
 }
 
 .govai-chip--neutral {
-  border-color: var(--govai-border-surface-strong);
-  background: rgba(255, 255, 255, 0.045);
-  color: var(--govai-text-secondary);
+  border-color: var(--govai-border-subtle);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--govai-text-muted);
 }
 
 .govai-chip--ok {
   border-color: var(--govai-badge-ok-border);
   background: var(--govai-badge-ok-bg);
   color: var(--govai-state-success);
+  opacity: 0.9;
 }
 
 .govai-chip--issue {
   border-color: var(--govai-badge-issue-border);
   background: var(--govai-badge-issue-bg);
   color: var(--govai-state-warning);
+  opacity: 0.9;
 }
 
 .govai-chip--error {
   border-color: var(--govai-badge-error-border);
   background: var(--govai-badge-error-bg);
   color: var(--govai-state-danger);
+  opacity: 0.9;
 }
 
 /* Posture — technical readout; matte steel / bronze / oxidized */
@@ -392,27 +390,27 @@ body {
 
 .govai-posture-fill--bar-bundle {
   background: var(--govai-accent-muted);
-  opacity: 0.78;
+  opacity: 0.7;
 }
 
 .govai-posture-fill--bar-warning {
   background: var(--govai-state-warning);
-  opacity: 0.68;
+  opacity: 0.55;
 }
 
 .govai-posture-fill--bar-warning-artifact {
   background: var(--govai-state-warning);
-  opacity: 0.58;
+  opacity: 0.45;
 }
 
 .govai-posture-fill--bar-success {
   background: var(--govai-state-success);
-  opacity: 0.68;
+  opacity: 0.55;
 }
 
 .govai-posture-fill--bar-danger {
   background: var(--govai-state-danger);
-  opacity: 0.65;
+  opacity: 0.52;
 }
 
 /* Optional wrapper for centered marks — no extra glow overlay (avoids fighting AigovMark filters). */
@@ -422,53 +420,26 @@ body {
   place-items: center;
 }
 
-/* Runs ledger — full-row links; left rail for scan + hover / focus */
+/* Runs ledger — full-row links, no horizontal scroll */
 .govai-run-row {
-  position: relative;
   display: block;
   text-decoration: none;
   color: inherit;
   border-radius: 10px;
   border: 1px solid transparent;
-  padding-left: 12px;
   transition:
     background 0.15s ease,
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-.govai-run-row::before {
-  content: "";
-  position: absolute;
-  left: 4px;
-  top: 10px;
-  bottom: 10px;
-  width: 3px;
-  border-radius: 2px;
-  background: transparent;
-  transition: background 0.15s ease;
+    border-color 0.15s ease;
 }
 
 .govai-run-row:hover {
-  background: rgba(255, 255, 255, 0.045);
-  border-color: var(--govai-border-surface);
-}
-
-.govai-run-row:hover::before {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.035);
+  border-color: var(--govai-border-faint);
 }
 
 .govai-run-row:focus-visible {
   outline: 1px solid var(--govai-border-focus);
-  outline-offset: 1px;
-}
-
-.govai-run-row:focus-visible::before {
-  background: rgba(200, 210, 225, 0.55);
-}
-
-.govai-run-row:active {
-  background: rgba(255, 255, 255, 0.055);
+  outline-offset: 2px;
 }
 
 /* Run detail — decision hierarchy */
@@ -682,8 +653,8 @@ body {
 }
 
 .govai-run-next-action__primary:hover {
-  background: #2a303a;
-  border-color: rgba(255, 255, 255, 0.2);
+  background: #182238;
+  border-color: var(--govai-border-ink-strong);
 }
 
 .govai-run-next-action__primary:active {
