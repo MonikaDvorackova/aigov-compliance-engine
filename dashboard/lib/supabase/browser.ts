@@ -1,13 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
+import { getNextPublicSupabaseKey, getNextPublicSupabaseUrl } from "@/lib/supabase/publicEnv";
 
 export function createSupabaseBrowserClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url = getNextPublicSupabaseUrl();
+  const key = getNextPublicSupabaseKey();
 
-  if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
-  if (!anon) throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY");
-
-  return createClient(url, anon, {
+  return createClient(url, key, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
