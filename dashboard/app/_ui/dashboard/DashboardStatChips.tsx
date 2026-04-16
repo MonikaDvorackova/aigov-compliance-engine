@@ -20,7 +20,7 @@ function valueToneClass(tone: GovaiStatValueTone | undefined): string {
 export function DashboardStatChips({ stats, embedded = false }: { stats: readonly StatChip[]; embedded?: boolean }) {
   return (
     <div className={embedded ? "govai-insight-panel govai-insight-panel--embedded" : "govai-insight-panel"}>
-      <ul className="flex flex-col divide-y divide-[color:rgba(255,255,255,0.1)] px-0 py-0 sm:flex-row sm:flex-wrap sm:divide-y-0 sm:gap-x-10 sm:gap-y-5">
+      <ul className="flex flex-col divide-y divide-[color:rgba(120,144,180,0.12)] px-0 py-0 sm:flex-row sm:flex-wrap sm:divide-y-0 sm:gap-x-10 sm:gap-y-5">
         {stats.map((s) => (
           <li key={s.label} className="min-w-[6.5rem] flex-1 py-4 first:pt-0 last:pb-0 sm:py-1">
             <div className="text-[0.62rem] font-medium uppercase tracking-[0.18em] [color:var(--govai-text-muted)]">
