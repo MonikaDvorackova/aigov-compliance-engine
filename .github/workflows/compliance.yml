@@ -3,7 +3,10 @@ name: compliance
 
 on:
   pull_request:
+    branches: [main, staging]
     types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main, staging]
   workflow_dispatch:
 
 jobs:
@@ -19,6 +22,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Enforce PRs to main from staging only
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        env:
+          PR_HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          if [ "${PR_HEAD_REF}" != "staging" ]; then
+            echo "::error::Pull requests to 'main' must have head branch 'staging' (got '${PR_HEAD_REF}'). Merge work into 'staging' first, then open staging → main."
+            exit 1
+          fi
 
       - id: diff
         name: Compute change flags
