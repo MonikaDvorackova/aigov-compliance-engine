@@ -1,20 +1,9 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { fetchRunByIdFromGovai, isConsoleRunsReadEnabled } from "@/lib/console/govaiConsoleRunsRead";
+import type { RunRow } from "@/lib/console/runTypes";
 
 export const dynamic = "force-dynamic";
-
-type RunRow = {
-  id: string;
-  created_at: string;
-  mode: string | null;
-  status: string | null;
-  policy_version: string | null;
-  bundle_sha256: string | null;
-  evidence_sha256: string | null;
-  report_sha256: string | null;
-  evidence_source: string | null;
-  closed_at: string | null;
-};
 
 export async function GET(
   _request: Request,
@@ -41,6 +30,18 @@ export async function GET(
       { ok: false, error: "unauthorized", message: "Not signed in." },
       { status: 401 }
     );
+  }
+
+  if (isConsoleRunsReadEnabled()) {
+    const { run, error } = await fetchRunByIdFromGovai(id);
+    // Parity with Supabase branch below: `.single()` failures are collapsed to the same 404 body.
+    if (error || !run) {
+      return NextResponse.json(
+        { ok: false, error: "not_found", message: "Run not found." },
+        { status: 404 }
+      );
+    }
+    return NextResponse.json({ ok: true, run }, { status: 200 });
   }
 
   const { data, error } = await supabase
