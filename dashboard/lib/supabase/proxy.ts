@@ -1,20 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { getNextPublicSupabaseKey, getNextPublicSupabaseUrl } from "@/lib/supabase/publicEnv";
 
 function getSupabaseUrlAndKey(): { url: string; key: string } | null {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-  const key =
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url || !key) return null;
-  return { url, key };
+  try {
+    return { url: getNextPublicSupabaseUrl(), key: getNextPublicSupabaseKey() };
+  } catch {
+    return null;
+  }
 }
 
 export async function updateSession(request: NextRequest) {
-  console.log("[supabase/proxy] updateSession", request.nextUrl.pathname, { origin: request.nextUrl.origin });
-
   const response = NextResponse.next({
     request: {
       headers: request.headers,
@@ -27,19 +23,21 @@ export async function updateSession(request: NextRequest) {
   try {
     const supabase = createServerClient(cfg.url, cfg.key, {
       cookies: {
-        get(name: string) {
-          return request.cookies.get(name)?.value;
+        getAll() {
+          return request.cookies.getAll();
         },
-        set(name: string, value: string, options: any) {
-          response.cookies.set(name, value, options);
-        },
-        remove(name: string, options: any) {
-          response.cookies.set(name, "", { ...options, maxAge: 0 });
+        setAll(cookiesToSet) {
+          for (const { name, value, options } of cookiesToSet) {
+            response.cookies.set(name, value, options);
+          }
         },
       },
     });
 
-    await supabase.auth.getClaims();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    console.log("[supabase/proxy]", request.nextUrl.pathname, { hasUser: Boolean(user) });
     return response;
   } catch {
     return response;

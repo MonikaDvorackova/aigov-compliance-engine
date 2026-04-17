@@ -22,8 +22,8 @@ export default async function AiDiscoveryPage() {
     <DashboardPageShell>
       <DashboardHero
         kicker="GovAI"
-        title="AI Discovery"
-        description="Signal-based discovery for OpenAI usage, Transformers, and model-weight filenames—plus evidence history, review, and monitoring (scheduled runs and alerts)."
+        title="AI discovery"
+        description="Find OpenAI API usage, Transformers references, and experimental weight-like filenames (.pt, .pth, .safetensors, .onnx, pytorch_model.bin). Other .bin files are not treated as weights."
       />
       <AiDiscoveryClient />
     </DashboardPageShell>

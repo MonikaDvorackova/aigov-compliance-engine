@@ -1,23 +1,24 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useRouter, useSearchParams } from "next/navigation";
 import AigovMark from "../components/brand/AigovMark";
-import InfraShell, { InfraPanel } from "../_ui/InfraShell";
+import InfraShell from "../_ui/InfraShell";
+import { consoleElevatedPanelStyle } from "../_ui/console/surfaces";
+import { getNextPublicSupabaseKey, getNextPublicSupabaseUrl } from "@/lib/supabase/publicEnv";
+
+const LOGIN_SHELL_BACKGROUND = [
+  "radial-gradient(900px 480px at 50% -8%, rgba(255,255,255,0.035) 0%, transparent 58%)",
+  "var(--govai-bg-app)",
+].join(", ");
 
 function createSupabaseBrowserClient(): SupabaseClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
-  if (!anon) throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY");
-
-  return createBrowserClient(url, anon);
+  return createBrowserClient(getNextPublicSupabaseUrl(), getNextPublicSupabaseKey());
 }
 
-function IconGoogle({ size = 18, color = "#1D4ED8" }: { size?: number; color?: string }) {
+function IconGoogle({ size = 16, color = "currentColor" }: { size?: number; color?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
       <path
@@ -44,7 +45,7 @@ function IconGoogle({ size = 18, color = "#1D4ED8" }: { size?: number; color?: s
   );
 }
 
-function IconGitHub({ size = 18, color = "#1D4ED8" }: { size?: number; color?: string }) {
+function IconGitHub({ size = 16, color = "currentColor" }: { size?: number; color?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
       <path
@@ -53,13 +54,6 @@ function IconGitHub({ size = 18, color = "#1D4ED8" }: { size?: number; color?: s
       />
     </svg>
   );
-}
-
-function useInitialMessage(): string | null {
-  const sp = useSearchParams();
-  const v = sp.get("message");
-  if (!v || !v.trim()) return null;
-  return v.trim();
 }
 
 function userFriendlyMessage(raw: string | null): string | null {
@@ -84,7 +78,11 @@ function userFriendlyMessage(raw: string | null): string | null {
     return "This sign in method is not available right now. Please use another option.";
   }
 
-  if (lower.includes("invalid login credentials") || lower.includes("invalid") || lower.includes("credentials")) {
+  if (
+    lower.includes("invalid login credentials") ||
+    lower.includes("invalid email or password") ||
+    (lower.includes("invalid") && lower.includes("password"))
+  ) {
     return "Incorrect email or password.";
   }
 
@@ -97,17 +95,44 @@ function userFriendlyMessage(raw: string | null): string | null {
 
 export default function LoginClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  const initialMessage = userFriendlyMessage(useInitialMessage());
+
+  const messageFromUrl = useMemo(() => {
+    const oauthErr = searchParams.get("oauth_err") === "1";
+    const raw = searchParams.get("message");
+    if (oauthErr && raw?.trim()) {
+      try {
+        return `OAuth: ${decodeURIComponent(raw.trim())}`;
+      } catch {
+        return `OAuth: ${raw.trim()}`;
+      }
+    }
+    return userFriendlyMessage(raw);
+  }, [searchParams]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(initialMessage);
+  const [message, setMessage] = useState<string | null>(messageFromUrl);
 
-  const blue = "#1D4ED8";
-  const iconGlow = "drop-shadow(0 0 10px rgba(59,130,246,0.18))";
+  useEffect(() => {
+    setMessage(messageFromUrl);
+  }, [messageFromUrl]);
+
+  /** If session exists but this client still mounted (edge case), leave login immediately. */
+  useEffect(() => {
+    let cancelled = false;
+    void supabase.auth.getUser().then(({ data: { user } }) => {
+      if (cancelled || !user) return;
+      console.log("[login/client] session present -> /runs");
+      router.replace("/runs");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, router]);
 
   async function signInEmailPassword(e: React.FormEvent) {
     e.preventDefault();
@@ -121,164 +146,255 @@ export default function LoginClient() {
       });
 
       if (error) {
-        setMessage(userFriendlyMessage(error.message) ?? "Sign in failed. Please try again.");
+        console.log("[login:error]", {
+          message: error.message,
+          status: error.status,
+          name: error.name,
+        });
+        setMessage(error.message || "Sign in failed. Please try again.");
         return;
       }
 
       router.push("/runs");
-    } catch (_err: any) {
+    } catch (err: unknown) {
+      console.log("[login:error]", err);
       setMessage("Sign in failed. Please try again.");
     } finally {
       setBusy(false);
     }
   }
 
-  const inputStyle: React.CSSProperties = {
+  const oauthPrimaryBtn: React.CSSProperties = {
     width: "100%",
-    height: 44,
-    borderRadius: 16,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.03)",
-    color: "white",
-    fontSize: 14,
-    padding: "0 12px",
-    outline: "none",
-    textAlign: "center",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
-    backdropFilter: "blur(10px)",
-    WebkitBackdropFilter: "blur(10px)",
-  };
-
-  const buttonStyle: React.CSSProperties = {
-    width: "100%",
-    height: 46,
-    borderRadius: 16,
-    border: "1px solid rgba(255,255,255,0.16)",
-    background: "rgba(255,255,255,0.05)",
-    color: "white",
-    fontSize: 15,
+    height: 34,
+    borderRadius: 8,
+    border: "1px solid color-mix(in srgb, var(--govai-accent) 55%, transparent)",
+    background: "color-mix(in srgb, var(--govai-accent) 18%, var(--govai-bg-elevated))",
+    color: "var(--govai-text)",
+    fontSize: 13,
+    fontWeight: 600,
     cursor: busy ? "not-allowed" : "pointer",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 14px 30px rgba(0,0,0,0.28)",
-    transition: "transform 120ms ease, background 120ms ease, border-color 120ms ease",
-    backdropFilter: "blur(10px)",
-    WebkitBackdropFilter: "blur(10px)",
+    gap: 8,
+    transition: "background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease",
+    opacity: busy ? 0.65 : 1,
   };
 
-  const buttonSoftStyle: React.CSSProperties = {
-    ...buttonStyle,
-    background: "rgba(255,255,255,0.04)",
+  const oauthSecondaryBtn: React.CSSProperties = {
+    width: "100%",
+    height: 34,
+    borderRadius: 8,
+    border: "1px solid var(--govai-border)",
+    background: "transparent",
+    color: "var(--govai-text-secondary)",
+    fontSize: 13,
+    fontWeight: 500,
+    cursor: busy ? "not-allowed" : "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    transition: "background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease",
+    opacity: busy ? 0.65 : 1,
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    height: 34,
+    borderRadius: 8,
+    border: "1px solid var(--govai-border)",
+    background: "var(--govai-bg-panel)",
+    color: "var(--govai-text)",
+    fontSize: 13,
+    padding: "0 10px",
+    outline: "none",
+    textAlign: "left",
+    boxShadow: "0 1px 0 rgba(255,255,255,0.03) inset",
+  };
+
+  const emailSubmitBtn: React.CSSProperties = {
+    width: "100%",
+    height: 32,
+    borderRadius: 8,
+    border: "1px solid var(--govai-border-faint)",
+    background: "var(--govai-bg-panel)",
+    color: "var(--govai-text-tertiary)",
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: busy ? "not-allowed" : "pointer",
+    transition: "background 0.15s ease, border-color 0.15s ease, color 0.15s ease",
   };
 
   const linkStyle: React.CSSProperties = {
-    color: "rgba(255,255,255,0.78)",
+    color: "var(--govai-text-secondary)",
     textDecoration: "underline",
-    textUnderlineOffset: 4,
-    textDecorationColor: "rgba(29,78,216,0.55)",
-    fontSize: 12,
+    textUnderlineOffset: 3,
+    textDecorationColor: "var(--govai-link-decoration)",
+    fontSize: 11,
+  };
+
+  const loginPanelStyle: React.CSSProperties = {
+    ...consoleElevatedPanelStyle(),
+    padding: 14,
+    marginTop: 10,
+    textAlign: "left" as const,
   };
 
   return (
-    <InfraShell maxWidth={520} align="center" padding={18}>
+    <InfraShell maxWidth={440} align="center" padding={16} background={LOGIN_SHELL_BACKGROUND}>
       <style>{`
-        button[data-btn="1"]:hover { transform: translateY(-1px); background: rgba(255,255,255,0.065); border-color: rgba(255,255,255,0.20); }
-        button[data-btn="1"]:active { transform: translateY(0px); background: rgba(255,255,255,0.05); }
-        input:focus { border-color: rgba(59,130,246,0.55); box-shadow: 0 0 0 3px rgba(59,130,246,0.14); }
-        a:hover { color: rgba(255,255,255,0.90); text-decoration-color: rgba(59,130,246,0.80); }
+        .login_oauthPrimary:hover:not(:disabled) {
+          background: color-mix(in srgb, var(--govai-accent) 28%, var(--govai-bg-elevated));
+          border-color: color-mix(in srgb, var(--govai-accent) 70%, transparent);
+        }
+        .login_oauthSecondary:hover:not(:disabled) {
+          background: var(--govai-bg-panel);
+          border-color: var(--govai-border);
+          color: var(--govai-text);
+        }
+        .login_emailSubmit:hover:not(:disabled) {
+          border-color: var(--govai-border);
+          color: var(--govai-text-secondary);
+          background: var(--govai-bg-elevated);
+        }
+        .login_input:focus {
+          outline: none;
+          border-color: var(--govai-border-strong);
+          box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
+        }
+        a.login_footerLink:hover { color: var(--govai-text); text-decoration-color: var(--govai-link-decoration); }
       `}</style>
 
       <div style={{ width: "100%", textAlign: "center" }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            marginBottom: 12,
-            minHeight: 128,
-            alignItems: "center",
-          }}
-        >
-          <AigovMark size={112} glow neon neonStrength="strong" tone="blue" />
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}>
+          <span style={{ display: "inline-flex", lineHeight: 0 }}>
+            <AigovMark size={28} glow={false} neon={false} neonStrength="off" tone="steel" isRunning={false} />
+          </span>
         </div>
 
-        <div style={{ opacity: 0.68, fontSize: 11, letterSpacing: "0.24em", marginBottom: 8 }}>GOVAI</div>
+        <div
+          style={{
+            fontSize: 10,
+            letterSpacing: "0.18em",
+            marginBottom: 6,
+            color: "var(--govai-text-label)",
+          }}
+        >
+          GOVAI
+        </div>
 
         <h1
           style={{
             margin: 0,
             letterSpacing: "-0.02em",
             fontWeight: 600,
-            lineHeight: 1.12,
-            fontSize: "clamp(26px, 5.0vw, 34px)",
+            lineHeight: 1.15,
+            fontSize: "clamp(20px, 3.8vw, 24px)",
             textWrap: "balance",
+            color: "var(--govai-text)",
           }}
         >
-          Dashboard Login
+          Sign in
         </h1>
 
         <p
           style={{
-            margin: "10px auto 14px",
-            maxWidth: "44ch",
-            opacity: 0.76,
-            fontSize: 13,
-            lineHeight: 1.5,
+            margin: "6px auto 0",
+            maxWidth: "40ch",
+            fontSize: 12,
+            lineHeight: 1.4,
             textWrap: "balance",
+            color: "var(--govai-text-secondary)",
           }}
         >
-          Sign in to load runs from the database.
+          Access the compliance dashboard.
         </p>
 
-        <InfraPanel>
+        <section style={loginPanelStyle}>
           {message ? (
             <div
               style={{
-                marginBottom: 12,
-                padding: "10px 12px",
-                borderRadius: 16,
-                border: "1px solid rgba(255,255,255,0.14)",
-                background: "rgba(255,255,255,0.045)",
+                marginBottom: 10,
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "1px solid var(--govai-border-faint)",
+                background: "var(--govai-bg-panel)",
                 fontSize: 12,
-                opacity: 0.95,
+                lineHeight: 1.4,
+                color: "var(--govai-text-secondary)",
                 textAlign: "left",
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
               }}
             >
               {message}
             </div>
           ) : null}
 
-          <div style={{ display: "grid", gap: 10 }}>
-            <a href="/auth/login/google?next=/runs" style={{ textDecoration: "none" }} aria-disabled={busy}>
-              <button type="button" data-btn="1" disabled={busy} style={buttonSoftStyle}>
-                <span style={{ display: "inline-flex", filter: iconGlow }}>
-                  <IconGoogle color={blue} size={18} />
-                </span>
-                Continue with Google
-              </button>
-            </a>
+          <div style={{ display: "grid", gap: 8 }}>
+            <button
+              type="button"
+              className="login_oauthPrimary"
+              disabled={busy}
+              onClick={() => {
+                console.log("[login] Google button clicked");
+                window.location.assign("/auth/login/google?next=/runs");
+              }}
+              style={oauthPrimaryBtn}
+            >
+              <span style={{ display: "inline-flex", color: "var(--govai-text-secondary)" }}>
+                <IconGoogle size={16} />
+              </span>
+              Continue with Google
+            </button>
 
-            <a href="/auth/login/github?next=/runs" style={{ textDecoration: "none" }} aria-disabled={busy}>
-              <button type="button" data-btn="1" disabled={busy} style={buttonSoftStyle}>
-                <span style={{ display: "inline-flex", filter: iconGlow }}>
-                  <IconGitHub color={blue} size={18} />
-                </span>
-                Continue with GitHub
-              </button>
-            </a>
+            <button
+              type="button"
+              className="login_oauthSecondary"
+              disabled={busy}
+              onClick={() => {
+                console.log("[login] GitHub button clicked");
+                window.location.assign("/auth/login/github?next=/runs");
+              }}
+              style={oauthSecondaryBtn}
+            >
+              <span style={{ display: "inline-flex", color: "var(--govai-text-secondary)" }}>
+                <IconGitHub size={16} />
+              </span>
+              Continue with GitHub
+            </button>
           </div>
 
-          <div style={{ marginTop: 14, opacity: 0.62, fontSize: 12, textAlign: "center" }}>
-            Or email and password
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            marginTop: 12,
+            marginBottom: 8,
+            }}
+          >
+            <div style={{ flex: 1, height: 1, background: "var(--govai-divider)" }} />
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 500,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color: "var(--govai-text-label)",
+              }}
+            >
+              Email
+            </span>
+            <div style={{ flex: 1, height: 1, background: "var(--govai-divider)" }} />
           </div>
 
-          <form onSubmit={signInEmailPassword} style={{ marginTop: 10, display: "grid", gap: 10 }}>
+          <form onSubmit={signInEmailPassword} style={{ display: "grid", gap: 8 }}>
             <input
+              className="login_input"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="email"
+              placeholder="Email"
               inputMode="email"
               autoComplete="email"
               disabled={busy}
@@ -286,57 +402,47 @@ export default function LoginClient() {
             />
 
             <input
+              className="login_input"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="password"
+              placeholder="Password"
               type="password"
               autoComplete="current-password"
               disabled={busy}
               style={inputStyle}
             />
 
-            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -4 }}>
-              <a href="/forgot-password" style={{ ...linkStyle, fontSize: 12 }}>
-                Forgot password?
-              </a>
-            </div>
-
             <button
               type="submit"
-              data-btn="1"
+              className="login_emailSubmit"
               disabled={busy || !email.trim() || !password}
               style={{
-                ...buttonStyle,
-                background:
-                  busy || !email.trim() || !password ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.055)",
+                ...emailSubmitBtn,
+                opacity: busy || !email.trim() || !password ? 0.55 : 0.88,
+                cursor: busy || !email.trim() || !password ? "not-allowed" : "pointer",
               }}
             >
-              Sign in
+              Sign in with email
             </button>
 
             <div
               style={{
                 display: "flex",
                 justifyContent: "space-between",
-                gap: 12,
-                marginTop: 2,
-                opacity: 0.8,
+                gap: 10,
+                marginTop: 4,
               }}
             >
-              <a href="/" style={linkStyle}>
-                Back to home
+              <a href="/" className="login_footerLink" style={linkStyle}>
+                Home
               </a>
 
-              <a href="/runs" style={linkStyle}>
-                Open runs
+              <a href="/runs" className="login_footerLink" style={linkStyle}>
+                Runs
               </a>
             </div>
           </form>
-
-          <div style={{ marginTop: 10, opacity: 0.52, fontSize: 11, textAlign: "center" }}>
-            Secure sign in via Google or GitHub.
-          </div>
-        </InfraPanel>
+        </section>
       </div>
     </InfraShell>
   );

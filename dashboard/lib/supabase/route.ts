@@ -1,5 +1,6 @@
 import { type NextRequest, type NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { getNextPublicSupabaseKey, getNextPublicSupabaseUrl } from "@/lib/supabase/publicEnv";
 
 type BufferedCookie = { name: string; value: string; options: Record<string, unknown> };
 
@@ -25,13 +26,8 @@ function fixCookieOptionsForLocalhost(
  * and to a response object for writes.
  */
 export function createSupabaseRouteClient(req: NextRequest, res: NextResponse) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key =
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
-  if (!key) throw new Error("Missing Supabase key");
+  const url = getNextPublicSupabaseUrl();
+  const key = getNextPublicSupabaseKey();
 
   const localhost = isLocalhostRequest(req);
 
@@ -57,13 +53,8 @@ export function createSupabaseRouteClient(req: NextRequest, res: NextResponse) {
  * (redirect to Supabase) is not known until after signInWithOAuth.
  */
 export function createSupabaseRouteClientBuffered(req: NextRequest) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key =
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
-  if (!key) throw new Error("Missing Supabase key");
+  const url = getNextPublicSupabaseUrl();
+  const key = getNextPublicSupabaseKey();
 
   const localhost = isLocalhostRequest(req);
   const bufferedCookies: BufferedCookie[] = [];
