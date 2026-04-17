@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+import requests
+
+
+class GovAIError(Exception):
+    """Base error for the GovAI SDK."""
+
+
+class GovAIHTTPError(GovAIError):
+    """Raised when the server returns a non-success HTTP status."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        response: requests.Response | None = None,
+        body_text: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.response = response
+        self.body_text = body_text
+
+
+class GovAIAPIError(GovAIError):
+    """Raised when the JSON body indicates failure (e.g. ``ok: false``) with HTTP 200."""
+
+    def __init__(self, message: str, payload: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.payload = payload
+
+
+class GovAIClient:
+    """
+    Thin HTTP client for the GovAI audit API (Rust core).
+
+    ``base_url`` should be the origin only (e.g. ``http://127.0.0.1:8088``); paths are appended as documented.
+    """
+
+    def __init__(self, base_url: str, api_key: str | None = None) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._api_key = api_key
+        self._session = requests.Session()
+        self._session.headers.setdefault("Accept", "application/json")
+        if api_key:
+            self._session.headers["Authorization"] = f"Bearer {api_key}"
+
+    @property
+    def base_url(self) -> str:
+        return self._base_url
+
+    def _url(self, path: str) -> str:
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{self._base_url}{path}"
+
+    def request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Mapping[str, str | int] | None = None,
+        json_body: Any = None,
+        timeout: float = 30.0,
+        raise_on_body_ok_false: bool = False,
+    ) -> Any:
+        """
+        Perform an HTTP request and parse a JSON response.
+
+        Raises :class:`GovAIHTTPError` on non-success HTTP status.
+        If ``raise_on_body_ok_false`` is True and the decoded JSON is a dict with
+        ``ok`` equal to ``False``, raises :class:`GovAIAPIError`.
+        """
+        url = self._url(path)
+        kwargs: dict[str, Any] = {"timeout": timeout}
+        if params is not None:
+            kwargs["params"] = dict(params)
+        if json_body is not None:
+            kwargs["json"] = json_body
+
+        try:
+            response = self._session.request(method.upper(), url, **kwargs)
+        except requests.RequestException as e:
+            raise GovAIHTTPError(f"request failed: {e}") from e
+
+        body_text = response.text if response.text else None
+
+        if not response.ok:
+            message = f"HTTP {response.status_code}"
+            if body_text:
+                message = f"{message}: {body_text[:2000]}"
+            try:
+                err = response.json()
+                if isinstance(err, dict) and err.get("error") is not None:
+                    message = f"HTTP {response.status_code}: {err.get('error')}"
+            except ValueError:
+                pass
+            raise GovAIHTTPError(
+                message,
+                status_code=response.status_code,
+                response=response,
+                body_text=body_text,
+            )
+
+        try:
+            data: Any = response.json()
+        except ValueError as e:
+            raise GovAIHTTPError(
+                f"response is not valid JSON (HTTP {response.status_code})",
+                status_code=response.status_code,
+                response=response,
+                body_text=body_text[:500] if body_text else None,
+            ) from e
+
+        if raise_on_body_ok_false and isinstance(data, dict) and data.get("ok") is False:
+            err_msg = data.get("error")
+            if not isinstance(err_msg, str) or not err_msg.strip():
+                err_msg = "API returned ok: false"
+            raise GovAIAPIError(err_msg, data)
+
+        return data
