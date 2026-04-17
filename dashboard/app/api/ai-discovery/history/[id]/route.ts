@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireAiDiscoverySession } from "@/lib/ai-discovery/aiDiscoveryRouteAuth.server";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   applyScanReviewFields,
   listStoredScans,
@@ -24,33 +24,32 @@ function parseDecision(x: unknown): DiscoveryScanDecision | null | undefined {
   return undefined;
 }
 
-export async function GET(
-  _request: Request,
-  context: { params: Promise<{ id: string }> }
-) {
-  const auth = await requireAiDiscoverySession();
-  if (!auth.ok) return auth.response;
-
-  const { id } = await context.params;
-  const existing = listStoredScans().find((s) => s.id === id);
-  if (!existing) {
-    return NextResponse.json(
-      { ok: false, error: "not_found", message: "Scan not found." },
-      { status: 404 }
-    );
-  }
-  return NextResponse.json({ ok: true, scan: existing }, { status: 200 });
-}
-
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
 
-  const auth = await requireAiDiscoverySession();
-  if (!auth.ok) return auth.response;
-  const { user } = auth;
+  const supabase = await createSupabaseServerClient();
+
+  const {
+    data: { user },
+    error: userErr,
+  } = await supabase.auth.getUser();
+
+  if (userErr) {
+    return NextResponse.json(
+      { ok: false, error: "auth_error", message: userErr.message },
+      { status: 401 }
+    );
+  }
+
+  if (!user) {
+    return NextResponse.json(
+      { ok: false, error: "unauthorized", message: "Not signed in." },
+      { status: 401 }
+    );
+  }
 
   let body: Record<string, unknown>;
   try {
