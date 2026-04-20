@@ -1,11 +1,5 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-## GovAI console Postgres (TLS)
-
-When using GovAI Postgres for run metadata reads, see [docs/GOVAI_CONSOLE_POSTGRES.md](docs/GOVAI_CONSOLE_POSTGRES.md) for production CA configuration and local dev options.
-
-In production, always configure a CA certificate via `GOVAI_CONSOLE_PG_CA_CERT_PATH`. `GOVAI_CONSOLE_PG_SSL_NO_VERIFY` is intended for local development only.
-
 ## Getting Started
 
 First, run the development server:

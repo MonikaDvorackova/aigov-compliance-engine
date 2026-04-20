@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 export function DashboardCompactCard({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
     <div
-      className={`overflow-hidden rounded-[10px] border bg-[color:var(--govai-bg-card)] [border-color:var(--govai-border-ink)] ${className}`}
+      className={`overflow-hidden rounded-[10px] border bg-[color:var(--govai-bg-card)] [border-color:var(--govai-border-surface-strong)] ${className}`}
     >
       {children}
     </div>
