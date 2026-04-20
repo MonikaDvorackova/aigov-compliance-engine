@@ -170,7 +170,6 @@ export default function AppSidebar({ email }: { email: string | null }) {
                 border: "none",
                 textDecoration: "none",
                 fontSize: 13,
-                fontWeight: active ? 500 : 400,
                 letterSpacing: "-0.01em",
                 transition: "background 0.15s ease, color 0.15s ease",
               }}

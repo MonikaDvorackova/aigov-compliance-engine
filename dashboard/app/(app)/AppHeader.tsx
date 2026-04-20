@@ -10,18 +10,7 @@ export default function AppHeader({ email }: { email: string | null }) {
   const { title, subtitle } = navMetaForPath(pathname);
 
   return (
-    <header
-      style={{
-        minHeight: 48,
-        padding: "10px 20px",
-        borderBottom: "1px solid var(--govai-border-faint)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        background: "var(--govai-bg-app)",
-      }}
-    >
+    <header className="govai-app-header">
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0, flexWrap: "wrap" }}>
         <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.02em", color: "var(--govai-text)" }}>{title}</div>
         <span style={{ color: "var(--govai-text-tertiary)", fontSize: 12, opacity: 0.85 }} aria-hidden="true">
