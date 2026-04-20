@@ -1,13 +1,27 @@
+import type { NextRequest } from "next/server";
+import { resolvePasswordResetPublicBase } from "@/lib/auth/passwordReset/publicBaseUrl";
+
 export type SendPasswordResetEmailInput = {
   to: string;
-  resetUrl: string;
+  /** Opaque reset secret; combined with public base inside this module for traceable URL building. */
+  rawResetToken: string;
+  request?: NextRequest;
 };
+
+function buildPasswordResetAbsoluteUrl(rawToken: string, request?: NextRequest): string {
+  const base = resolvePasswordResetPublicBase(request);
+  const url = new URL("/reset-password", `${base}/`);
+  url.searchParams.set("token", rawToken);
+  return url.toString();
+}
 
 /**
  * Sends the password reset email. Uses Resend when RESEND_API_KEY is set; otherwise logs once
  * (without secrets) so local development can proceed without outbound email.
  */
 export async function sendPasswordResetEmail(input: SendPasswordResetEmailInput): Promise<void> {
+  const resetUrl = buildPasswordResetAbsoluteUrl(input.rawResetToken, input.request);
+
   const apiKey = (process.env.RESEND_API_KEY ?? "").trim();
   const from = (process.env.PASSWORD_RESET_EMAIL_FROM ?? "").trim();
 
@@ -42,7 +56,7 @@ export async function sendPasswordResetEmail(input: SendPasswordResetEmailInput)
       text: [
         "We received a request to reset your password for your GovAI dashboard account.",
         "",
-        `Reset link (expires in one hour): ${input.resetUrl}`,
+        `Reset link (expires in one hour): ${resetUrl}`,
         "",
         "If you did not request this, you can ignore this email.",
       ].join("\n"),

@@ -444,25 +444,24 @@ function AiDiscoveryClientInner() {
   return (
     <>
     <div style={{ maxWidth: 720 }}>
-      <p style={{ fontSize: 13, color: "var(--govai-text-secondary)", lineHeight: 1.55, marginBottom: 8 }}>
-        Signal-based AI discovery surfaces OpenAI usage, Transformers references, and model-weight filenames (for
-        example{" "}
-        <code style={{ fontSize: 12 }}>.pt</code>, <code style={{ fontSize: 12 }}>.pth</code>,{" "}
-        <code style={{ fontSize: 12 }}>.safetensors</code>, <code style={{ fontSize: 12 }}>.onnx</code>,{" "}
-        <code style={{ fontSize: 12 }}>pytorch_model.bin</code>
-        —not every <code style={{ fontSize: 12 }}>.bin</code>). Results are evidence signals, not conclusions.
-        The same workspace supports discovery, saved scan history, review, and monitoring (scheduled runs and
-        alerts).
-      </p>
       <p
         style={{
           fontSize: 11,
           color: "var(--govai-text-tertiary)",
           lineHeight: 1.45,
-          marginBottom: 18,
+          marginBottom: 12,
         }}
       >
         Signal-based detection. No compliance conclusions.
+      </p>
+      <p style={{ fontSize: 13, color: "var(--govai-text-secondary)", lineHeight: 1.55, marginBottom: 18 }}>
+        Signal-based AI discovery surfaces OpenAI signals, Transformers signals, and model-weight filename signals (for
+        example{" "}
+        <code style={{ fontSize: 12 }}>.pt</code>, <code style={{ fontSize: 12 }}>.pth</code>,{" "}
+        <code style={{ fontSize: 12 }}>.safetensors</code>, <code style={{ fontSize: 12 }}>.onnx</code>,{" "}
+        <code style={{ fontSize: 12 }}>pytorch_model.bin</code>
+        —not every <code style={{ fontSize: 12 }}>.bin</code>). Results are evidence, not conclusions.
+        The same workspace supports discovery, saved scan history, review, and monitoring (scheduled + alerts).
       </p>
 
       <AiDiscoveryListFilters />
@@ -625,20 +624,20 @@ function AiDiscoveryClientInner() {
                 <strong style={{ color: "var(--govai-text)" }}>{summary.totalSignals}</strong>
               </span>
               <span>
-                <span style={{ color: "var(--govai-text-tertiary)" }}>OpenAI </span>
+                <span style={{ color: "var(--govai-text-tertiary)" }}>OpenAI signals </span>
                 <strong style={{ color: "var(--govai-text)" }}>{summary.openai}</strong>
               </span>
               <span>
-                <span style={{ color: "var(--govai-text-tertiary)" }}>Transformers </span>
+                <span style={{ color: "var(--govai-text-tertiary)" }}>Transformers signals </span>
                 <strong style={{ color: "var(--govai-text)" }}>{summary.transformers}</strong>
               </span>
               <span>
-                <span style={{ color: "var(--govai-text-tertiary)" }}>Model artifacts </span>
+                <span style={{ color: "var(--govai-text-tertiary)" }}>Model artifact signals </span>
                 <strong style={{ color: "var(--govai-text)" }}>{summary.modelArtifacts}</strong>
               </span>
               {summary.combinedFolders > 0 ? (
                 <span>
-                  <span style={{ color: "var(--govai-text-tertiary)" }}>Combined-signal folders </span>
+                  <span style={{ color: "var(--govai-text-tertiary)" }}>Combined signals </span>
                   <strong style={{ color: "var(--govai-text)" }}>{summary.combinedFolders}</strong>
                 </span>
               ) : null}
@@ -653,7 +652,7 @@ function AiDiscoveryClientInner() {
               onClick={() => toggleFilter("openai")}
               style={filterChipStyle(filters.openai)}
             >
-              OpenAI
+              OpenAI signals
             </button>
             <button
               type="button"
@@ -661,7 +660,7 @@ function AiDiscoveryClientInner() {
               onClick={() => toggleFilter("transformers")}
               style={filterChipStyle(filters.transformers)}
             >
-              Transformers
+              Transformers signals
             </button>
             <button
               type="button"
@@ -669,7 +668,7 @@ function AiDiscoveryClientInner() {
               onClick={() => toggleFilter("modelArtifacts")}
               style={filterChipStyle(filters.modelArtifacts)}
             >
-              Model artifacts
+              Model artifact signals
             </button>
             <button
               type="button"
@@ -767,7 +766,7 @@ function AiDiscoveryClientInner() {
                   Signal tiers
                 </div>
                 <div>
-                  <span style={{ color: "var(--govai-text-secondary)" }}>High confidence:</span> direct OpenAI API
+                  <span style={{ color: "var(--govai-text-secondary)" }}>Primary signals:</span> direct OpenAI API
                   signals.
                 </div>
                 <div style={{ marginTop: 2 }}>
@@ -877,7 +876,7 @@ function AiDiscoveryClientInner() {
               {filters.openai ? (
                 <>
                   <h3 style={{ marginTop: 20, marginBottom: 4, fontSize: 13, fontWeight: 600, color: "var(--govai-text-secondary)" }}>
-                    High confidence
+                    Primary signals
                   </h3>
                   <div style={{ fontSize: 12.5, fontWeight: 500 }}>
                     OpenAI signals ({counts.openai})
@@ -913,7 +912,7 @@ function AiDiscoveryClientInner() {
           ) : null}
 
           <p style={{ marginTop: 18, fontSize: 11.5, color: "var(--govai-text-tertiary)", lineHeight: 1.5 }}>
-            Model artifact paths are inferred from filenames only (no file contents read).
+            Model artifact signal paths are inferred from filenames only (no file contents read).
           </p>
         </div>
         <AiDiscoveryReportModal

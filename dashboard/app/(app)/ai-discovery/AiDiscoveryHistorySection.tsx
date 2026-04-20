@@ -139,10 +139,10 @@ function ChangeSummaryDetailsBody({ summary }: { summary: DiscoveryScanChangeSum
         </tr>
       </thead>
       <tbody>
-        {cat("OpenAI", summary.addedCounts.openai, summary.removedCounts.openai)}
-        {cat("Transformers", summary.addedCounts.transformers, summary.removedCounts.transformers)}
-        {cat("Model artifacts", summary.addedCounts.modelArtifacts, summary.removedCounts.modelArtifacts)}
-        {cat("Combined folders", summary.addedCounts.combinedFolders, summary.removedCounts.combinedFolders)}
+        {cat("OpenAI signals", summary.addedCounts.openai, summary.removedCounts.openai)}
+        {cat("Transformers signals", summary.addedCounts.transformers, summary.removedCounts.transformers)}
+        {cat("Model artifact signals", summary.addedCounts.modelArtifacts, summary.removedCounts.modelArtifacts)}
+        {cat("Combined signals", summary.addedCounts.combinedFolders, summary.removedCounts.combinedFolders)}
       </tbody>
     </table>
   );
@@ -422,7 +422,7 @@ export function AiDiscoveryHistorySection({
         <p style={{ fontSize: 12.5, color: "var(--govai-text-tertiary)" }}>
           {filtersActive
             ? "No results match the current filters."
-            : "No saved scans yet. Run a discovery scan to record one."}
+            : "No AI signals detected yet. Run a scan to begin."}
         </p>
       ) : null}
 
@@ -444,10 +444,10 @@ export function AiDiscoveryHistorySection({
                 <th style={{ padding: "6px 8px" }}>Trigger</th>
                 <th style={{ padding: "6px 8px" }}>Triggered by</th>
                 <th style={{ padding: "6px 8px" }}>Changes vs prior</th>
-                <th style={{ padding: "6px 8px" }}>OpenAI</th>
-                <th style={{ padding: "6px 8px" }}>Transformers</th>
-                <th style={{ padding: "6px 8px" }}>Artifacts</th>
-                <th style={{ padding: "6px 8px" }}>Combined</th>
+                <th style={{ padding: "6px 8px" }}>OpenAI signals</th>
+                <th style={{ padding: "6px 8px" }}>Transformers signals</th>
+                <th style={{ padding: "6px 8px" }}>Model artifact signals</th>
+                <th style={{ padding: "6px 8px" }}>Combined signals</th>
                 <th style={{ padding: "6px 8px" }}>Review</th>
                 <th style={{ padding: "6px 8px" }}>Decision</th>
                 <th style={{ padding: "6px 8px" }}>Reviewed</th>
@@ -614,8 +614,8 @@ export function AiDiscoveryHistorySection({
                             Change vs prior run (same schedule target or manual baseline)
                           </div>
                           <p style={{ margin: "0 0 6px", fontSize: 11.5, color: "var(--govai-text-tertiary)" }}>
-                            Compared to the most recent prior scan for this target. Categories match OpenAI, Transformers,
-                            model artifacts, and combined-signal folders.
+                            Compared to the most recent prior scan for this target. Categories match OpenAI signals,
+                            Transformers signals, model artifact signals, and combined signals.
                           </p>
                           <ChangeSummaryDetailsBody summary={s.changeSummary} />
                         </td>
@@ -751,15 +751,15 @@ export function AiDiscoveryHistorySection({
               <RunContextCaption label="Newer run context" scan={orderedPair.newer} />
               <RunReviewCaption label="Older run review" scan={orderedPair.older} />
               <RunReviewCaption label="Newer run review" scan={orderedPair.newer} />
-              <DiffList title="OpenAI usage" added={diff.openai.added} removed={diff.openai.removed} />
-              <DiffList title="Transformers" added={diff.transformers.added} removed={diff.transformers.removed} />
+              <DiffList title="OpenAI signals" added={diff.openai.added} removed={diff.openai.removed} />
+              <DiffList title="Transformers signals" added={diff.transformers.added} removed={diff.transformers.removed} />
               <DiffList
-                title="Model artifacts"
+                title="Model artifact signals"
                 added={diff.modelArtifacts.added}
                 removed={diff.modelArtifacts.removed}
               />
               <DiffList
-                title="Combined-signal folders"
+                title="Combined signals"
                 added={diff.combinedFolders.added}
                 removed={diff.combinedFolders.removed}
               />
