@@ -31,19 +31,16 @@ function resolveIconNeonStrength(
 const ASSEMBLE_PHASE_MS = 280;
 const ASSEMBLE_PHASE_COUNT = 5;
 
-function glyphColor(tone: AigovIconTone): string {
-  return tone === "teal" ? "rgba(185,255,244,0.88)" : "rgba(191,219,254,0.9)";
+const GLYPH_NEUTRAL = "rgba(210, 214, 218, 0.95)";
+
+function glyphColor(_tone: AigovIconTone): string {
+  return GLYPH_NEUTRAL;
 }
 
-function glyphShadow(tone: AigovIconTone, neonStrength: AigovIconNeonStrength): string {
-  if (tone === "teal") {
-    return neonStrength === "off"
-      ? "0 0 10px rgba(45,212,191,0.22)"
-      : "0 0 12px rgba(45,212,191,0.32), 0 0 22px rgba(20,184,166,0.18)";
-  }
+function glyphShadow(_tone: AigovIconTone, neonStrength: AigovIconNeonStrength): string {
   return neonStrength === "off"
-    ? "0 0 10px rgba(96,165,250,0.2)"
-    : "0 0 12px rgba(147,197,253,0.28), 0 0 22px rgba(96,165,250,0.16)";
+    ? "0 0 8px rgba(255,255,255,0.08)"
+    : "0 0 10px rgba(255,255,255,0.1), 0 0 18px rgba(0,0,0,0.2)";
 }
 
 function AssembleGlyph({
@@ -119,7 +116,7 @@ export default function AigovMark({
   glow = true,
   neon = false,
   neonStrength = "off",
-  tone = "blue",
+  tone = "steel",
   className,
   style,
 }: AigovMarkProps) {
@@ -165,12 +162,9 @@ export default function AigovMark({
 
   const pulseSize = Math.max(7, Math.round(size * 0.34));
 
-  const pulseBg = tone === "teal" ? "rgba(185,255,244,0.86)" : "rgba(191,219,254,0.86)";
+  const pulseBg = "rgba(255,255,255,0.22)";
 
-  const pulseShadow =
-    tone === "teal"
-      ? "0 0 10px rgba(45,212,191,0.14), 0 0 18px rgba(153,246,228,0.10)"
-      : "0 0 10px rgba(147,197,253,0.14), 0 0 18px rgba(191,219,254,0.10)";
+  const pulseShadow = "0 0 8px rgba(0,0,0,0.35)";
 
   const boxStyle: React.CSSProperties = {
     display: "inline-flex",
