@@ -142,7 +142,7 @@ export default function ResetPasswordClient() {
             alignItems: "center",
           }}
         >
-          <AigovMark size={88} glow neon neonStrength="strong" tone="steel" />
+          <AigovMark size={88} glow neon neonStrength="strong" tone="blue" />
         </div>
 
         <h1
