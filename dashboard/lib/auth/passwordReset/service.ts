@@ -1,7 +1,6 @@
 import type { NextRequest } from "next/server";
 import { getPasswordResetPool } from "./pgPool";
 import { generateRawResetToken, sha256Hex } from "./token";
-import { resolvePasswordResetPublicBase } from "./publicBaseUrl";
 import { sendPasswordResetEmail } from "@/lib/mail/sendPasswordResetEmail";
 import { createSupabaseServiceRoleClient } from "@/lib/auth/supabaseAdmin";
 
@@ -72,19 +71,8 @@ export async function requestPasswordReset(email: string, request?: NextRequest)
     return;
   }
 
-  let base: string;
   try {
-    base = resolvePasswordResetPublicBase(request);
-  } catch (e) {
-    console.error("[password-reset] public base URL", e instanceof Error ? e.message : e);
-    return;
-  }
-
-  const url = new URL("/reset-password", `${base}/`);
-  url.searchParams.set("token", raw);
-
-  try {
-    await sendPasswordResetEmail({ to: normalized, resetUrl: url.toString() });
+    await sendPasswordResetEmail({ to: normalized, rawResetToken: raw, request });
   } catch (e) {
     console.error("[password-reset] mail send failed", e instanceof Error ? e.message : e);
   }
@@ -180,18 +168,14 @@ export async function confirmPasswordReset(
 
   const pool = getPasswordResetPool();
   try {
-    const mark = await pool.query(
+    await pool.query(
       `
       update public.password_reset_tokens
       set used_at = now()
-      where id = $1::uuid and used_at is null
-      returning id
+      where id = $1::uuid
       `,
       [tokenRow.id]
     );
-    if ((mark.rowCount ?? 0) === 0) {
-      return { ok: false, code: "invalid_or_expired" };
-    }
 
     await pool.query(
       `
@@ -202,8 +186,7 @@ export async function confirmPasswordReset(
       [tokenRow.user_id, tokenRow.id]
     );
   } catch (e) {
-    console.error("[password-reset] token finalize failed", e instanceof Error ? e.message : e);
-    return { ok: false, code: "server_error" };
+    console.error("[password-reset] token finalize after password update", e instanceof Error ? e.message : e);
   }
 
   // Best-effort session revocation: GoTrue may already invalidate refresh tokens on admin password updates.

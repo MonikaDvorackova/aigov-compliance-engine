@@ -23,7 +23,7 @@ export default async function AiDiscoveryPage() {
       <DashboardHero
         kicker="GovAI"
         title="AI Discovery"
-        description="Signal-based discovery for OpenAI usage, Transformers, and model-weight filenames—plus evidence history, review, and monitoring (scheduled runs and alerts)."
+        description="Signal-based discovery for OpenAI signals, Transformers signals, and model-weight filename signals—plus evidence history, review, and monitoring (scheduled + alerts)."
       />
       <AiDiscoveryClient />
     </DashboardPageShell>

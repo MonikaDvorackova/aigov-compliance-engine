@@ -175,20 +175,20 @@ export function AiDiscoveryReportModal({
             <strong style={{ color: "var(--govai-text)" }}>{counts.totalSignals}</strong>
           </span>
           <span>
-            <span style={{ color: "var(--govai-text-tertiary)" }}>OpenAI </span>
+            <span style={{ color: "var(--govai-text-tertiary)" }}>OpenAI signals </span>
             <strong style={{ color: "var(--govai-text)" }}>{counts.openai}</strong>
           </span>
           <span>
-            <span style={{ color: "var(--govai-text-tertiary)" }}>Transformers </span>
+            <span style={{ color: "var(--govai-text-tertiary)" }}>Transformers signals </span>
             <strong style={{ color: "var(--govai-text)" }}>{counts.transformers}</strong>
           </span>
           <span>
-            <span style={{ color: "var(--govai-text-tertiary)" }}>Model artifacts </span>
+            <span style={{ color: "var(--govai-text-tertiary)" }}>Model artifact signals </span>
             <strong style={{ color: "var(--govai-text)" }}>{counts.modelArtifacts}</strong>
           </span>
           {counts.combinedFolders > 0 ? (
             <span>
-              <span style={{ color: "var(--govai-text-tertiary)" }}>Combined-signal folders </span>
+              <span style={{ color: "var(--govai-text-tertiary)" }}>Combined signals </span>
               <strong style={{ color: "var(--govai-text)" }}>{counts.combinedFolders}</strong>
             </span>
           ) : null}
