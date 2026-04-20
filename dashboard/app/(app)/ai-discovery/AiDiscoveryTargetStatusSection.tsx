@@ -144,7 +144,7 @@ export function AiDiscoveryTargetStatusSection({
         <p style={{ fontSize: 12.5, color: "var(--govai-text-tertiary)" }}>
           {filtersActive
             ? "No results match the current filters."
-            : "No saved scans yet. Run a discovery scan to see per-target status."}
+            : "No AI signals detected yet. Run a scan to begin."}
         </p>
       ) : null}
 
@@ -235,7 +235,7 @@ export function AiDiscoveryTargetStatusSection({
                   </div>
                   <div>
                     <span style={{ color: "var(--govai-text-tertiary)" }}>Counts </span>
-                    OAI {c.openai} · TF {c.transformers} · Art {c.modelArtifacts} · Comb {c.combinedFolders}
+                    OpenAI signals {c.openai} · Transformers signals {c.transformers} · Model artifact signals {c.modelArtifacts} · Combined signals {c.combinedFolders}
                   </div>
                   <div>
                     <span style={{ color: "var(--govai-text-tertiary)" }}>Open changes </span>

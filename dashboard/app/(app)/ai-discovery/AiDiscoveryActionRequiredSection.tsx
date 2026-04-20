@@ -266,7 +266,7 @@ export function AiDiscoveryActionRequiredSection({
                   </div>
                   <div>
                     <span style={{ color: "var(--govai-text-tertiary)" }}>Counts </span>
-                    OAI {c.openai} · TF {c.transformers} · Art {c.modelArtifacts} · Comb {c.combinedFolders}
+                    OpenAI signals {c.openai} · Transformers signals {c.transformers} · Model artifact signals {c.modelArtifacts} · Combined signals {c.combinedFolders}
                   </div>
                   <div>
                     <span style={{ color: "var(--govai-text-tertiary)" }}>Review </span>
