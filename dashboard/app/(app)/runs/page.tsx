@@ -1,31 +1,111 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
-import {
-  ConsoleModuleCard,
-  DashboardActionStrip,
-  DashboardCompactCard,
-  DashboardHero,
-  DashboardPageIntroduction,
-  DashboardPageShell,
-  DashboardStatChips,
-  DashboardTertiaryLink,
-  dashboardErrorBanner,
-  dashboardErrorBannerTitle,
-  dashboardPageStack,
-} from "@/app/_ui/dashboard";
-import { ModeBadge, StatusBadge } from "@/app/_ui/console/runBadges";
-import { fetchRecentRuns } from "@/lib/console/fetchRuns";
-import { fmt, norm, relativeTimeAgo } from "@/lib/console/runFormat";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-function displayPolicyName(versionKey: string) {
-  if (versionKey === "(unspecified)") return "Unspecified";
-  if (versionKey.length <= 48) return versionKey;
-  return `${versionKey.slice(0, 44)}…`;
+type RunRow = {
+  id: string;
+  created_at: string;
+  mode: string | null;
+  status: string | null;
+  policy_version: string | null;
+  bundle_sha256: string | null;
+  evidence_sha256: string | null;
+  report_sha256: string | null;
+  evidence_source: string | null;
+  closed_at: string | null;
+};
+
+function fmt(ts: string | null) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts;
+  return d.toLocaleString("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
-const emptySurface =
-  "rounded-[10px] border px-4 py-7 text-center text-sm [border-color:var(--govai-border-ink-faint)] [color:var(--govai-text-muted)] [background:var(--govai-bg-inner)]";
+function shortHash(v: string | null) {
+  if (!v) return "";
+  if (v.length <= 14) return v;
+  return `${v.slice(0, 10)}…${v.slice(-4)}`;
+}
+
+function norm(v: string | null) {
+  return (v ?? "").trim().toLowerCase();
+}
+
+function badgeStyle(kind: "neutral" | "ok" | "warn") {
+  const border =
+    kind === "ok"
+      ? "1px solid rgba(255,255,255,0.28)"
+      : kind === "warn"
+      ? "1px solid rgba(255,255,255,0.34)"
+      : "1px solid rgba(255,255,255,0.18)";
+
+  const bg =
+    kind === "ok"
+      ? "rgba(255,255,255,0.09)"
+      : kind === "warn"
+      ? "rgba(255,255,255,0.11)"
+      : "rgba(255,255,255,0.06)";
+
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "2px 10px",
+    borderRadius: 999,
+    border,
+    background: bg,
+    fontSize: 12,
+    lineHeight: "18px",
+    whiteSpace: "nowrap" as const,
+  };
+}
+
+function ModeBadge({ mode }: { mode: string | null }) {
+  const m = norm(mode);
+  const kind: "neutral" | "ok" | "warn" = m === "prod" ? "warn" : "neutral";
+  const label = m ? m : "—";
+  return <span style={badgeStyle(kind)}>{label}</span>;
+}
+
+function StatusBadge({ status }: { status: string | null }) {
+  const s = norm(status);
+  const kind: "neutral" | "ok" | "warn" =
+    s === "valid" ? "ok" : s === "invalid" ? "warn" : "neutral";
+  const label = s ? s : "—";
+  return <span style={badgeStyle(kind)}>{label}</span>;
+}
+
+function StatPill({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        gap: 8,
+        padding: "6px 10px",
+        borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.08)",
+        background: "rgba(255,255,255,0.02)",
+        fontSize: 13,
+      }}
+    >
+      <span style={{ opacity: 0.72 }}>{label}</span>
+      <span style={{ fontWeight: 700, opacity: 0.92 }}>{value}</span>
+    </div>
+  );
+}
 
 export default async function RunsPage() {
   const supabase = await createSupabaseServerClient();
@@ -34,290 +114,222 @@ export default async function RunsPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
+  console.log("[runs/page] AUTH GUARD", { hasUser: Boolean(user) });
+
   if (!user) {
+    console.log("[runs/page] NO USER → redirect(/login)");
     redirect("/login");
   }
 
-  const { runs, error } = await fetchRecentRuns(supabase, 50);
+  const { data, error } = await supabase
+    .from("runs")
+    .select(
+      "id,created_at,mode,status,policy_version,bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at"
+    )
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  const runs = (data ?? []) as RunRow[];
   const total = runs.length;
   const open = runs.filter((r) => !r.closed_at || !String(r.closed_at).trim()).length;
+  const prod = runs.filter((r) => norm(r.mode) === "prod").length;
   const invalid = runs.filter((r) => norm(r.status) === "invalid").length;
-
-  const attentionRuns = runs.filter((r) => norm(r.mode) === "prod" && norm(r.status) !== "valid");
-  const attentionCount = attentionRuns.length;
-
-  const policyKeys = new Set(
-    runs.map((r) => (r.policy_version?.trim() ? r.policy_version.trim() : "(unspecified)")),
-  );
-  const distinctPolicyVersions = policyKeys.size;
-
-  const latest = runs[0];
-  const latestValid = runs.find((r) => norm(r.status) === "valid");
-
-  const latestId = latest?.id;
-  const primaryCta =
-    latestId != null
-      ? { href: `/runs/${latestId}`, label: "Open latest run" as const }
-      : { href: "/policies", label: "Open Policies" as const };
-
-  const reviewHref =
-    attentionRuns[0]?.id != null
-      ? `/runs/${attentionRuns[0].id}`
-      : latestId != null
-        ? `/runs/${latestId}`
-        : "/evidence";
-
-  let nextStepTitle = "Review the latest run";
-  let nextStepBody =
-    "Confirm exports, evidence posture, and policy signals match what you expect in production.";
-  if (error) {
-    nextStepTitle = "Restore data access";
-    nextStepBody = "Runs could not be loaded. Check connectivity, credentials, and try again.";
-  } else if (total === 0) {
-    nextStepTitle = "Record a first run";
-    nextStepBody = "When your pipeline posts a run, it will appear here with policy and evidence signals.";
-  } else if (attentionCount > 0) {
-    nextStepTitle = "Review production attention items";
-    nextStepBody = `${attentionCount} prod run${attentionCount === 1 ? "" : "s"} ${attentionCount === 1 ? "does" : "do"} not show a valid status — open the row for detail.`;
-  } else if (invalid > 0) {
-    nextStepTitle = "Investigate invalid outcomes";
-    nextStepBody = `${invalid} run${invalid === 1 ? "" : "s"} marked invalid — trace evaluation and approvals from the run detail.`;
-  }
-
-  const dataSourceOk = !error;
+  const prodNotValid = runs.filter((r) => norm(r.mode) === "prod" && norm(r.status) !== "valid").length;
 
   return (
-    <DashboardPageShell>
-      <div className={dashboardPageStack}>
-        <DashboardPageIntroduction>
-          <DashboardHero
-            showBottomDivider={false}
-            kicker="Compliance control plane"
-            title="Runs"
-            description="Operational ledger for compliance runs — policy binding, evidence posture, and audit outputs. Use this view to monitor health, drill into a run, and cross-check Policies and Evidence."
-          />
-          <div className="mt-2">
-            <DashboardActionStrip primary={primaryCta} secondary={{ href: "/evidence", label: "Evidence register" }}>
-              <DashboardTertiaryLink href="/policies">Policy versions</DashboardTertiaryLink>
-              <span className="hidden text-sm [color:var(--govai-text-muted)] sm:inline" aria-hidden>
-                ·
-              </span>
-              <DashboardTertiaryLink href="/ai-discovery">AI discovery</DashboardTertiaryLink>
-            </DashboardActionStrip>
-          </div>
-        </DashboardPageIntroduction>
-
-        <div className="grid gap-5 lg:grid-cols-12 lg:gap-6">
-          <div className="lg:col-span-4">
-            <ConsoleModuleCard
-              eyebrow="How this works"
-              title="Evidence-first workflow"
-              purpose="Each run ties together evaluation, approvals, and exports you can defend in audit."
-            >
-              <ol className="govai-console-module__list [list-style-type:decimal]">
-                <li>Runs land from your pipeline or adapter into this ledger (newest first).</li>
-                <li>Policy versions and health signals are derived from live traffic — see Policies.</li>
-                <li>Evidence bundles and reports are checked per run — see Evidence for posture.</li>
-              </ol>
-            </ConsoleModuleCard>
-          </div>
-          <div className="lg:col-span-4">
-            <ConsoleModuleCard
-              eyebrow="Current status"
-              title="Window snapshot"
-              purpose="Based on the latest 50 runs loaded into this workspace."
-              surface="secondary"
-            >
-              <dl className="govai-console-kv">
-                <div className="govai-console-kv__row">
-                  <dt>Data source</dt>
-                  <dd>
-                    {dataSourceOk ? (
-                      <>
-                        <span className="govai-console-status-dot govai-console-status-dot--ok" aria-hidden />
-                        Connected
-                      </>
-                    ) : (
-                      <>
-                        <span className="govai-console-status-dot govai-console-status-dot--err" aria-hidden />
-                        Error
-                      </>
-                    )}
-                  </dd>
-                </div>
-                <div className="govai-console-kv__row">
-                  <dt>Latest activity</dt>
-                  <dd>{latest?.created_at ? `${fmt(latest.created_at)} · ${relativeTimeAgo(latest.created_at)}` : "—"}</dd>
-                </div>
-                <div className="govai-console-kv__row">
-                  <dt>Policy versions seen</dt>
-                  <dd>{total === 0 ? "—" : distinctPolicyVersions}</dd>
-                </div>
-                <div className="govai-console-kv__row">
-                  <dt>Prod attention</dt>
-                  <dd>
-                    {total === 0 ? (
-                      "—"
-                    ) : attentionCount > 0 ? (
-                      <>
-                        <span className="govai-console-status-dot govai-console-status-dot--warn" aria-hidden />
-                        {attentionCount} open
-                      </>
-                    ) : (
-                      <>
-                        <span className="govai-console-status-dot govai-console-status-dot--ok" aria-hidden />
-                        None flagged
-                      </>
-                    )}
-                  </dd>
-                </div>
-              </dl>
-            </ConsoleModuleCard>
-          </div>
-          <div className="lg:col-span-4">
-            <ConsoleModuleCard
-              eyebrow="Recommended next step"
-              title={nextStepTitle}
-              purpose={nextStepBody}
-              surface="inner"
-              emphasis
-            >
-              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-                <Link href={reviewHref} className="govai-btn--primary inline-flex" prefetch>
-                  {error ? "Retry connection" : attentionCount > 0 ? "Open attention run" : "Open review target"}
-                </Link>
-                <Link href="/evidence" className="govai-btn--secondary inline-flex text-sm" prefetch>
-                  Evidence posture
-                </Link>
-              </div>
-              <p className="mt-4 text-[0.75rem] leading-relaxed [color:var(--govai-text-muted)]">
-                What to review next: invalid rows, prod non-valid modes, or missing evidence — then confirm exports in the run
-                detail.
-              </p>
-            </ConsoleModuleCard>
+    <div>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 22, letterSpacing: "-0.02em" }}>Runs</h1>
+          <div style={{ marginTop: 6, fontSize: 13, opacity: 0.72 }}>
+            Latest 50 runs from the <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>runs</span> table.
           </div>
         </div>
 
-        <div className="grid gap-5 lg:grid-cols-12 lg:gap-6">
-          <div className="lg:col-span-7">
-            <ConsoleModuleCard
-              eyebrow="Operational signals"
-              title="Queue metrics"
-              purpose="Counts from the loaded window; invalid highlights downstream validation risk."
-            >
-              <DashboardStatChips
-                embedded
-                stats={[
-                  { label: "Total in window", value: total, hint: "Max 50 loaded", valueTone: "neutral" },
-                  { label: "Open", value: open, valueTone: "neutral" },
-                  {
-                    label: "Invalid",
-                    value: invalid,
-                    valueTone: invalid === 0 ? "success" : "warning",
-                  },
-                  {
-                    label: "Latest valid",
-                    value: latestValid?.created_at ? relativeTimeAgo(latestValid.created_at) : total === 0 ? "—" : "None in window",
-                    hint: latestValid ? fmt(latestValid.created_at) : undefined,
-                    valueTone: latestValid ? "success" : total === 0 ? "neutral" : "warning",
-                  },
-                ]}
-              />
-            </ConsoleModuleCard>
-          </div>
-          <div className="lg:col-span-5">
-            <ConsoleModuleCard
-              eyebrow="Pipeline & registers"
-              title="Where to go next"
-              purpose="Cross-check policy versions and evidence without leaving the compliance story."
-              surface="secondary"
-            >
-              <ul className="govai-console-module__list [list-style-type:disc]">
-                <li>
-                  <Link href="/policies" className="govai-link text-[0.8125rem]">
-                    Policies — version register and health from runs
-                  </Link>
-                </li>
-                <li>
-                  <Link href="/evidence" className="govai-link text-[0.8125rem]">
-                    Evidence — bundle/report posture by run
-                  </Link>
-                </li>
-                <li>
-                  <Link href="/ai-discovery" className="govai-link text-[0.8125rem]">
-                    AI discovery — repository signals (optional)
-                  </Link>
-                </li>
-              </ul>
-            </ConsoleModuleCard>
-          </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <StatPill label="Shown" value={total} />
+          <StatPill label="Open" value={open} />
+          <StatPill label="Prod" value={prod} />
+          <StatPill label="Invalid" value={invalid} />
+          <StatPill label="Prod≠Valid" value={prodNotValid} />
         </div>
+      </div>
 
-        <section>
-          <ConsoleModuleCard
-            eyebrow="Ledger"
-            title="Recent runs"
-            purpose={
-              error
-                ? "Could not load rows — fix the error above and refresh."
-                : "Newest first. Policy label and time help you pick a row; prod rows that are not valid are highlighted."
-            }
+      <div style={{ marginTop: 14 }}>
+        {error ? (
+          <div
+            style={{
+              padding: 12,
+              border: "1px solid rgba(255,255,255,0.10)",
+              borderRadius: 12,
+              background: "rgba(255,255,255,0.02)",
+              fontSize: 13,
+            }}
           >
-            {error ? (
-              <div className={dashboardErrorBanner} role="alert">
-                <span className={dashboardErrorBannerTitle}>Load error.</span> {error.message}
-              </div>
-            ) : runs.length === 0 ? (
-              <div className={emptySurface}>No runs in this window.</div>
-            ) : (
-              <DashboardCompactCard className="mt-1 border-[color:var(--govai-border-ink-faint)] bg-[color:var(--govai-bg-inner)]">
-                <div className="px-0 py-1">
-                  {runs.map((r, idx) => {
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>Load error</div>
+            <div style={{ opacity: 0.8 }}>{error.message}</div>
+          </div>
+        ) : runs.length === 0 ? (
+          <div
+            style={{
+              padding: 12,
+              border: "1px solid rgba(255,255,255,0.10)",
+              borderRadius: 12,
+              background: "rgba(255,255,255,0.02)",
+              fontSize: 13,
+              opacity: 0.85,
+            }}
+          >
+            No runs yet.
+          </div>
+        ) : (
+          <div
+            style={{
+              border: "1px solid rgba(255,255,255,0.10)",
+              borderRadius: 12,
+              overflow: "hidden",
+              background: "rgba(0,0,0,0.12)",
+            }}
+          >
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1120 }}>
+                <thead>
+                  <tr style={{ background: "rgba(255,255,255,0.04)" }}>
+                    <th style={{ padding: "10px 10px", textAlign: "left", fontSize: 12, opacity: 0.72 }}>
+                      Created
+                    </th>
+                    <th style={{ padding: "10px 10px", textAlign: "left", fontSize: 12, opacity: 0.72 }}>
+                      Mode
+                    </th>
+                    <th style={{ padding: "10px 10px", textAlign: "left", fontSize: 12, opacity: 0.72 }}>
+                      Status
+                    </th>
+                    <th style={{ padding: "10px 10px", textAlign: "left", fontSize: 12, opacity: 0.72 }}>
+                      Policy
+                    </th>
+                    <th style={{ padding: "10px 10px", textAlign: "left", fontSize: 12, opacity: 0.72 }}>
+                      Bundle
+                    </th>
+                    <th style={{ padding: "10px 10px", textAlign: "left", fontSize: 12, opacity: 0.72 }}>
+                      Evidence
+                    </th>
+                    <th style={{ padding: "10px 10px", textAlign: "left", fontSize: 12, opacity: 0.72 }}>
+                      Report
+                    </th>
+                    <th style={{ padding: "10px 10px", textAlign: "left", fontSize: 12, opacity: 0.72 }}>
+                      Source
+                    </th>
+                    <th style={{ padding: "10px 10px", textAlign: "left", fontSize: 12, opacity: 0.72 }}>
+                      Closed
+                    </th>
+                    <th style={{ padding: "10px 10px", textAlign: "left", fontSize: 12, opacity: 0.72 }}>
+                      ID
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {runs.map((r) => {
                     const mode = norm(r.mode);
                     const status = norm(r.status);
-                    const needsAttention = mode === "prod" && status !== "valid";
-                    const policyKey = (r.policy_version?.trim() || "(unspecified)") as string;
-                    const policyDisplay = displayPolicyName(policyKey);
+                    const prodNotValid = mode === "prod" && status !== "valid";
+
+                    const rowStyle: React.CSSProperties = {
+                      borderTop: "1px solid rgba(255,255,255,0.08)",
+                      background: prodNotValid ? "rgba(255,255,255,0.03)" : "transparent",
+                    };
 
                     return (
-                      <Link
-                        key={r.id}
-                        href={`/runs/${r.id}`}
-                        className="govai-run-row block"
-                        prefetch
-                        style={{
-                          borderRadius: 0,
-                          marginBottom: 0,
-                          borderTop: idx > 0 ? "1px solid var(--govai-divider)" : undefined,
-                          background: needsAttention ? "var(--govai-row-attention)" : undefined,
-                        }}
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
-                          <div className="min-w-0 flex-1">
-                            <div
-                              className="text-sm font-semibold tracking-tight [color:var(--govai-text-primary)]"
-                              title={policyKey}
-                            >
-                              {policyDisplay}
-                            </div>
-                            <div className="mt-1 text-xs [color:var(--govai-text-muted)]">
-                              {fmt(r.created_at) || "—"}
-                            </div>
-                          </div>
-                          <div className="flex shrink-0 flex-wrap items-center gap-2">
-                            <ModeBadge mode={r.mode} />
-                            <StatusBadge status={r.status} />
-                          </div>
-                        </div>
-                      </Link>
+                      <tr key={r.id} style={rowStyle}>
+                        <td style={{ padding: "10px 10px", whiteSpace: "nowrap", fontSize: 13, opacity: 0.9 }}>
+                          {fmt(r.created_at)}
+                        </td>
+
+                        <td style={{ padding: "10px 10px", whiteSpace: "nowrap" }}>
+                          <ModeBadge mode={r.mode} />
+                        </td>
+
+                        <td style={{ padding: "10px 10px", whiteSpace: "nowrap" }}>
+                          <StatusBadge status={r.status} />
+                        </td>
+
+                        <td style={{ padding: "10px 10px", whiteSpace: "nowrap", fontSize: 13, opacity: 0.86 }}>
+                          {r.policy_version ?? ""}
+                        </td>
+
+                        <td
+                          style={{
+                            padding: "10px 10px",
+                            whiteSpace: "nowrap",
+                            fontSize: 13,
+                            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                            opacity: 0.86,
+                          }}
+                        >
+                          {shortHash(r.bundle_sha256)}
+                        </td>
+
+                        <td
+                          style={{
+                            padding: "10px 10px",
+                            whiteSpace: "nowrap",
+                            fontSize: 13,
+                            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                            opacity: 0.86,
+                          }}
+                        >
+                          {shortHash(r.evidence_sha256)}
+                        </td>
+
+                        <td
+                          style={{
+                            padding: "10px 10px",
+                            whiteSpace: "nowrap",
+                            fontSize: 13,
+                            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                            opacity: 0.86,
+                          }}
+                        >
+                          {shortHash(r.report_sha256)}
+                        </td>
+
+                        <td style={{ padding: "10px 10px", whiteSpace: "nowrap", fontSize: 13, opacity: 0.86 }}>
+                          {r.evidence_source ?? ""}
+                        </td>
+
+                        <td style={{ padding: "10px 10px", whiteSpace: "nowrap", fontSize: 13, opacity: 0.9 }}>
+                          {fmt(r.closed_at)}
+                        </td>
+
+                        <td
+                          style={{
+                            padding: "10px 10px",
+                            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                            whiteSpace: "nowrap",
+                            fontSize: 13,
+                          }}
+                        >
+                          <a
+                            href={`/runs/${r.id}`}
+                            style={{
+                              color: "rgba(255,255,255,0.85)",
+                              textDecoration: "underline",
+                              textUnderlineOffset: 4,
+                              textDecorationColor: "rgba(29,78,216,0.65)",
+                            }}
+                          >
+                            {r.id}
+                          </a>
+                        </td>
+                      </tr>
                     );
                   })}
-                </div>
-              </DashboardCompactCard>
-            )}
-          </ConsoleModuleCard>
-        </section>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
-    </DashboardPageShell>
+    </div>
   );
 }

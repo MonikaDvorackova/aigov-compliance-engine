@@ -1,26 +1,25 @@
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
-import { getNextPublicSupabaseKey, getNextPublicSupabaseUrl } from "@/lib/supabase/publicEnv";
 
 export async function createSupabaseServerClient() {
-  const url = getNextPublicSupabaseUrl();
-  const key = getNextPublicSupabaseKey();
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
+  if (!anon) throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY");
 
   const store = await cookies();
 
-  return createServerClient(url, key, {
+  return createServerClient(url, anon, {
     cookies: {
-      getAll() {
-        return store.getAll();
+      get(name: string) {
+        return store.get(name)?.value;
       },
-      setAll(cookiesToSet) {
-        try {
-          for (const { name, value, options } of cookiesToSet) {
-            store.set(name, value, options);
-          }
-        } catch {
-          /* Server Components often cannot set cookies; Route Handlers + proxy refresh the session. */
-        }
+      set(name: string, value: string, options: any) {
+        store.set({ name, value, ...options });
+      },
+      remove(name: string, options: any) {
+        store.set({ name, value: "", ...options, maxAge: 0 });
       },
     },
   });
