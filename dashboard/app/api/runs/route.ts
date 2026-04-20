@@ -1,20 +1,9 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { fetchRecentRunsFromGovai, isConsoleRunsReadEnabled } from "@/lib/console/govaiConsoleRunsRead";
+import type { RunRow } from "@/lib/console/runTypes";
 
 export const dynamic = "force-dynamic";
-
-type RunRow = {
-  id: string;
-  created_at: string;
-  mode: string | null;
-  status: string | null;
-  policy_version: string | null;
-  bundle_sha256: string | null;
-  evidence_sha256: string | null;
-  report_sha256: string | null;
-  evidence_source: string | null;
-  closed_at: string | null;
-};
 
 export async function GET(_request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -36,6 +25,17 @@ export async function GET(_request: Request) {
       { ok: false, error: "unauthorized", message: "Not signed in." },
       { status: 401 }
     );
+  }
+
+  if (isConsoleRunsReadEnabled()) {
+    const { runs, error } = await fetchRecentRunsFromGovai(50);
+    if (error) {
+      return NextResponse.json(
+        { ok: false, error: "db_error", message: error.message },
+        { status: 500 }
+      );
+    }
+    return NextResponse.json({ ok: true, runs }, { status: 200 });
   }
 
   const { data, error } = await supabase
