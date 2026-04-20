@@ -22,22 +22,32 @@ def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _eid(prefix: str, run_id: str) -> str:
+    return f"{prefix}_{run_id}_{uuid.uuid4()}"
+
+
 def main() -> None:
     run_id = os.environ.get("RUN_ID", "").strip()
     if not run_id:
         raise SystemExit("RUN_ID is required")
 
-    actor = os.getenv("AIGOV_ACTOR", "monika")
-    system = os.getenv("AIGOV_SYSTEM", "aigov_poc")
+    actor = (os.getenv("AIGOV_ACTOR", "monika") or "monika").strip()
+    system = (os.getenv("AIGOV_SYSTEM", "aigov_poc") or "aigov_poc").strip()
 
-    base = os.getenv("AIGOV_AUDIT_ENDPOINT", "http://127.0.0.1:8088").rstrip("/")
+    base = (os.getenv("AIGOV_AUDIT_ENDPOINT", "http://127.0.0.1:8088") or "").rstrip("/")
     url = f"{base}/evidence"
 
-    ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    event_id = f"ha_{uuid.uuid4()}"
+    ts = _utc_now_iso()
 
-    payload: Dict[str, Any] = {
-        "event_id": event_id,
+    # Event id used for the remote (audit service) record
+    remote_event_id = _eid("ha", run_id)
+
+    remote_payload: Dict[str, Any] = {
+        "event_id": remote_event_id,
         "event_type": "human_approved",
         "ts_utc": ts,
         "actor": actor,
@@ -51,35 +61,42 @@ def main() -> None:
         },
     }
 
+    # Local evidence log: approve_started
     emit_event(
-        run_id,
-        "approve_started",
+        run_id=run_id,
+        event_type="approve_started",
         actor=actor,
-        payload={"event_id": event_id, "ts_utc": ts, "system": system},
+        payload={"ts_utc": ts, "remote_event_id": remote_event_id},
+        system=system,
+        event_id=_eid("approve_started", run_id),
     )
 
     try:
-        out = _post_json(url, payload)
+        out = _post_json(url, remote_payload)
     except Exception as e:
         emit_event(
-            run_id,
-            "approve_failed",
+            run_id=run_id,
+            event_type="approve_failed",
             actor=actor,
-            payload={"event_id": event_id, "ts_utc": ts, "system": system, "error": str(e)},
+            payload={"ts_utc": ts, "remote_event_id": remote_event_id, "error": str(e)},
+            system=system,
+            event_id=_eid("approve_failed", run_id),
         )
         raise
 
+    # Local evidence log: human_approved (store request + response)
     emit_event(
-        run_id,
-        "human_approved",
+        run_id=run_id,
+        event_type="human_approved",
         actor=actor,
         payload={
-            "event_id": event_id,
             "ts_utc": ts,
-            "system": system,
-            "request": payload,
+            "remote_event_id": remote_event_id,
+            "request": remote_payload,
             "response": out,
         },
+        system=system,
+        event_id=_eid("human_approved", run_id),
     )
 
     print(json.dumps(out, ensure_ascii=False))

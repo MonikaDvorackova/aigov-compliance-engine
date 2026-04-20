@@ -15,21 +15,25 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _eid(prefix: str, run_id: str) -> str:
+    return f"{prefix}_{run_id}_{uuid.uuid4()}"
+
+
 def main() -> None:
     run_id = os.environ.get("RUN_ID", "").strip()
     if not run_id:
         raise SystemExit("RUN_ID is required")
 
-    actor = os.getenv("AIGOV_ACTOR", "monika").strip() or "monika"
-    system = os.getenv("AIGOV_SYSTEM", "aigov_poc").strip() or "aigov_poc"
+    actor = (os.getenv("AIGOV_ACTOR", "monika") or "monika").strip() or "monika"
+    system = (os.getenv("AIGOV_SYSTEM", "aigov_poc") or "aigov_poc").strip() or "aigov_poc"
 
     ts = _utc_now_iso()
 
-    # Always unique to prevent accidental duplicates from repeated CLI calls
-    event_id = f"mp_{run_id}_{uuid.uuid4()}"
+    # Remote (audit service) event id
+    remote_event_id = _eid("mp", run_id)
 
-    event: Dict[str, Any] = {
-        "event_id": event_id,
+    remote_event: Dict[str, Any] = {
+        "event_id": remote_event_id,
         "event_type": "model_promoted",
         "ts_utc": ts,
         "actor": actor,
@@ -38,44 +42,51 @@ def main() -> None:
         "payload": {
             "artifact_path": f"python/artifacts/model_{run_id}.joblib",
             "promotion_reason": "approved_by_human",
-            "promotion_attempt_id": event_id,
+            "promotion_attempt_id": remote_event_id,
         },
     }
 
-    endpoint = os.getenv("AIGOV_AUDIT_ENDPOINT", "http://127.0.0.1:8088").rstrip("/")
+    endpoint = (os.getenv("AIGOV_AUDIT_ENDPOINT", "http://127.0.0.1:8088") or "").rstrip("/")
     url = f"{endpoint}/evidence"
 
+    # Local evidence log: promote_started
     emit_event(
-        run_id,
-        "promote_started",
+        run_id=run_id,
+        event_type="promote_started",
         actor=actor,
-        payload={"ts_utc": ts, "system": system, "event_id": event_id},
+        payload={"ts_utc": ts, "remote_event_id": remote_event_id},
+        system=system,
+        event_id=_eid("promote_started", run_id),
     )
 
     try:
-        r = requests.post(url, json=event, timeout=10)
+        r = requests.post(url, json=remote_event, timeout=10)
         resp_text = r.text
         status_code = r.status_code
     except Exception as e:
         emit_event(
-            run_id,
-            "promote_failed",
+            run_id=run_id,
+            event_type="promote_failed",
             actor=actor,
-            payload={"ts_utc": ts, "system": system, "event_id": event_id, "error": str(e)},
+            payload={"ts_utc": ts, "remote_event_id": remote_event_id, "error": str(e)},
+            system=system,
+            event_id=_eid("promote_failed", run_id),
         )
         raise
 
+    # Local evidence log: model_promoted (record response)
     emit_event(
-        run_id,
-        "model_promoted",
+        run_id=run_id,
+        event_type="model_promoted",
         actor=actor,
         payload={
             "ts_utc": ts,
-            "system": system,
-            "event_id": event_id,
+            "remote_event_id": remote_event_id,
             "http_status": status_code,
             "response_text": resp_text,
         },
+        system=system,
+        event_id=_eid("model_promoted", run_id),
     )
 
     print(resp_text)
