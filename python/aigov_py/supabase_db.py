@@ -18,7 +18,8 @@ def create_supabase_client(strict: bool = True):
     return create_client(url, key)
 
 
-def upsert_run_row(row: Dict[str, Any]) -> None:
+def upsert_run_row_via_supabase(row: Dict[str, Any]) -> None:
+    """Write run metadata to Supabase ``runs`` (legacy path; prefer ``aigov_py.run_rows.upsert_run_row``)."""
     client = create_supabase_client(strict=True)
 
     # IMPORTANT: primary key column is "id"
