@@ -4,15 +4,15 @@
 export const colors = {
   bg: {
     base: "#0B1220",
-    sidebar: "#101318",
-    card: "#1A1D24",
-    card2: "#14161D",
-    inner: "#242930",
+    sidebar: "#0E1625",
+    card: "#111A2B",
+    card2: "#0F1726",
+    inner: "#131D30",
   },
   text: {
-    primary: "#F6F5F2",
-    secondary: "#B9C2CC",
-    muted: "#8B95A3",
+    primary: "#F3F2EE",
+    secondary: "#B6BDC7",
+    muted: "#7E8794",
   },
   /** Muted steel — primary accent only (no chromatic hue) */
   accent: {
@@ -21,14 +21,13 @@ export const colors = {
     steelMuted: "#4A525D",
   },
   state: {
-    success: "#86B092",
-    warning: "#C49A62",
-    danger: "#C09090",
+    success: "#5E7A67",
+    warning: "#8A6A43",
+    danger: "#8A5A5A",
   },
   border: {
-    surface: "rgba(255,255,255,0.09)",
-    surfaceStrong: "rgba(255,255,255,0.14)",
-    inkFaint: "rgba(120,144,180,0.12)",
+    ink: "rgba(120,144,180,0.16)",
+    inkFaint: "rgba(120,144,180,0.10)",
   },
 } as const;
 
