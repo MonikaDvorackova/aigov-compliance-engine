@@ -2,7 +2,7 @@ import { relative } from "node:path";
 
 import { NextResponse } from "next/server";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireAiDiscoverySession } from "@/lib/ai-discovery/aiDiscoveryRouteAuth.server";
 import {
   getDiscoveryRepoRoot,
   safeResolveScanPath,
@@ -20,26 +20,9 @@ export type AiDiscoveryPostBody = {
 };
 
 export async function POST(request: Request) {
-  const supabase = await createSupabaseServerClient();
-
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-
-  if (userErr) {
-    return NextResponse.json(
-      { ok: false, error: "auth_error", message: userErr.message },
-      { status: 401 }
-    );
-  }
-
-  if (!user) {
-    return NextResponse.json(
-      { ok: false, error: "unauthorized", message: "Not signed in." },
-      { status: 401 }
-    );
-  }
+  const auth = await requireAiDiscoverySession();
+  if (!auth.ok) return auth.response;
+  const { user } = auth;
 
   let body: AiDiscoveryPostBody = {};
   try {

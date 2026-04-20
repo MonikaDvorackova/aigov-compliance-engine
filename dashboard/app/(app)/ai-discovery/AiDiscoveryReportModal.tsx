@@ -194,13 +194,13 @@ export function AiDiscoveryReportModal({
           ) : null}
         </div>
 
-        <h3 style={{ ...sectionTitle, marginTop: 20 }}>OpenAI usage</h3>
+        <h3 style={{ ...sectionTitle, marginTop: 20 }}>OpenAI signals</h3>
         <FileList paths={g.highConfidence.openai.files} />
 
-        <h3 style={sectionTitle}>Transformers</h3>
+        <h3 style={sectionTitle}>Transformers signals</h3>
         <FileList paths={g.experimental.transformers.files} />
 
-        <h3 style={sectionTitle}>Model artifacts</h3>
+        <h3 style={sectionTitle}>Model artifact signals</h3>
         <FileList paths={g.experimental.modelArtifacts.files} />
 
         {combinedBlocks.length > 0 && combinedNote ? (

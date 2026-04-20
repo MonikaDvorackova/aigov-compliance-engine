@@ -30,7 +30,14 @@ export async function GET(request: Request) {
     );
   }
   if (!authorize(request)) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "unauthorized",
+        message: "Invalid or missing Authorization bearer token.",
+      },
+      { status: 401 }
+    );
   }
 
   try {

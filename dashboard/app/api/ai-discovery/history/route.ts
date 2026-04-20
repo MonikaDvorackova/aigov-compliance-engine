@@ -1,33 +1,27 @@
 import { NextResponse } from "next/server";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  filterAndSortStoredScans,
+  pageHistoryScanResults,
+  parseHistoryQuery,
+} from "@/lib/ai-discovery/aiDiscoveryListQuery.server";
+import { requireAiDiscoverySession } from "@/lib/ai-discovery/aiDiscoveryRouteAuth.server";
 import { listStoredScans } from "@/lib/ai-discovery/scanHistoryPersistence.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function GET() {
-  const supabase = await createSupabaseServerClient();
-
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-
-  if (userErr) {
-    return NextResponse.json(
-      { ok: false, error: "auth_error", message: userErr.message },
-      { status: 401 }
-    );
-  }
-
-  if (!user) {
-    return NextResponse.json(
-      { ok: false, error: "unauthorized", message: "Not signed in." },
-      { status: 401 }
-    );
-  }
+export async function GET(request: Request) {
+  const auth = await requireAiDiscoverySession();
+  if (!auth.ok) return auth.response;
 
   const scans = listStoredScans();
-  return NextResponse.json({ ok: true, scans }, { status: 200 });
+  const url = new URL(request.url);
+  const q = parseHistoryQuery(url.searchParams);
+  const ordered = filterAndSortStoredScans(scans, q);
+  const { page, totalFiltered, hasMore } = pageHistoryScanResults(ordered, q);
+  return NextResponse.json(
+    { ok: true, scans: page, totalFiltered, hasMore },
+    { status: 200 }
+  );
 }
