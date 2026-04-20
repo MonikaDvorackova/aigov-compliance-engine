@@ -9,8 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from aigov_py.run_rows import upsert_run_row
-from aigov_py.supabase_db import create_supabase_client
+from aigov_py.supabase_db import create_supabase_client, upsert_run_row
 from aigov_py.storage_upload import upload_artifacts_for_run
 
 
@@ -261,7 +260,7 @@ def main(argv: list[str]) -> int:
     mode = str(row.get("mode") or _get_mode())
     upload_run_artifacts(run_id, mode)
 
-    print(f"ingested run {run_id} (run metadata per AIGOV_RUN_PERSISTENCE)")
+    print(f"ingested run {run_id} into Supabase")
     return 0
 
 

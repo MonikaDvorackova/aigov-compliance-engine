@@ -37,17 +37,17 @@ export function ConsoleModuleCard({
       className={`govai-console-module px-4 py-5 md:px-5 md:py-[1.35rem] ${surfaceClass[surface]} ${emphasis ? "govai-console-module--emphasis" : ""} ${className}`.trim()}
     >
       {eyebrow ? (
-        <p className="text-[0.62rem] font-medium uppercase tracking-[0.18em] [color:var(--govai-text-muted)]">{eyebrow}</p>
+        <p className="text-[0.65rem] font-semibold uppercase tracking-[0.14em] [color:var(--govai-text-label)]">{eyebrow}</p>
       ) : null}
       <h2
-        className={`text-[0.95rem] font-semibold tracking-[-0.02em] [color:var(--govai-text-primary)] ${eyebrow ? "mt-2" : ""}`}
+        className={`text-base font-semibold leading-snug tracking-[-0.02em] [color:var(--govai-text-primary)] md:text-[1.0625rem] ${eyebrow ? "mt-2.5" : ""}`}
       >
         {title}
       </h2>
       {purpose ? (
-        <p className="mt-1.5 text-[0.8125rem] font-normal leading-relaxed [color:var(--govai-text-secondary)]">{purpose}</p>
+        <p className="mt-2 text-[0.8125rem] font-normal leading-relaxed [color:var(--govai-text-secondary)]">{purpose}</p>
       ) : null}
-      <div className={purpose || eyebrow ? "mt-4" : "mt-3"}>{children}</div>
+      <div className={purpose || eyebrow ? "mt-5" : "mt-4"}>{children}</div>
     </section>
   );
 }

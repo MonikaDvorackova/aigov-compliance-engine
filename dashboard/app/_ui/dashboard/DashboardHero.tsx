@@ -17,14 +17,12 @@ export function DashboardHero({ title, description, kicker, showBottomDivider = 
       }
     >
       {kicker != null ? (
-        <p className="text-[0.62rem] font-medium uppercase tracking-[0.22em] [color:var(--govai-text-muted)]">
-          {kicker}
-        </p>
+        <p className="text-[0.65rem] font-semibold uppercase tracking-[0.14em] [color:var(--govai-text-label)]">{kicker}</p>
       ) : null}
-      <h1 className="mt-3 max-w-3xl text-[1.75rem] font-medium leading-[1.15] tracking-[-0.03em] [color:var(--govai-text-primary)] md:text-[2rem]">
+      <h1 className="mt-3 max-w-3xl text-[1.875rem] font-semibold leading-[1.12] tracking-[-0.03em] [color:var(--govai-text-primary)] md:text-[2.125rem]">
         {title}
       </h1>
-      <p className="mt-4 max-w-2xl text-[0.9375rem] font-normal leading-[1.55] [color:var(--govai-text-secondary)] md:text-base">
+      <p className="mt-5 max-w-2xl text-[0.9375rem] font-normal leading-[1.6] [color:var(--govai-text-secondary)] md:text-[1rem]">
         {description}
       </p>
     </header>

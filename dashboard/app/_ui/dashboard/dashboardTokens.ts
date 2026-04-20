@@ -28,10 +28,10 @@ export const dashboardErrorBanner =
 export const dashboardErrorBannerTitle = "font-medium [color:var(--govai-state-danger)]";
 
 export const dashboardAnchoredPanel =
-  "rounded-[10px] border bg-[color:var(--govai-bg-card)] p-4 md:p-5 [border-color:var(--govai-border-ink)]";
+  "rounded-[10px] border bg-[color:var(--govai-bg-card)] p-4 md:p-5 [border-color:var(--govai-border-surface-strong)]";
 
 export const dashboardGuidancePanel =
-  "rounded-[10px] border bg-[color:var(--govai-bg-card2)] px-4 py-5 md:px-5 md:py-6 [border-color:var(--govai-border-ink)]";
+  "rounded-[10px] border bg-[color:var(--govai-bg-card2)] px-4 py-5 md:px-5 md:py-6 [border-color:var(--govai-border-surface-strong)]";
 
 export const dashboardFooterNote =
   "border-t pt-6 text-[0.7rem] font-normal leading-relaxed [color:var(--govai-text-muted)] [border-color:var(--govai-divider)]";
