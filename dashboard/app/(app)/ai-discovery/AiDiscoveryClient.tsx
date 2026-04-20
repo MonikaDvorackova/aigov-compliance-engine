@@ -1,7 +1,8 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { premiumPrimaryButtonClass } from "@/app/_ui/cta/premiumPrimaryButton";
 import {
@@ -21,10 +22,21 @@ import {
   normalizeCandidatePath,
 } from "@/lib/ai-discovery/candidatePathNormalize";
 import { downloadAiDiscoveryJson } from "@/lib/ai-discovery/downloadDiscoveryJson";
+import { fetchDiscoveryScanById } from "@/lib/ai-discovery/discoveryReviewInline.client";
+import {
+  historyApiQueryFromPageParams,
+  inboxApiQueryFromPageParams,
+  targetStatusApiQueryFromPageParams,
+} from "@/lib/ai-discovery/aiDiscoveryListFilterQuery";
+import type { StoredDiscoveryScan } from "@/lib/ai-discovery/scanHistoryTypes";
 
 import { AiDiscoveryFilePath } from "./AiDiscoveryFilePath";
+import { AiDiscoveryActionRequiredSection } from "./AiDiscoveryActionRequiredSection";
 import { AiDiscoveryHistorySection } from "./AiDiscoveryHistorySection";
+import { AiDiscoveryListFilters } from "./AiDiscoveryListFilters";
+import { AiDiscoveryTargetStatusSection } from "./AiDiscoveryTargetStatusSection";
 import { AiDiscoveryReportModal } from "./AiDiscoveryReportModal";
+import { AiDiscoveryScanReviewModal } from "./AiDiscoveryScanReviewModal";
 
 type DiscoveryOkResponse = {
   ok: true;
@@ -115,11 +127,11 @@ function confirmationPairKey(
 function signalTypeLabel(t: AIDetection["type"]): string {
   switch (t) {
     case "openai":
-      return "OpenAI usage";
+      return "OpenAI signals";
     case "transformers":
-      return "Transformers usage";
+      return "Transformers signals";
     case "model_artifact":
-      return "Model artifact";
+      return "Model artifact signals";
     default:
       return t;
   }
@@ -140,6 +152,70 @@ function filterChipStyle(active: boolean): CSSProperties {
 const SCAN_FAILED = "Scan failed. Try again.";
 
 export default function AiDiscoveryClient() {
+  return (
+    <Suspense fallback={null}>
+      <AiDiscoveryClientInner />
+    </Suspense>
+  );
+}
+
+function AiDiscoveryClientInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const targetFilter = searchParams.get("target");
+  const listParamsKey = searchParams.toString();
+  const inboxListQuery = useMemo(
+    () => inboxApiQueryFromPageParams(new URLSearchParams(listParamsKey)),
+    [listParamsKey]
+  );
+  const targetStatusListQuery = useMemo(
+    () => targetStatusApiQueryFromPageParams(new URLSearchParams(listParamsKey)),
+    [listParamsKey]
+  );
+  const historyListQuery = useMemo(
+    () => historyApiQueryFromPageParams(new URLSearchParams(listParamsKey)),
+    [listParamsKey]
+  );
+
+  const listFiltersActive = useMemo(() => {
+    const sp = new URLSearchParams(listParamsKey);
+    return (
+      !!(sp.get("target")?.trim()) ||
+      !!(sp.get("targetQuery")?.trim()) ||
+      !!(sp.get("reviewStatus")?.trim()) ||
+      !!(sp.get("alertStatus")?.trim()) ||
+      sp.get("hasOpenChanges") === "true" ||
+      !!(sp.get("triggerType")?.trim())
+    );
+  }, [listParamsKey]);
+
+  const clearTargetFilter = useCallback(() => {
+    const sp = new URLSearchParams(searchParams.toString());
+    sp.delete("target");
+    const q = sp.toString();
+    router.push(q ? `/ai-discovery?${q}` : "/ai-discovery");
+  }, [router, searchParams]);
+
+  const bumpDiscoveryData = useCallback(() => {
+    setHistoryRefresh((n) => n + 1);
+  }, []);
+
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [reviewModalScan, setReviewModalScan] = useState<StoredDiscoveryScan | null>(null);
+
+  const openReviewModalFromScan = useCallback((scan: StoredDiscoveryScan) => {
+    setReviewModalScan(scan);
+    setReviewModalOpen(true);
+  }, []);
+
+  const openReviewModalFromScanId = useCallback(
+    async (scanId: string) => {
+      const scan = await fetchDiscoveryScanById(scanId);
+      if (scan) openReviewModalFromScan(scan);
+    },
+    [openReviewModalFromScan]
+  );
+
   const [target, setTarget] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -366,17 +442,59 @@ export default function AiDiscoveryClient() {
   }, [data, detectionVisible]);
 
   return (
+    <>
     <div style={{ maxWidth: 720 }}>
-      <p style={{ fontSize: 13, color: "var(--govai-text-secondary)", lineHeight: 1.5, marginBottom: 16 }}>
-        Signal-based scan of the repository on the server (OpenAI usage, Transformers, and experimental
-        weight-like filenames: .pt, .pth, .safetensors, .onnx, or pytorch_model.bin—other .bin files are
-        ignored). Results are heuristic, not a compliance verdict.
+      <p style={{ fontSize: 13, color: "var(--govai-text-secondary)", lineHeight: 1.55, marginBottom: 8 }}>
+        Signal-based AI discovery surfaces OpenAI usage, Transformers references, and model-weight filenames (for
+        example{" "}
+        <code style={{ fontSize: 12 }}>.pt</code>, <code style={{ fontSize: 12 }}>.pth</code>,{" "}
+        <code style={{ fontSize: 12 }}>.safetensors</code>, <code style={{ fontSize: 12 }}>.onnx</code>,{" "}
+        <code style={{ fontSize: 12 }}>pytorch_model.bin</code>
+        —not every <code style={{ fontSize: 12 }}>.bin</code>). Results are evidence signals, not conclusions.
+        The same workspace supports discovery, saved scan history, review, and monitoring (scheduled runs and
+        alerts).
+      </p>
+      <p
+        style={{
+          fontSize: 11,
+          color: "var(--govai-text-tertiary)",
+          lineHeight: 1.45,
+          marginBottom: 18,
+        }}
+      >
+        Signal-based detection. No compliance conclusions.
       </p>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+      <AiDiscoveryListFilters />
+
+      <AiDiscoveryActionRequiredSection
+        refreshTrigger={historyRefresh}
+        listQuery={inboxListQuery}
+        filtersActive={listFiltersActive}
+        onOpenReviewByScanId={openReviewModalFromScanId}
+        onReviewsMutated={bumpDiscoveryData}
+      />
+      <AiDiscoveryTargetStatusSection
+        refreshTrigger={historyRefresh}
+        listQuery={targetStatusListQuery}
+        filtersActive={listFiltersActive}
+        onOpenReviewByScanId={openReviewModalFromScanId}
+        onReviewsMutated={bumpDiscoveryData}
+      />
+
+      <AiDiscoveryHistorySection
+        refreshTrigger={historyRefresh}
+        listQuery={historyListQuery}
+        filtersActive={listFiltersActive}
+        targetFilter={targetFilter}
+        onClearTargetFilter={clearTargetFilter}
+        onOpenReview={openReviewModalFromScan}
+      />
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginTop: 8 }}>
         <label style={{ display: "flex", flexDirection: "column", gap: 4, flex: "1 1 220px" }}>
           <span style={{ fontSize: 11, color: "var(--govai-text-label)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            Subpath (optional)
+            Scan subpath (optional)
           </span>
           <input
             value={target}
@@ -409,7 +527,7 @@ export default function AiDiscoveryClient() {
             alignSelf: "flex-end",
           }}
         >
-          {loading ? "Scanning..." : "Run AI discovery"}
+          {loading ? "Scanning…" : "Run discovery scan"}
         </button>
       </div>
 
@@ -565,7 +683,7 @@ export default function AiDiscoveryClient() {
 
           {isEmpty ? (
             <p style={{ marginTop: 12, fontSize: 13, color: "var(--govai-text-secondary)" }}>
-              No AI usage signals detected
+              No AI signals detected yet. Run a scan to begin.
             </p>
           ) : null}
 
@@ -632,7 +750,7 @@ export default function AiDiscoveryClient() {
                   fontWeight: 600,
                 }}
               >
-                Detected AI usage
+                Signals in this run
               </h2>
 
               <div
@@ -646,15 +764,15 @@ export default function AiDiscoveryClient() {
                 }}
               >
                 <div style={{ fontWeight: 600, color: "var(--govai-text-secondary)", marginBottom: 4 }}>
-                  Detection confidence
+                  Signal tiers
                 </div>
                 <div>
-                  <span style={{ color: "var(--govai-text-secondary)" }}>High confidence:</span> direct API usage
-                  (e.g. OpenAI).
+                  <span style={{ color: "var(--govai-text-secondary)" }}>High confidence:</span> direct OpenAI API
+                  signals.
                 </div>
                 <div style={{ marginTop: 2 }}>
-                  <span style={{ color: "var(--govai-text-secondary)" }}>Experimental:</span> heuristic signals
-                  (e.g. transformers, model artifacts).
+                  <span style={{ color: "var(--govai-text-secondary)" }}>Experimental:</span> Transformers and model
+                  artifact filename heuristics.
                 </div>
               </div>
 
@@ -722,25 +840,10 @@ export default function AiDiscoveryClient() {
                                 >
                                   {done ? (
                                     <>
-                                      <span style={{ fontSize: 12, color: "var(--govai-state-success)" }}>Confirmed</span>
+                                      <span style={{ fontSize: 12, color: "var(--govai-state-success)" }}>Saved as candidate</span>
                                       <span style={{ fontSize: 11, color: "var(--govai-text-tertiary)", maxWidth: 220, textAlign: "right" }}>
-                                        Next step: connect this candidate to a compliance run.
+                                        Recorded for follow-up outside this view.
                                       </span>
-                                      <button
-                                        type="button"
-                                        disabled
-                                        style={{
-                                          padding: "5px 10px",
-                                          borderRadius: 6,
-                                          border: "1px solid var(--govai-border-faint)",
-                                          background: "transparent",
-                                          color: "var(--govai-text-tertiary)",
-                                          fontSize: 11,
-                                          cursor: "not-allowed",
-                                        }}
-                                      >
-                                        Create compliance run
-                                      </button>
                                     </>
                                   ) : (
                                     <button
@@ -777,7 +880,7 @@ export default function AiDiscoveryClient() {
                     High confidence
                   </h3>
                   <div style={{ fontSize: 12.5, fontWeight: 500 }}>
-                    OpenAI usage ({counts.openai})
+                    OpenAI signals ({counts.openai})
                   </div>
                   <FileListInteractive paths={data.groupedSummary.highConfidence.openai.files} />
                 </>
@@ -792,7 +895,7 @@ export default function AiDiscoveryClient() {
               {filters.transformers ? (
                 <>
                   <div style={{ fontSize: 12.5, fontWeight: 500 }}>
-                    Transformers usage ({counts.transformers})
+                    Transformers signals ({counts.transformers})
                   </div>
                   <FileListInteractive paths={data.groupedSummary.experimental.transformers.files} />
                 </>
@@ -801,7 +904,7 @@ export default function AiDiscoveryClient() {
               {filters.modelArtifacts ? (
                 <>
                   <div style={{ marginTop: filters.transformers ? 12 : 0, fontSize: 12.5, fontWeight: 500 }}>
-                    Model artifacts ({counts.modelArtifacts})
+                    Model artifact signals ({counts.modelArtifacts})
                   </div>
                   <FileListInteractive paths={data.groupedSummary.experimental.modelArtifacts.files} />
                 </>
@@ -810,7 +913,7 @@ export default function AiDiscoveryClient() {
           ) : null}
 
           <p style={{ marginTop: 18, fontSize: 11.5, color: "var(--govai-text-tertiary)", lineHeight: 1.5 }}>
-            Signal-based detection. No file contents read for model artifacts. No compliance conclusions.
+            Model artifact paths are inferred from filenames only (no file contents read).
           </p>
         </div>
         <AiDiscoveryReportModal
@@ -829,17 +932,15 @@ export default function AiDiscoveryClient() {
 
       {clientReady && !data && !error && !loading ? (
         <p style={{ marginTop: 16, fontSize: 12.5, color: "var(--govai-text-tertiary)" }}>
-          Run a scan to load results.
+          Run a discovery scan below to capture signals for this repository path.
         </p>
       ) : null}
-
-      <AiDiscoveryHistorySection refreshTrigger={historyRefresh} />
 
       <div style={{ ...panelStyle(), marginTop: 24 }}>
         <h2 style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 600 }}>AI system candidates</h2>
         <p style={{ margin: "0 0 10px", fontSize: 11.5, color: "var(--govai-text-tertiary)", lineHeight: 1.45 }}>
-          AI system candidates are detected entry points where AI may be used. Record them below and connect them
-          later to evaluation, approval, and deployment.
+          Promote individual signals to tracked candidates (in-memory on this server). Use for hand-off to review or
+          monitoring outside this page.
         </p>
         <p style={{ margin: "0 0 12px", fontSize: 11.5, color: "var(--govai-text-tertiary)", lineHeight: 1.45 }}>
           In-memory only: candidates are cleared when the server process restarts (no persistence yet).
@@ -848,7 +949,7 @@ export default function AiDiscoveryClient() {
           <p style={{ fontSize: 12.5, color: "var(--govai-state-danger)" }}>{confirmedListError}</p>
         ) : confirmedSystems.length === 0 ? (
           <p style={{ fontSize: 12.5, color: "var(--govai-text-tertiary)" }}>
-            None yet. Create candidates from the signals above after a scan.
+            None yet. Add candidates from the signals above after you run a scan.
           </p>
         ) : (
           <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
@@ -879,6 +980,27 @@ export default function AiDiscoveryClient() {
           </ul>
         )}
       </div>
+
+      <p
+        style={{
+          marginTop: 28,
+          fontSize: 11,
+          color: "var(--govai-text-tertiary)",
+          lineHeight: 1.45,
+        }}
+      >
+        Signal-based detection. No compliance conclusions.
+      </p>
     </div>
+    <AiDiscoveryScanReviewModal
+      open={reviewModalOpen}
+      scan={reviewModalScan}
+      onClose={() => {
+        setReviewModalOpen(false);
+        setReviewModalScan(null);
+      }}
+      onSaved={bumpDiscoveryData}
+    />
+    </>
   );
 }

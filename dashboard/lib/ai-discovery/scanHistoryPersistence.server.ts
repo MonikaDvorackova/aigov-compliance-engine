@@ -5,10 +5,7 @@ import type { AIDetection, DiscoveryGroupedSummary, DiscoveryNote } from "./apiT
 import type { DiscoveryCategoryCounts, DiscoveryScanChangeSummary } from "./scanChangeSummary";
 import { ZERO_CATEGORY_COUNTS } from "./scanChangeSummary";
 import {
-  DEFAULT_DISCOVERY_SCAN_ALERT,
   EMPTY_DISCOVERY_SCAN_CONTEXT,
-  type DiscoveryScanAlertDeliveryStatus,
-  type DiscoveryScanAlertFields,
   type DiscoveryScanContextFields,
   type StoredDiscoveryScan,
 } from "./scanHistoryTypes";
@@ -80,11 +77,6 @@ function normalizeChangeSummary(raw: unknown): DiscoveryScanChangeSummary | null
   return { hasChanges, addedCounts, removedCounts };
 }
 
-function normalizeAlertDeliveryStatus(v: unknown): DiscoveryScanAlertDeliveryStatus {
-  if (v === "not_attempted" || v === "sent" || v === "failed") return v;
-  return "not_attempted";
-}
-
 function normalizeStoredScan(raw: StoredDiscoveryScan): StoredDiscoveryScan {
   const r = raw as Record<string, unknown>;
   const statusRaw = r.reviewStatus;
@@ -125,10 +117,6 @@ function normalizeStoredScan(raw: StoredDiscoveryScan): StoredDiscoveryScan {
     triggerType: normalizeTriggerType(r.triggerType),
     scheduledTargetId: normalizeOptionalString(r.scheduledTargetId),
     changeSummary: normalizeChangeSummary(r.changeSummary),
-    alertAttemptedAt: normalizeOptionalString(r.alertAttemptedAt),
-    alertDeliveredAt: normalizeOptionalString(r.alertDeliveredAt),
-    alertDeliveryStatus: normalizeAlertDeliveryStatus(r.alertDeliveryStatus),
-    alertDeliveryError: normalizeOptionalString(r.alertDeliveryError),
   };
 }
 
@@ -190,7 +178,6 @@ export function appendSuccessfulScan(
     groupedSummary: input.groupedSummary,
     notes: input.notes,
     ...DEFAULT_DISCOVERY_SCAN_REVIEW,
-    ...DEFAULT_DISCOVERY_SCAN_ALERT,
     ...contextFields,
     scheduledTargetId: normalizeOptionalString(input.scheduledTargetId),
     changeSummary,
@@ -224,42 +211,6 @@ export function applyScanReviewFields(
   const next: StoredDiscoveryScan = {
     ...base,
     ...review,
-  };
-  data.scans[idx] = next;
-  writeHistory(data);
-  return normalizeStoredScan(next);
-}
-
-/**
- * Updates Slack alert delivery fields for a scan (e.g. after async notification).
- */
-export function updateScanAlertFields(
-  id: string,
-  patch: Partial<DiscoveryScanAlertFields>
-): StoredDiscoveryScan | undefined {
-  const data = readHistoryRaw();
-  const idx = data.scans.findIndex((s) => s.id === id);
-  if (idx < 0) return undefined;
-
-  const base = normalizeStoredScan(data.scans[idx]);
-  const next: StoredDiscoveryScan = {
-    ...base,
-    alertAttemptedAt:
-      patch.alertAttemptedAt !== undefined
-        ? normalizeOptionalString(patch.alertAttemptedAt)
-        : base.alertAttemptedAt,
-    alertDeliveredAt:
-      patch.alertDeliveredAt !== undefined
-        ? normalizeOptionalString(patch.alertDeliveredAt)
-        : base.alertDeliveredAt,
-    alertDeliveryStatus:
-      patch.alertDeliveryStatus !== undefined
-        ? normalizeAlertDeliveryStatus(patch.alertDeliveryStatus)
-        : base.alertDeliveryStatus,
-    alertDeliveryError:
-      patch.alertDeliveryError !== undefined
-        ? normalizeOptionalString(patch.alertDeliveryError)
-        : base.alertDeliveryError,
   };
   data.scans[idx] = next;
   writeHistory(data);

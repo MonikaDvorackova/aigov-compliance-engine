@@ -4,16 +4,10 @@ import { compareDiscoveryRuns } from "./compareDiscoveryRuns";
 import { findPriorScanForScheduledTarget } from "./findPriorScheduledScan";
 import { gatherScanContextFromEnvironment } from "./scanContextMetadata.server";
 import { loadRunDiscovery } from "./loadEngine";
-import {
-  appendSuccessfulScan,
-  listStoredScans,
-  updateScanAlertFields,
-} from "./scanHistoryPersistence.server";
-import { sendAiDiscoveryChangeAlertToSlack } from "./slackChangeAlert.server";
+import { appendSuccessfulScan, listStoredScans } from "./scanHistoryPersistence.server";
 import { loadScheduledScanConfig } from "./scheduledScanConfig.server";
 import { buildChangeSummaryFromDiff, ZERO_CATEGORY_COUNTS } from "./scanChangeSummary";
 import { getDiscoveryRepoRoot, safeResolveScanPath } from "./safeScanPath";
-import type { StoredDiscoveryScan } from "./scanHistoryTypes";
 
 export type ScheduledDiscoveryRunResult = {
   targetId: string;
@@ -106,8 +100,6 @@ export async function runScheduledDiscoveryForAllEnabledTargets(): Promise<{
 
       scansNewestFirst = [row, ...scansNewestFirst];
 
-      await maybeDeliverScheduledChangeAlert(row);
-
       results.push({
         targetId: target.id,
         scanRoot: scanRootDisplay,
@@ -126,43 +118,4 @@ export async function runScheduledDiscoveryForAllEnabledTargets(): Promise<{
   }
 
   return { results };
-}
-
-async function maybeDeliverScheduledChangeAlert(row: StoredDiscoveryScan): Promise<void> {
-  if (row.triggerType !== "scheduled") return;
-  if (!row.changeSummary || row.changeSummary.hasChanges !== true) return;
-
-  const webhook = process.env.AI_DISCOVERY_SLACK_WEBHOOK_URL?.trim();
-  if (!webhook) return;
-
-  const attemptedAt = new Date().toISOString();
-  try {
-    const out = await sendAiDiscoveryChangeAlertToSlack(webhook, row);
-    if (!out.ok) {
-      const errMsg = out.errorText?.trim() || `HTTP ${out.status}`;
-      updateScanAlertFields(row.id, {
-        alertAttemptedAt: attemptedAt,
-        alertDeliveredAt: null,
-        alertDeliveryStatus: "failed",
-        alertDeliveryError: errMsg,
-      });
-      console.error("[ai-discovery] Slack change alert failed:", errMsg);
-      return;
-    }
-    updateScanAlertFields(row.id, {
-      alertAttemptedAt: attemptedAt,
-      alertDeliveredAt: new Date().toISOString(),
-      alertDeliveryStatus: "sent",
-      alertDeliveryError: null,
-    });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error("[ai-discovery] Slack change alert error:", e);
-    updateScanAlertFields(row.id, {
-      alertAttemptedAt: attemptedAt,
-      alertDeliveredAt: null,
-      alertDeliveryStatus: "failed",
-      alertDeliveryError: msg,
-    });
-  }
 }
