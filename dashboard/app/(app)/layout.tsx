@@ -1,8 +1,8 @@
 import React from "react";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import AigovMark from "@/app/components/brand/AigovMark";
+import AppSidebar from "./AppSidebar";
+import AppHeader from "./AppHeader";
 
 export const dynamic = "force-dynamic";
 
@@ -17,57 +17,21 @@ export default async function AppLayout({
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) redirect("/login");
+  console.log("[layout] AUTH GUARD", { hasUser: Boolean(user), email: user?.email ?? null });
+
+  if (!user) {
+    console.log("[layout] NO USER → redirect(/login)");
+    redirect("/login");
+  }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        backgroundColor: "#0B1020",
-        background:
-          "radial-gradient(1100px 520px at 50% 8%, rgba(255,255,255,0.08), rgba(0,0,0,0))",
-        color: "white",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      {/* HEADER */}
-      <header
-        style={{
-          padding: "20px 24px",
-          borderBottom: "1px solid rgba(255,255,255,0.08)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <Link
-          href="/runs"
-          aria-label="GovAI"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            textDecoration: "none",
-          }}
-        >
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              lineHeight: 0,
-              transition: "opacity 120ms ease, transform 120ms ease",
-              opacity: 0.98,
-            }}
-          >
-            <AigovMark size={26} glow neon neonStrength="soft" tone="blue" />
-          </span>
-        </Link>
+    <div className="govai-app-shell">
+      <AppSidebar email={user.email ?? null} />
 
-        <div style={{ fontSize: 13, opacity: 0.6 }}>Signed in as {user.email}</div>
-      </header>
-
-      {/* CONTENT */}
-      <main style={{ flex: 1, padding: 24 }}>{children}</main>
+      <div className="govai-app-main">
+        <AppHeader email={user.email ?? null} />
+        <main className="govai-app-content">{children}</main>
+      </div>
     </div>
   );
 }

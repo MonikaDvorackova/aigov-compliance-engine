@@ -195,12 +195,12 @@ export default function LoginClient() {
           style={{
             display: "flex",
             justifyContent: "center",
-            marginBottom: 6,
-            height: 60,
+            marginBottom: 12,
+            minHeight: 128,
             alignItems: "center",
           }}
         >
-          <AigovMark size={50} glow={false} neon={false} neonStrength="off" tone="blue" style={{ opacity: 0.95 }} />
+          <AigovMark size={112} glow neon neonStrength="strong" tone="blue" />
         </div>
 
         <div style={{ opacity: 0.68, fontSize: 11, letterSpacing: "0.24em", marginBottom: 8 }}>GOVAI</div>
@@ -294,6 +294,12 @@ export default function LoginClient() {
               disabled={busy}
               style={inputStyle}
             />
+
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -4 }}>
+              <a href="/forgot-password" style={{ ...linkStyle, fontSize: 12 }}>
+                Forgot password?
+              </a>
+            </div>
 
             <button
               type="submit"

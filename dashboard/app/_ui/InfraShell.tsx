@@ -8,6 +8,8 @@ type Props = {
   maxWidth?: number;
   align?: "start" | "center";
   padding?: number;
+  /** Page chrome only. Defaults to solid app background. */
+  background?: string;
 };
 
 export default function InfraShell({
@@ -15,17 +17,15 @@ export default function InfraShell({
   maxWidth = 980,
   align = "start",
   padding = 22,
+  background = "var(--govai-bg-app)",
 }: Props) {
   const pageStyle: React.CSSProperties = {
     minHeight: "100vh",
     padding: `${padding}px 16px 28px`,
     display: "grid",
     placeItems: align === "center" ? "center" : "start center",
-    color: "rgba(255,255,255,0.92)",
-    background:
-      "radial-gradient(1200px 640px at 50% -10%, rgba(255,255,255,0.10), rgba(0,0,0,0))," +
-      "radial-gradient(900px 520px at 50% 12%, rgba(29,78,216,0.12), rgba(0,0,0,0))," +
-      "linear-gradient(180deg, rgba(9,16,32,1) 0%, rgba(5,9,18,1) 100%)",
+    color: "var(--govai-text)",
+    background,
   };
 
   const shellStyle: React.CSSProperties = {
@@ -40,16 +40,26 @@ export default function InfraShell({
   );
 }
 
-export function InfraPanel({ children }: { children: React.ReactNode }) {
+export function InfraPanel({
+  children,
+  padding = 20,
+  borderRadius = 20,
+  marginTop = 12,
+}: {
+  children: React.ReactNode;
+  padding?: number;
+  borderRadius?: number;
+  marginTop?: number;
+}) {
   return (
     <section
       style={{
-        marginTop: 12,
-        borderRadius: 24,
-        border: "1px solid rgba(255,255,255,0.14)",
-        background: "rgba(255,255,255,0.04)",
-        boxShadow: "0 28px 80px rgba(0,0,0,0.45)",
-        padding: 20,
+        marginTop,
+        borderRadius,
+        border: "1px solid var(--govai-border-faint)",
+        background: "var(--govai-bg-elevated)",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
+        padding,
         backdropFilter: "blur(16px)",
         WebkitBackdropFilter: "blur(16px)",
       }}
@@ -63,11 +73,11 @@ export function InfraCard({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
-        borderRadius: 20,
-        border: "1px solid rgba(255,255,255,0.14)",
-        background: "rgba(255,255,255,0.03)",
+        borderRadius: 18,
+        border: "1px solid var(--govai-border-faint)",
+        background: "var(--govai-bg-card2)",
         padding: "16px 14px",
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
       }}
     >
       {children}
@@ -95,13 +105,13 @@ export function InfraButton({
     height: 48,
     padding: "0 20px",
     borderRadius: 18,
-    border: "1px solid rgba(255,255,255,0.18)",
-    background: variant === "soft" ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.08)",
-    color: "rgba(255,255,255,0.92)",
+    border: "1px solid var(--govai-border-subtle)",
+    background: variant === "soft" ? "var(--govai-bg-panel)" : "var(--govai-bg-elevated)",
+    color: "var(--govai-text)",
     textDecoration: "none",
     fontSize: 17,
     fontWeight: 600,
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10), 0 20px 50px rgba(0,0,0,0.30)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
     backdropFilter: "blur(12px)",
     WebkitBackdropFilter: "blur(12px)",
     width: fullWidth ? "100%" : undefined,
@@ -161,7 +171,7 @@ export function InfraAigovMark({
   isRunning?: boolean;
   alignY?: number;
 }) {
-  const iconSize = size === "xl" ? 26 : size === "lg" ? 24 : 22;
+  const iconSize = size === "xl" ? 34 : size === "lg" ? 30 : 26;
   const pad = size === "xl" ? "10px 14px" : size === "lg" ? "9px 13px" : "8px 12px";
 
   const wrap: React.CSSProperties = {
@@ -175,9 +185,9 @@ export function InfraAigovMark({
     cursor: "pointer",
     position: "relative",
     transition: "transform 160ms ease, filter 160ms ease",
-    background: "radial-gradient(220px 90px at 50% 60%, rgba(59,130,246,0.22), rgba(0,0,0,0))",
-    border: "1px solid rgba(255,255,255,0.12)",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10), 0 0 0 1px rgba(59,130,246,0.06)",
+    background: "radial-gradient(220px 90px at 50% 60%, rgba(255,255,255,0.04), rgba(0,0,0,0))",
+    border: "1px solid var(--govai-border-faint)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
     backdropFilter: "blur(14px)",
     WebkitBackdropFilter: "blur(14px)",
   };
@@ -196,25 +206,13 @@ export function InfraAigovMark({
         e.currentTarget.style.transform = `translateY(${alignY}px) scale(1)`;
       }}
     >
-      <span
-        aria-hidden="true"
-        style={{
-          position: "absolute",
-          inset: -28,
-          borderRadius: 30,
-          filter: "blur(26px)",
-          opacity: 0.95,
-          pointerEvents: "none",
-          background: "radial-gradient(circle, rgba(96,165,250,0.55) 0%, rgba(59,130,246,0) 65%)",
-        }}
-      />
       <AigovMark
         isRunning={isRunning}
+        animationMode={isRunning ? "assemble" : "static"}
         size={iconSize}
-        glow
-        neon
-        neonStrength="soft"
-        tone="blue"
+        glow={false}
+        neon={false}
+        tone="steel"
         style={{ display: "block" }}
       />
     </a>
