@@ -7,11 +7,11 @@ import { useInAppNavPending } from "./useInAppNavPending";
 
 const LOGO_PX = 30;
 
-/** Tečky ve velikosti blízké rasteru v icon.svg (menší než dřív — bez „haló“ jako větší kuličky). */
+/** Tečky co nejblíž rasteru v icon.svg — malé, těsné, bez zbytečného „haló“. */
 const DOT_FILL = "rgb(96, 165, 250)";
-const DOT_SHADOW = "0 0 2px rgba(96, 165, 250, 0.35)";
-const DOT_GAP_PX = 2;
-const DOT_SIZE_PX = 2;
+const DOT_SHADOW = "0 0 1px rgba(96, 165, 250, 0.28)";
+const DOT_GAP_PX = 1;
+const DOT_SIZE_PX = 1.5;
 
 /**
  * Ukotvení řádku teček: v PNG jsou mezi rameny `< >` — obvykle pod geometrickým středem 30×30.
@@ -25,6 +25,15 @@ const DOTS_OFFSET_Y_PX = 1;
 const DOT_COUNT_STEP_MS = 480;
 
 const DOT_ROW_MIN_WIDTH_PX = DOT_SIZE_PX * 3 + DOT_GAP_PX * 2;
+
+const DOT_SLOT_STYLE: CSSProperties = {
+  width: DOT_SIZE_PX,
+  height: DOT_SIZE_PX,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+};
 
 /**
  * Překryje jen oblast rasterových teček v icon.svg (stejné ukotvení jako DotsRow).
@@ -113,27 +122,31 @@ function DotsRow({ reduceMotion, active }: { reduceMotion: boolean; active: bool
         transform: "translate(-50%, -50%)",
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
+        justifyContent: "flex-start",
         gap: DOT_GAP_PX,
-        minWidth: DOT_ROW_MIN_WIDTH_PX,
+        width: DOT_ROW_MIN_WIDTH_PX,
         zIndex: 2,
         pointerEvents: "none",
       }}
       aria-hidden
     >
-      {reduceMotion ? (
-        <>
-          <span className="govai-sidebar-lockup-dot govai-sidebar-lockup-dot--static" />
-          <span className="govai-sidebar-lockup-dot govai-sidebar-lockup-dot--static" />
-          <span className="govai-sidebar-lockup-dot govai-sidebar-lockup-dot--static" />
-        </>
-      ) : (
-        <>
-          {dotCount >= 1 ? <span className="govai-sidebar-lockup-dot" /> : null}
-          {dotCount >= 2 ? <span className="govai-sidebar-lockup-dot govai-sidebar-lockup-dot--2" /> : null}
-          {dotCount >= 3 ? <span className="govai-sidebar-lockup-dot govai-sidebar-lockup-dot--3" /> : null}
-        </>
-      )}
+      {[0, 1, 2].map((i) => (
+        <span key={i} style={DOT_SLOT_STYLE}>
+          {reduceMotion ? (
+            <span className="govai-sidebar-lockup-dot govai-sidebar-lockup-dot--static" />
+          ) : dotCount > i ? (
+            <span
+              className={
+                i === 0
+                  ? "govai-sidebar-lockup-dot"
+                  : i === 1
+                    ? "govai-sidebar-lockup-dot govai-sidebar-lockup-dot--2"
+                    : "govai-sidebar-lockup-dot govai-sidebar-lockup-dot--3"
+              }
+            />
+          ) : null}
+        </span>
+      ))}
     </span>
   );
 }
@@ -199,7 +212,7 @@ function SidebarBrandLogo({ pending, reduceMotion }: { pending: boolean; reduceM
             opacity: 0.65;
           }
           35% {
-            transform: translateY(-2px);
+            transform: translateY(-1px);
             opacity: 1;
           }
         }
