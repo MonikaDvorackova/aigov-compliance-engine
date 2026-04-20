@@ -29,6 +29,9 @@ node_modules/
 out/
 dist/
 
+# AI Discovery server-side scan history (optional local file)
+.govai/
+
 # Logs
 *.log
 
