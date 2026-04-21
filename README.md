@@ -4,6 +4,213 @@ Package name: aigov-py
 Import: govai  
 CLI: govai  
 
+## Quickstart
+
+```bash
+# Start audit service
+export DATABASE_URL='postgresql://USER:PASSWORD@127.0.0.1:5432/DBNAME'
+make audit_bg
+curl -sS http://127.0.0.1:8088/status
+```
+
+Expected:
+
+```json
+{"ok": true, "policy_version": "v0.4_human_approval"}
+```
+
+```bash
+# Install Python package
+cd python
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+cd ..
+```
+
+```bash
+# Minimal Python example
+source python/.venv/bin/activate
+python <<'PY'
+import uuid
+from datetime import datetime, timezone
+
+from govai import GovAIClient, submit_event, get_compliance_summary, verify_chain
+
+def now_utc():
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+client = GovAIClient("http://127.0.0.1:8088")
+run_id = str(uuid.uuid4())
+
+submit = submit_event(
+    client,
+    {
+        "event_id": str(uuid.uuid4()),
+        "event_type": "data_registered",
+        "ts_utc": now_utc(),
+        "actor": "quickstart",
+        "system": "govai_quickstart",
+        "run_id": run_id,
+        "payload": {
+            "ai_system_id": "expense-ai",
+            "dataset_id": "expense_dataset_v1",
+            "dataset": "customer_expense_records",
+            "dataset_version": "v1",
+            "dataset_fingerprint": "sha256:demo",
+            "dataset_governance_id": "gov_expense_v1",
+            "dataset_governance_commitment": "basic_compliance",
+            "source": "internal",
+            "intended_use": "expense classification",
+            "limitations": "demo dataset",
+            "quality_summary": "validated sample",
+            "governance_status": "registered",
+        },
+    },
+)
+
+summary = get_compliance_summary(client, run_id)
+chain = verify_chain(client)
+
+print("RUN_ID=" + run_id)
+print("submit_event=", submit)
+print("get_compliance_summary=", summary)
+print("verify_chain=", chain)
+PY
+```
+
+Example output:
+
+```json
+{"ok": true, "record_hash": "<hex>", "policy_version": "v0.4_human_approval"}
+```
+
+```json
+{"ok": true, "schema_version": "aigov.compliance_summary.v2", "run_id": "<uuid>"}
+```
+
+```json
+{"ok": true, "policy_version": "v0.4_human_approval"}
+```
+
+```bash
+# CLI
+source python/.venv/bin/activate
+govai init --url http://127.0.0.1:8088
+```
+
+Expected:
+
+```json
+{"ok": true, "audit_base_url": "http://127.0.0.1:8088"}
+```
+
+```bash
+export RUN_ID='<paste RUN_ID>'
+
+govai compliance-summary --run-id "$RUN_ID"
+govai verify --json --run-id "$RUN_ID"
+```
+
+Expected:
+
+```json
+{
+  "run_id": "<uuid>",
+  "verdict": "VALID",
+  "checks": [
+    { "id": "governance_chain", "ok": true },
+    { "id": "evidence_events", "ok": true }
+  ]
+}
+```
+
+---
+
+## Why GovAI
+
+GovAI turns AI system behavior into verifiable evidence.
+
+Instead of trusting logs or model outputs, you get a deterministic audit trail:
+events → hash chain → compliance verdict.
+
+This makes AI systems auditable, testable, and enforceable in CI.
+
+## Example: ML pipeline audit
+
+Minimal example: register a dataset event and evaluate compliance.
+
+```bash
+source python/.venv/bin/activate
+python <<'PY'
+import uuid
+from govai import GovAIClient, submit_event, get_compliance_summary
+
+client = GovAIClient("http://127.0.0.1:8088")
+run_id = str(uuid.uuid4())
+
+submit_event(client, {
+    "event_id": str(uuid.uuid4()),
+    "event_type": "data_registered",
+    "ts_utc": "2024-01-01T00:00:00Z",
+    "actor": "pipeline",
+    "system": "ml_training",
+    "run_id": run_id,
+    "payload": {
+        "ai_system_id": "expense-ai",
+        "dataset_id": "expense_dataset_v1",
+        "dataset": "customer_expense_records",
+        "dataset_version": "v1",
+        "dataset_fingerprint": "sha256:demo",
+        "dataset_governance_id": "gov_expense_v1",
+        "dataset_governance_commitment": "basic_compliance",
+        "source": "internal",
+        "intended_use": "expense classification",
+        "limitations": "demo dataset",
+        "quality_summary": "validated sample",
+        "governance_status": "registered"
+    },
+})
+
+summary = get_compliance_summary(client, run_id)
+print(summary)
+PY
+```
+
+Expected:
+
+```json
+{
+  "ok": true,
+  "run_id": "<uuid>",
+  "current_state": {
+    "model": {
+      "evaluation_passed": null
+    }
+  }
+}
+```
+
+## CI Integration
+
+Fail the build if compliance is not satisfied.
+
+```bash
+govai verify --json --run-id "$RUN_ID"
+```
+
+Expected:
+
+```json
+{
+  "run_id": "<uuid>",
+  "verdict": "VALID",
+  "checks": [
+    { "id": "governance_chain", "ok": true }
+  ]
+}
+```
+
 ## Core vs Non-Core
 
 Core (requires audit reports):
@@ -17,11 +224,6 @@ Non-core:
 - CLI wrappers (`python/aigov_py/cli.py` and related terminal tooling)
 - dashboard
 - tooling
-
-GovAI turns compliance evidence into a production decision.
-
-Most systems log compliance.  
-GovAI enforces it.
 
 ## Decision-Oriented Compliance
 
@@ -80,11 +282,11 @@ The **core abstractions** (identifiers, evidence events, bundle, projection, com
 
 - **Append-only audit ledger** — Rust service appends hash-chained JSONL (`rust/audit_log.jsonl`) on successful `POST /evidence`; policy version is `v0.4_human_approval` (see `rust/src/main.rs`).
 - **Bundle and compliance views** — `GET /bundle`, `/bundle-hash`, `/compliance-summary` derive from the log; `GET /verify` checks chain integrity.
-- **Reference Iris pipeline** — Python `pipeline_train` trains sklearn `LogisticRegression`, emits events to the audit URL, then stops for human approval; `approve` / `promote` complete the lifecycle.
+- **Reference training pipeline** — Python `pipeline_train` trains sklearn `LogisticRegression`, emits events to the audit URL, then stops for human approval; `approve` / `promote` complete the lifecycle.
 - **Reports and packs** — Markdown audit reports, audit manifest JSON, and ZIP packs under `docs/` via Makefile targets.
 - **Optional dashboard** — Next.js app reads runs from Supabase after `db_ingest` (see [DEMO_FLOW.md](DEMO_FLOW.md)).
 
-**Core vs prototype:** the portable core is the Rust ledger + policy + bundle/summary HTTP surface and identifier contracts in [docs/strong-core-contract-note.md](docs/strong-core-contract-note.md). Iris, `prototype_domain`, and optional Supabase/dashboard paths are integration/demo layers. Boundary detail: [OPEN_SOURCE_SCOPE.md](OPEN_SOURCE_SCOPE.md).
+**Core vs prototype:** the portable core is the Rust ledger + policy + bundle/summary HTTP surface and identifier contracts in [docs/strong-core-contract-note.md](docs/strong-core-contract-note.md). The `prototype_domain` demo and optional Supabase/dashboard paths are integration/demo layers. Boundary detail: [OPEN_SOURCE_SCOPE.md](OPEN_SOURCE_SCOPE.md).
 
 ## Prerequisites
 
