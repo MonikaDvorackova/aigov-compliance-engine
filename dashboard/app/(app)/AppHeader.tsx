@@ -1,9 +1,7 @@
 "use client";
 
-import React, { Suspense } from "react";
 import { usePathname } from "next/navigation";
 import { navMetaForPath } from "@/lib/console/nav";
-import { AppHeaderNavIndicator } from "./AppHeaderNavIndicator";
 
 export default function AppHeader({ email }: { email: string | null }) {
   const pathname = usePathname() ?? "/runs";
@@ -30,9 +28,6 @@ export default function AppHeader({ email }: { email: string | null }) {
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-        <Suspense fallback={null}>
-          <AppHeaderNavIndicator label="Loading" />
-        </Suspense>
         <div
           style={{
             fontSize: 11,

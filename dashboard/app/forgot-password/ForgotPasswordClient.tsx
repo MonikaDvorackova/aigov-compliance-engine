@@ -15,7 +15,6 @@ const inputStyle: React.CSSProperties = {
   fontSize: 14,
   padding: "0 12px",
   outline: "none",
-  textAlign: "center",
   boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
   backdropFilter: "blur(10px)",
   WebkitBackdropFilter: "blur(10px)",
@@ -50,27 +49,38 @@ const linkStyle: React.CSSProperties = {
 export default function ForgotPasswordClient() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [isError, setIsError] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!email.trim()) return;
+
     setBusy(true);
     setMessage(null);
+    setIsError(false);
+
     try {
       const res = await fetch("/api/auth/password-reset/request", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim() }),
       });
+
       const data = (await res.json()) as { message?: string };
+
       if (!res.ok) {
+        setIsError(true);
         setMessage("Something went wrong. Please try again.");
         return;
       }
-      setDone(true);
-      setMessage(data.message ?? "If an account exists for this email, we sent a password reset link.");
+
+      setMessage(
+        data.message ??
+          "If an account exists for this email, we sent a password reset link."
+      );
     } catch {
+      setIsError(true);
       setMessage("Something went wrong. Please try again.");
     } finally {
       setBusy(false);
@@ -80,8 +90,15 @@ export default function ForgotPasswordClient() {
   return (
     <InfraShell maxWidth={520} align="center" padding={18}>
       <style>{`
-        button[data-btn="1"]:hover { transform: translateY(-1px); background: rgba(255,255,255,0.065); border-color: rgba(255,255,255,0.20); }
-        input:focus { border-color: rgba(59,130,246,0.55); box-shadow: 0 0 0 3px rgba(59,130,246,0.14); }
+        button[data-btn="1"]:hover {
+          transform: translateY(-1px);
+          background: rgba(255,255,255,0.065);
+          border-color: rgba(255,255,255,0.20);
+        }
+        input:focus {
+          border-color: rgba(59,130,246,0.55);
+          box-shadow: 0 0 0 3px rgba(59,130,246,0.14);
+        }
       `}</style>
 
       <div style={{ width: "100%", textAlign: "center" }}>
@@ -104,7 +121,6 @@ export default function ForgotPasswordClient() {
             fontWeight: 600,
             lineHeight: 1.12,
             fontSize: "clamp(24px, 4.5vw, 30px)",
-            textWrap: "balance",
           }}
         >
           Forgot password
@@ -117,56 +133,70 @@ export default function ForgotPasswordClient() {
             opacity: 0.76,
             fontSize: 13,
             lineHeight: 1.5,
-            textWrap: "balance",
           }}
         >
           Enter your email address. If an account exists, we will send a reset link.
         </p>
 
         <InfraPanel>
-          {message ? (
+          {message && (
             <div
+              aria-live="polite"
               style={{
                 marginBottom: 12,
                 padding: "10px 12px",
                 borderRadius: 16,
-                border: "1px solid rgba(255,255,255,0.14)",
-                background: "rgba(255,255,255,0.045)",
+                border: isError
+                  ? "1px solid rgba(255,100,100,0.4)"
+                  : "1px solid rgba(255,255,255,0.14)",
+                background: isError
+                  ? "rgba(255,100,100,0.08)"
+                  : "rgba(255,255,255,0.045)",
                 fontSize: 12,
-                opacity: 0.95,
                 textAlign: "left",
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
               }}
             >
               {message}
             </div>
-          ) : null}
+          )}
 
-          {!done ? (
-            <form onSubmit={onSubmit} style={{ display: "grid", gap: 10 }}>
-              <input
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="email"
-                inputMode="email"
-                autoComplete="email"
-                disabled={busy}
-                style={inputStyle}
-              />
-              <button
-                type="submit"
-                data-btn="1"
-                disabled={busy || !email.trim()}
-                style={{
-                  ...buttonStyle,
-                  cursor: busy || !email.trim() ? "not-allowed" : "pointer",
-                  opacity: busy || !email.trim() ? 0.55 : 1,
-                }}
-              >
-                Send reset link
-              </button>
-            </form>
-          ) : null}
+          <form onSubmit={onSubmit} style={{ display: "grid", gap: 10 }}>
+            <label
+              htmlFor="email"
+              style={{
+                fontSize: 12,
+                opacity: 0.7,
+                textAlign: "left",
+              }}
+            >
+              Email address
+            </label>
+
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="name@example.com"
+              inputMode="email"
+              autoComplete="email"
+              disabled={busy}
+              style={inputStyle}
+            />
+
+            <button
+              type="submit"
+              data-btn="1"
+              disabled={busy || !email.trim()}
+              style={{
+                ...buttonStyle,
+                cursor: busy || !email.trim() ? "not-allowed" : "pointer",
+                opacity: busy || !email.trim() ? 0.55 : 1,
+              }}
+            >
+              {busy ? "Sending..." : "Send reset link"}
+            </button>
+          </form>
 
           <div style={{ marginTop: 14, display: "flex", justifyContent: "center" }}>
             <Link href="/login" style={linkStyle}>
