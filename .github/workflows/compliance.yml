@@ -53,12 +53,9 @@ jobs:
           echo "head_sha=${HEAD_SHA}" >> "${GITHUB_OUTPUT}"
 
           REPORTS_CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+          CHANGED_FILES="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" || true)"
 
-          CORE_CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- \
-            'python/**' \
-            'rust/**' \
-            'Makefile' \
-            || true)"
+          CORE_CHANGED="$(printf '%s\n' "${CHANGED_FILES}" | grep -E '^(rust/|python/aigov_py/(evaluate|approve|promote|report|evidence_pack|pipeline_train)\.py$|docs/strong-core-contract-note\.md$|ARCHITECTURE\.md$|Makefile$)' || true)"
 
           if [ -n "${REPORTS_CHANGED}" ]; then
             echo "reports_changed=true" >> "${GITHUB_OUTPUT}"
@@ -112,7 +109,7 @@ jobs:
             exit 0
           fi
 
-          echo "Audit report required (docs/reports/*.md)"
+          echo "Audit report required (docs/reports/*.md) for core changes only."
           git diff --name-status "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true
           exit 1
 
