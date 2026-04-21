@@ -1,10 +1,11 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import AigovMark from "@/app/components/brand/AigovMark";
 import { CONSOLE_NAV } from "@/lib/console/nav";
+import { AppSidebarBrand } from "./AppSidebarBrand";
 
 function iconWrap(): React.CSSProperties {
   return {
@@ -113,28 +114,34 @@ export default function AppSidebar({ email }: { email: string | null }) {
 
   return (
     <aside className="govai-app-sidebar">
-      <Link
-        href="/runs"
-        aria-label="GovAI"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "8px 8px",
-          borderRadius: 10,
-          textDecoration: "none",
-          color: "var(--govai-text)",
-          transition: "background 0.15s ease",
-        }}
+      <Suspense
+        fallback={
+          <Link
+            href="/runs"
+            aria-label="GovAI"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "8px 8px",
+              borderRadius: 10,
+              textDecoration: "none",
+              color: "var(--govai-text)",
+              transition: "background 0.15s ease",
+            }}
+          >
+            <span style={{ display: "inline-flex", alignItems: "center", lineHeight: 0 }}>
+              <AigovMark size={30} glow={false} neon={false} neonStrength="off" tone="blue" />
+            </span>
+            <span style={{ display: "grid", gap: 1, minWidth: 0 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.02em" }}>GovAI Console</span>
+              <span style={{ fontSize: 11.5, color: "var(--govai-text-tertiary)" }}>Compliance evidence</span>
+            </span>
+          </Link>
+        }
       >
-        <span style={{ display: "inline-flex", alignItems: "center", lineHeight: 0 }}>
-          <AigovMark size={30} glow={false} neon={false} tone="steel" />
-        </span>
-        <span style={{ display: "grid", gap: 1, minWidth: 0 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.02em" }}>GovAI Console</span>
-          <span style={{ fontSize: 11.5, color: "var(--govai-text-tertiary)" }}>Compliance evidence</span>
-        </span>
-      </Link>
+        <AppSidebarBrand />
+      </Suspense>
 
       <div style={{ marginTop: 16, padding: "0 4px 0 10px" }}>
         <div
