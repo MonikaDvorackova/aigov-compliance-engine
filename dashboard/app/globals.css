@@ -1,67 +1,63 @@
 @import "tailwindcss";
 
 :root {
-  /* Page: subtle blue ink — cards/panels: neutral charcoal (layered contrast) */
-  --govai-bg-base: #0b1220;
-  --govai-bg-sidebar: #101318;
-  --govai-bg-elevated: #1e2229;
-  --govai-bg-card: #1a1d24;
-  --govai-bg-card2: #14161d;
-  --govai-bg-inner: #242930;
+  --govai-bg-app: #0B0E13;
+  --govai-bg-chrome: #11151B;
+  --govai-bg-surface: #161B22;
+  --govai-bg-surface-2: #1C222B;
+
+  --govai-border-subtle: rgba(255, 255, 255, 0.06);
+  --govai-border-default: rgba(255, 255, 255, 0.1);
+  --govai-border-strong: rgba(255, 255, 255, 0.16);
+  --govai-border-focus: rgba(94, 155, 255, 0.45);
+
+  /* Map legacy token names to the surface system */
+  --govai-bg-base: var(--govai-bg-app);
+  --govai-bg-sidebar: var(--govai-bg-chrome);
+  --govai-bg-panel: var(--govai-bg-chrome);
+  --govai-bg-card: var(--govai-bg-surface);
+  --govai-bg-card2: var(--govai-bg-surface-2);
+  --govai-bg-inner: var(--govai-bg-surface-2);
+  --govai-bg-elevated: var(--govai-bg-surface-2);
+
+  --govai-border-faint: var(--govai-border-subtle);
+  --govai-border: var(--govai-border-default);
+  --govai-divider: rgba(255, 255, 255, 0.08);
+  --govai-border-surface: var(--govai-border-subtle);
+  --govai-border-surface-strong: var(--govai-border-default);
+  --govai-border-ink: var(--govai-border-default);
+  --govai-border-ink-faint: var(--govai-border-subtle);
+  --govai-border-ink-strong: var(--govai-border-strong);
 
   --govai-text-primary: #f6f5f2;
   --govai-text-secondary: #b9c2cc;
   --govai-text-muted: #8b95a3;
 
-  /* Primary UI steel — muted, no chromatic loud accents */
   --govai-accent: #5f6b7a;
   --govai-accent-hover: #8c95a1;
   --govai-accent-muted: #4a525d;
   --govai-accent-underline: rgba(95, 107, 122, 0.35);
 
-  /* Links: neutral text; underline only (no hue) */
   --govai-link: var(--govai-text-secondary);
   --govai-link-hover: var(--govai-text-primary);
   --govai-link-decoration: rgba(255, 255, 255, 0.16);
 
-  /* Semantic — brighter for glance readability; saturation stays low */
   --govai-state-success: #86b092;
   --govai-state-warning: #c49a62;
   --govai-state-danger: #c09090;
 
-  /* Shell / atmosphere — blue-gray (page & sidebar edge only) */
-  --govai-border-ink: rgba(120, 144, 180, 0.2);
-  --govai-border-ink-faint: rgba(120, 144, 180, 0.12);
-  --govai-border-ink-strong: rgba(120, 144, 180, 0.28);
-
-  /* Surfaces — neutral (cards, modules, rows) */
-  --govai-border-surface: rgba(255, 255, 255, 0.09);
-  --govai-border-surface-strong: rgba(255, 255, 255, 0.14);
-
-  --govai-border-subtle: var(--govai-border-surface);
-  --govai-border-strong: var(--govai-border-surface-strong);
-  --govai-border-focus: rgba(200, 210, 225, 0.45);
-
-  /* Legacy aliases */
-  --background: var(--govai-bg-base);
+  --background: var(--govai-bg-app);
   --foreground: var(--govai-text-primary);
-  --govai-bg-app: var(--govai-bg-base);
-  --govai-bg-panel: var(--govai-bg-sidebar);
   --govai-bg-table-head: rgba(255, 255, 255, 0.045);
-
-  --govai-border: var(--govai-border-strong);
-  --govai-border-faint: rgba(255, 255, 255, 0.065);
-  --govai-divider: rgba(255, 255, 255, 0.09);
 
   --govai-text: var(--govai-text-primary);
   --govai-text-tertiary: var(--govai-text-muted);
   --govai-text-label: #9aa3b0;
 
-  /* Prod row attention — muted green wash (not blue) */
   --govai-row-attention: rgba(134, 176, 146, 0.1);
 
   --govai-badge-neutral-bg: rgba(255, 255, 255, 0.06);
-  --govai-badge-neutral-border: var(--govai-border-surface-strong);
+  --govai-badge-neutral-border: var(--govai-border-default);
   --govai-badge-ok-bg: rgba(134, 176, 146, 0.16);
   --govai-badge-ok-border: rgba(134, 176, 146, 0.38);
   --govai-badge-issue-bg: rgba(196, 154, 98, 0.14);
@@ -114,7 +110,7 @@ body {
   flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: 22px 24px 36px;
+  padding: 26px 28px 44px;
   overflow-x: auto;
 }
 
@@ -123,12 +119,12 @@ body {
   flex-shrink: 0;
   min-height: 48px;
   padding: 10px 24px;
-  border-bottom: 1px solid var(--govai-border-faint);
+  border-bottom: 1px solid var(--govai-border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  background: var(--govai-bg-app);
+  background: var(--govai-bg-chrome);
 }
 
 /* Console shell — sidebar */
@@ -137,8 +133,8 @@ body {
   width: min(256px, 100%);
   min-width: min(220px, 100%);
   max-width: 280px;
-  border-right: 1px solid var(--govai-border-ink-faint);
-  background: var(--govai-bg-sidebar);
+  border-right: 1px solid var(--govai-border-subtle);
+  background: var(--govai-bg-chrome);
   display: flex;
   flex-direction: column;
   padding: 12px 12px 14px;
@@ -181,15 +177,15 @@ body {
   letter-spacing: 0.01em;
   text-decoration: none;
   color: var(--govai-text-primary) !important;
-  background: var(--govai-bg-card);
-  border: 1px solid var(--govai-border-surface-strong);
+  background: var(--govai-bg-surface);
+  border: 1px solid var(--govai-border-default);
   box-shadow: none;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
 
 .govai-btn--primary:hover {
-  background: #2a303a;
-  border-color: rgba(255, 255, 255, 0.2);
+  background: var(--govai-bg-surface-2);
+  border-color: var(--govai-border-strong);
 }
 
 .govai-btn--primary:active {
@@ -218,8 +214,8 @@ body {
 }
 
 .govai-btn--secondary:hover {
-  background: rgba(255, 255, 255, 0.055);
-  border-color: var(--govai-border-surface-strong);
+  background: var(--govai-bg-surface-2);
+  border-color: var(--govai-border-default);
   color: var(--govai-text-primary) !important;
 }
 
@@ -244,8 +240,8 @@ body {
 
 .govai-section-card {
   border-radius: 0.5rem;
-  border: 1px solid var(--govai-border-surface-strong);
-  background: var(--govai-bg-card);
+  border: 1px solid var(--govai-border-default);
+  background: var(--govai-bg-surface);
   padding: 1.5rem;
 }
 
@@ -257,8 +253,8 @@ body {
 
 .govai-insight-panel {
   border-radius: 0.5rem;
-  border: 1px solid var(--govai-border-surface);
-  background: var(--govai-bg-inner);
+  border: 1px solid var(--govai-border-subtle);
+  background: var(--govai-bg-surface-2);
   padding: 1.35rem 1.5rem 1.5rem;
 }
 
@@ -272,18 +268,18 @@ body {
 
 /* Console — modular panels (Runs, shared IA) */
 .govai-console-module {
-  border: 1px solid var(--govai-border-surface-strong);
+  border: 1px solid var(--govai-border-default);
   border-radius: 10px;
-  background: var(--govai-bg-card);
+  background: var(--govai-bg-surface);
 }
 
 .govai-console-module--secondary {
-  background: var(--govai-bg-card2);
+  background: var(--govai-bg-surface-2);
 }
 
 .govai-console-module--inner {
-  background: var(--govai-bg-inner);
-  border-color: var(--govai-border-surface);
+  background: var(--govai-bg-surface-2);
+  border-color: var(--govai-border-subtle);
 }
 
 .govai-console-module--emphasis {
@@ -393,13 +389,13 @@ body {
   font-weight: 500;
   letter-spacing: 0.04em;
   line-height: 1.35;
-  border: 1px solid var(--govai-border-surface);
-  background: var(--govai-bg-card2);
+  border: 1px solid var(--govai-border-default);
+  background: var(--govai-bg-surface-2);
   color: var(--govai-text-muted);
 }
 
 .govai-chip--neutral {
-  border-color: var(--govai-border-surface-strong);
+  border-color: var(--govai-border-default);
   background: rgba(255, 255, 255, 0.045);
   color: var(--govai-text-secondary);
 }
@@ -493,11 +489,12 @@ body {
   border-radius: 2px;
   background: transparent;
   transition: background 0.15s ease;
+  pointer-events: none;
 }
 
 .govai-run-row:hover {
-  background: rgba(255, 255, 255, 0.045);
-  border-color: var(--govai-border-surface);
+  background: var(--govai-bg-surface-2);
+  border-color: var(--govai-border-default);
 }
 
 .govai-run-row:hover::before {
@@ -515,6 +512,12 @@ body {
 
 .govai-run-row:active {
   background: rgba(255, 255, 255, 0.055);
+}
+
+/* Table ledger: keep table layout; hover rail may be unsupported on <tr> in some engines */
+tbody tr.govai-run-row {
+  display: table-row;
+  cursor: pointer;
 }
 
 /* Run detail — decision hierarchy */
@@ -722,14 +725,14 @@ body {
   border-radius: 0.375rem;
   text-decoration: none;
   color: var(--govai-text-primary) !important;
-  background: var(--govai-bg-card2);
-  border: 1px solid var(--govai-border-strong);
+  background: var(--govai-bg-surface);
+  border: 1px solid var(--govai-border-default);
   transition: background 0.12s ease, border-color 0.12s ease;
 }
 
 .govai-run-next-action__primary:hover {
-  background: #2a303a;
-  border-color: rgba(255, 255, 255, 0.2);
+  background: var(--govai-bg-surface-2);
+  border-color: var(--govai-border-strong);
 }
 
 .govai-run-next-action__primary:active {
