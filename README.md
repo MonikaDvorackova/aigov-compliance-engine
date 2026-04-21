@@ -172,12 +172,14 @@ GovAI is the **audit ledger and policy gate** for one **training and release cyc
 
 1. **Training pipeline** (batch job or CI) generates a **`run_id`** and emits **`data_registered`**: the service accepts `POST /evidence` only if the payload matches the policy schema for that event type.
 2. The same job emits **`model_trained`** after registration for that `run_id`; policy **rejects** `model_trained` if no prior `data_registered` exists for that run.
-3. After evaluation completes offline or in CI, the pipeline emits **`evaluation_reported`** with metrics and pass/fail against bank-defined thresholds.
-4. **Risk workflow** emits **`risk_recorded`**, then **`risk_mitigated`**, then **`risk_reviewed`** as required by policy, linking the run to an assessment record.
+3. After evaluation completes offline or in CI, the pipeline emits **`evaluation_reported`** with measured metric fields; pass/fail follows **policy** (see evaluation bullet below).
+4. **Risk workflow** emits **`risk_recorded`**, then **`risk_reviewed`**, linking the run to an assessment record.
 5. A **named approver** (model risk or delegated role) emits **`human_approved`**, referencing the assessment, dataset commitment, and scope for that `run_id`.
-6. **Release automation** emits **`model_promoted`** only when prior events for that `run_id` satisfy policy; otherwise append **fails** and promotion does not enter the log.
+6. **Release automation** emits **`model_promoted`** as the **final release decision** only when prior events for that `run_id` satisfy policy; otherwise append fails and promotion does not enter the log.
 
-**Policy enforcement:** Each successful append is evaluated by **embedded policy** (`v0.4_human_approval`) before write. **Out-of-order or missing prerequisites** result in **rejection of the event**, not a silent partial state: you cannot record promotion without evaluation and approval, and you cannot skip dataset registration before training. **Event emission** is explicit: clients call `POST /evidence` with structured JSON; the ledger stores **append-only** records.
+**Policy enforcement:** Each successful append is evaluated by **embedded policy** (`v0.4_human_approval`) before write. **Out-of-order or missing prerequisites** result in **rejection of the event**, not a silent partial state: you cannot record promotion without evaluation and approval, and you cannot skip dataset registration before training. **Event emission** is explicit: clients call `POST /evidence` with structured JSON; the ledger stores **append-only** records. If an event is rejected, the client must correct missing prerequisites and re-emit the event for the same `run_id`; rejected events are not persisted.
+
+**CI/CD gating:** The deploy job **reads GovAI** (compliance summary or `govai verify`) for the target `run_id` before changing production artifacts or infrastructure. If the outcome is not **VALID**, the pipeline **stops** and that deployment does not run.
 
 ### 3. What data flows through the system
 
@@ -185,7 +187,7 @@ GovAI is the **audit ledger and policy gate** for one **training and release cyc
 - **`actor`** — Who caused the event (e.g. CI principal `fraud-train-ci`, human `reviewer:jane.doe@bank`, release job `fraud-promote-prod`).
 - **`system`** — Logical producer (e.g. `fraud-model-training-pipeline`, `model-risk-workbench`, `artifact-promotion-service`).
 - **Dataset identifiers and hashes** — In `data_registered` payload: `dataset_id`, `dataset_version`, `dataset_fingerprint` (e.g. SHA-256 of the approved snapshot), `dataset_governance_id`, `dataset_governance_commitment`, plus `ai_system_id` binding the dataset to the fraud engine’s registered AI system id.
-- **Evaluation metrics** — In `evaluation_reported` payload: accuracy or business metrics the bank encodes (e.g. precision/recall at a score cutoff, false positive rate cap), threshold values, and **`passed`** boolean against policy thresholds.
+- **Evaluation metrics** — In `evaluation_reported` payload: measured values (e.g. precision/recall at a score cutoff, false positive rate). **Thresholds and pass rules live in policy**, not per request; the client supplies metrics, and **policy** determines whether **`passed`** is true for that policy version.
 - **Approval data** — In `human_approved` payload: linkage to the **assessment** id, confirmation of reviewed risk, and references to the same **dataset commitment** and **scope** policy requires for that run.
 - **Promotion data** — In `model_promoted` payload: artifact location or version handle the bank uses (e.g. container digest, model registry id) so the ledger event ties the **released binary** to the **same `run_id`**.
 
@@ -193,7 +195,9 @@ Each event also carries **`event_id`**, **`event_type`**, **`ts_utc`**, and a **
 
 ### 4. What output you get (decision + audit)
 
-**Decision states** (from compliance projection / verification over the run):
+**Decision states** (from compliance verification over the run):
+
+Several `run_id`s can be in flight at once; **only** runs whose projected state is **VALID** are eligible for promotion.
 
 - **VALID** — Evaluation requirements are met, human approval is present, and the run is in a state where **promotion is allowed** under policy (all required evidence for that verdict is present and consistent).
 - **BLOCKED** — Required steps are **missing or incomplete** (e.g. evaluation not passed, approval not recorded, or promotion attempted without prerequisites). The run must not be treated as releasable until the chain is completed.
@@ -203,7 +207,7 @@ Each event also carries **`event_id`**, **`event_type`**, **`ts_utc`**, and a **
 
 - **Ordered event chain** — For a given `run_id`, **read APIs** derive a single ordered sequence from the append-only log (e.g. bundle and compliance summary). Reviewers see the **same order** policy enforced at write time.
 - **Hash integrity** — Each record links to the previous via cryptographic hash; **`GET /verify`** (and CLI `govai verify`) reports whether the **chain is intact** and matches stored hashes.
-- **Traceability** — From **production** (artifact referenced in `model_promoted`) back to **dataset fingerprint**, **metrics and pass/fail**, **risk lifecycle**, and **approver identity**, without relying on a separate ticket system as the source of truth.
+- **Traceability** — From **production** (artifact referenced in `model_promoted`) back to **dataset fingerprint**, **metrics and pass/fail**, **risk lifecycle**, and **approver identity**, without relying on a separate ticket system as the source of truth; suitable for internal audit, regulators, and third-party review.
 
 ## Example: ML pipeline audit
 
