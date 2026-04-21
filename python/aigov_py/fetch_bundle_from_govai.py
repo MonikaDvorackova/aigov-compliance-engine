@@ -22,8 +22,15 @@ def _audit_endpoint() -> str:
     return (os.environ.get("AIGOV_AUDIT_ENDPOINT") or os.environ.get("AIGOV_AUDIT_URL") or "http://127.0.0.1:8088").rstrip("/")
 
 
+def _auth_headers() -> Dict[str, str]:
+    key = (os.environ.get("GOVAI_API_KEY") or "").strip()
+    if not key:
+        return {}
+    return {"Authorization": f"Bearer {key}"}
+
+
 def _get_json(url: str) -> Dict[str, Any]:
-    r = requests.get(url, timeout=15)
+    r = requests.get(url, headers=_auth_headers() or None, timeout=15)
     r.raise_for_status()
     return r.json()
 

@@ -6,6 +6,7 @@ mod verify_chain;
 
 mod projection;
 
+mod audit_api_key;
 mod auth;
 mod db;
 mod govai_api;

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 
 import requests
 
@@ -41,7 +41,7 @@ class GovAIClient:
     ``base_url`` should be the origin only (e.g. ``http://127.0.0.1:8088``); paths are appended as documented.
     """
 
-    def __init__(self, base_url: str, api_key: str | None = None) -> None:
+    def __init__(self, base_url: str, api_key: Optional[str] = None) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._session = requests.Session()
