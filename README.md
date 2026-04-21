@@ -220,7 +220,7 @@ GovAI is the **audit ledger and policy gate** for one **training and release cyc
 1. **Training pipeline** (batch job or CI) generates a **`run_id`** and emits **`data_registered`**: the service accepts `POST /evidence` only if the payload matches the policy schema for that event type.
 2. The same job emits **`model_trained`** after registration for that `run_id`; policy **rejects** `model_trained` if no prior `data_registered` exists for that run.
 3. After evaluation completes offline or in CI, the pipeline emits **`evaluation_reported`** with measured metric fields; pass/fail follows **policy** (see evaluation bullet below).
-4. **Risk workflow** emits **`risk_recorded`**, then **`risk_reviewed`**, linking the run to an assessment record.
+4. **Risk workflow** emits **`risk_recorded`**, then **`risk_mitigated`**, then **`risk_reviewed`**, linking the run to an assessment record.
 5. A **named approver** (model risk or delegated role) emits **`human_approved`**, referencing the assessment, dataset commitment, and scope for that `run_id`.
 6. **Release automation** emits **`model_promoted`** as the **final release decision** only when prior events for that `run_id` satisfy policy; otherwise append fails and promotion does not enter the log.
 
