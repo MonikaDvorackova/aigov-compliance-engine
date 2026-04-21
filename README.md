@@ -1,5 +1,52 @@
 # GovAI
 
+GovAI is a system for governance of ML runs through structured evidence and policy-gated lifecycle events.
+
+It records what happened, enforces what is allowed next, and derives a verifiable compliance decision.
+
+---
+
+## 5 minute demo
+
+```bash
+cd python
+pip install -e ".[dev]"
+
+govai run demo
+```
+
+Expected output:
+
+VALID
+
+Requires a running audit service.
+
+## What this solves
+
+**Without GovAI:**
+
+- logs are scattered across systems
+- no verifiable audit trail
+- compliance decisions are manual and non-reproducible
+
+**With GovAI:**
+
+- every step is recorded as structured evidence
+- decisions are derived, not guessed
+- full audit chain is verifiable end-to-end
+
+## How it works
+
+GovAI models an ML run as a sequence of events written to an append-only log.
+A policy layer enforces which events are allowed next.
+From that log, the system derives:
+
+- bundle → full evidence for a run
+- compliance summary → final decision
+- audit chain → verifiable history
+
+# GovAI
+
 Package name: aigov-py  
 Import: govai  
 CLI: govai  
