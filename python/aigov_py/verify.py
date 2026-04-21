@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -19,7 +19,7 @@ def load_json(path: str) -> Optional[Dict[str, Any]]:
         return json.load(f)
 
 
-def verify(run_id: str) -> int:
+def verify(run_id: str, *, as_json: bool = False) -> int:
     root = repo_root()
     mode = os.environ.get("AIGOV_MODE", "ci")
     endpoint = (os.environ.get("AIGOV_AUDIT_ENDPOINT") or os.environ.get("AIGOV_AUDIT_URL") or "http://127.0.0.1:8088").rstrip("/")
@@ -28,104 +28,139 @@ def verify(run_id: str) -> int:
     evidence_path = os.path.join(root, "docs", "evidence", f"{run_id}.json")
     report_path = os.path.join(root, "docs", "reports", f"{run_id}.md")
 
-    print("AIGOV VERIFICATION REPORT")
-    print(f"Audit ID: {run_id}")
-    print(f"AIGOV_MODE: {mode}")
-
+    checks: List[Dict[str, Any]] = []
     ok = True
+
+    def human(msg: str) -> None:
+        if not as_json:
+            print(msg)
+
+    if not as_json:
+        print("AIGOV VERIFICATION REPORT")
+        print(f"Audit ID: {run_id}")
+        print(f"AIGOV_MODE: {mode}")
 
     audit = load_json(audit_path)
     evidence = load_json(evidence_path)
 
     # --- AUDIT FILE ---
     if audit is None:
-        print("FAIL missing audit file")
+        human("FAIL missing audit file")
+        checks.append({"id": "audit_file", "ok": False, "message": "missing audit file"})
         ok = False
     else:
-        print("OK   audit file present")
+        human("OK   audit file present")
+        checks.append({"id": "audit_file", "ok": True, "message": "present"})
 
     # --- EVIDENCE FILE ---
     if evidence is None:
-        print("FAIL missing evidence file")
+        human("FAIL missing evidence file")
+        checks.append({"id": "evidence_file", "ok": False, "message": "missing evidence file"})
         ok = False
         evidence = {}
     else:
-        print("OK   evidence file present")
+        human("OK   evidence file present")
+        checks.append({"id": "evidence_file", "ok": True, "message": "present"})
 
     # --- GOVERNANCE LOG VERIFICATION ---
-    # Evidence bundle content is expected to come from the immutable Rust ledger.
-    # If evidence is not ledger-derived (e.g. CI fallback), do not hard-fail.
     ledger_derived = isinstance(evidence, dict) and bool(evidence.get("log_path"))
     try:
         r = requests.get(f"{endpoint}/verify-log", timeout=15)
         r.raise_for_status()
         verdict = r.json()
         if verdict.get("ok") is True:
-            print("OK   governance hash chain verified")
+            human("OK   governance hash chain verified")
+            checks.append({"id": "governance_chain", "ok": True, "message": "hash chain verified", "detail": verdict})
         else:
-            print(f"FAIL governance verify-log returned: {verdict}")
+            human(f"FAIL governance verify-log returned: {verdict}")
+            checks.append({"id": "governance_chain", "ok": False, "message": "verify-log not ok", "detail": verdict})
             ok = False
     except Exception as e:
         if ledger_derived:
-            print(f"FAIL could not verify governance log chain: {e}")
+            human(f"FAIL could not verify governance log chain: {e}")
+            checks.append({"id": "governance_chain", "ok": False, "message": str(e)})
             ok = False
         else:
-            print(f"WARN could not verify governance log chain (skipping): {e}")
+            human(f"WARN could not verify governance log chain (skipping): {e}")
+            checks.append({"id": "governance_chain", "ok": True, "level": "warn", "message": str(e)})
 
-    # --- EVENTS LIST (structure only; chain is verified server-side) ---
+    # --- EVENTS LIST ---
     events = evidence.get("events")
     if not isinstance(events, list) or len(events) == 0:
-        print("FAIL evidence.events missing or empty")
+        human("FAIL evidence.events missing or empty")
+        checks.append({"id": "evidence_events", "ok": False, "message": "events missing or empty"})
         ok = False
     else:
-        print(f"OK   evidence contains {len(events)} events")
-
-        # Minimal structure check
+        human(f"OK   evidence contains {len(events)} events")
+        event_ok = True
         for idx, ev in enumerate(events[:10]):
             if not isinstance(ev, dict):
-                print(f"FAIL event {idx} is not an object")
+                human(f"FAIL event {idx} is not an object")
+                checks.append({"id": "evidence_events", "ok": False, "message": f"event {idx} is not an object"})
                 ok = False
+                event_ok = False
                 break
             if not isinstance(ev.get("event_id"), str) or not isinstance(ev.get("event_type"), str):
-                print(f"FAIL event {idx} missing event_id/event_type")
+                human(f"FAIL event {idx} missing event_id/event_type")
+                checks.append(
+                    {"id": "evidence_events", "ok": False, "message": f"event {idx} missing event_id/event_type"}
+                )
                 ok = False
+                event_ok = False
                 break
+        if event_ok:
+            checks.append({"id": "evidence_events", "ok": True, "message": f"{len(events)} events", "count": len(events)})
 
     # --- POLICY VERSION ---
     policy_version = None
-
     if isinstance(audit, dict):
         policy_version = audit.get("policy_version")
-
     if not policy_version and isinstance(evidence, dict):
         policy_version = evidence.get("policy_version")
-
     if not policy_version:
-        print("FAIL missing policy_version (audit or evidence)")
+        human("FAIL missing policy_version (audit or evidence)")
+        checks.append({"id": "policy_version", "ok": False, "message": "missing"})
         ok = False
     else:
-        print(f"OK   policy_version={policy_version}")
+        human(f"OK   policy_version={policy_version}")
+        checks.append({"id": "policy_version", "ok": True, "message": str(policy_version)})
 
     # --- AUDIT BUNDLE FINGERPRINT ---
     if isinstance(audit, dict):
         bundle_sha = audit.get("bundle_sha256")
         if not isinstance(bundle_sha, str) or not bundle_sha.strip():
-            print("FAIL missing audit.bundle_sha256")
+            human("FAIL missing audit.bundle_sha256")
+            checks.append({"id": "bundle_sha256", "ok": False, "message": "missing"})
             ok = False
+        else:
+            checks.append({"id": "bundle_sha256", "ok": True, "message": "present"})
 
     # --- REPORT FILE ---
     if not os.path.exists(report_path):
-        print("FAIL missing report")
+        human("FAIL missing report")
+        checks.append({"id": "report_file", "ok": False, "message": "missing"})
         ok = False
     else:
-        print("OK   report file present")
+        human("OK   report file present")
+        checks.append({"id": "report_file", "ok": True, "message": "present"})
 
-    if ok:
-        print("VERDICT VALID")
-        return 0
+    verdict = "VALID" if ok else "INVALID"
+    if as_json:
+        payload = {
+            "run_id": run_id,
+            "aigov_mode": mode,
+            "audit_endpoint": endpoint,
+            "verdict": verdict,
+            "checks": checks,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        if ok:
+            print("VERDICT VALID")
+        else:
+            print("VERDICT INVALID")
 
-    print("VERDICT INVALID")
-    return 2
+    return 0 if ok else 2
 
 
 def main(argv: list[str]) -> int:
@@ -138,7 +173,7 @@ def main(argv: list[str]) -> int:
         print("RUN_ID is empty")
         return 2
 
-    return verify(run_id)
+    return verify(run_id, as_json=False)
 
 
 if __name__ == "__main__":
