@@ -80,6 +80,58 @@ Optional: **Supabase** credentials for `db_ingest` and the dashboard; Rust **`/a
 cd python && python -m venv .venv && . .venv/bin/activate && pip install -e .
 ```
 
+## Python governance library (`import govai`)
+
+Thin **HTTP client** for the **Rust audit API** (`POST /evidence`, `GET /bundle`, `GET /bundle-hash`, `GET /compliance-summary`, `GET /verify`). Shipped in the **`aigov-py`** distribution under the import path **`govai`**. Use **`GovAIClient`** from `govai` — not **`GovaiClient`** in `aigov_py.client`, which targets product/assessment HTTP routes when you wire that separately.
+
+**Install** (from repo root):
+
+```bash
+cd python && python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
+```
+
+**Example**
+
+```python
+from govai import GovAIClient, get_compliance_summary, submit_event, verify_chain
+
+base_url = "http://127.0.0.1:8088"  # audit service origin only (no path suffix)
+client = GovAIClient(base_url, api_key=None)  # optional: Bearer if your deployment requires it
+
+out = submit_event(client, {...})  # or client.submit_event(...)
+summary = get_compliance_summary(client, run_id="...")
+chain = verify_chain(client)  # or client.verify_chain(); body uses ok true/false (HTTP 200 either way)
+```
+
+**Decision / current state** — No separate decision URL. When `summary["ok"]` is true, read `summary["current_state"]`. Use `current_state_from_summary` / `decision_signals_from_summary` for common fields; VALID / INVALID / BLOCKED follows rule order in [Decision-Oriented Compliance](#decision-oriented-compliance).
+
+**Tests:** `cd python && pytest tests/test_govai_sdk.py -v`
+
+## Terminal SDK v0.1 (`govai` command)
+
+Install the package from `python/` (`pip install -e .`). The **`govai`** executable is the primary CLI for the audit workflow: bundle fetch, report render, export, verification, compliance summary, and (when your deployment enables it) assessment APIs on the **same** Rust service.
+
+**Config:** `govai init --url http://127.0.0.1:8088` writes `.govai/config.json` in the current directory. Override the path with env `GOVAI_CONFIG`. Precedence for the audit URL is: `GOVAI_AUDIT_BASE_URL` / `AIGOV_AUDIT_URL` / `AIGOV_AUDIT_ENDPOINT`, then `--audit-base-url`, then the config file, then `http://127.0.0.1:8088`. Optional bearer token: `GOVAI_API_KEY`, `--api-key`, or `govai init --store-api-key …`.
+
+**Exit codes:** `0` — success (including `verify` with verdict VALID); `1` — HTTP/network or assessment API error; `2` — invalid usage or `verify` verdict INVALID.
+
+**Canonical CLI workflow** (Rust service reachable; replace `RUN_ID` after your train/approve/promote steps, or use the Makefile demo to produce artifacts under `docs/`):
+
+```bash
+cd python && . .venv/bin/activate
+govai init --url http://127.0.0.1:8088
+export RUN_ID=<uuid>   # optional if you pass --run-id on every command
+govai fetch-bundle --run-id "$RUN_ID"
+govai report --run-id "$RUN_ID"
+govai export-bundle --run-id "$RUN_ID"
+govai verify --run-id "$RUN_ID"        # human-readable report; add --json for machine output
+govai compliance-summary --run-id "$RUN_ID"
+```
+
+Subcommands: `init`, `verify`, `fetch-bundle`, `report`, `export-bundle`, `compliance-summary`, `create-assessment`, `finalize`, `evidence`. Global flags: `--config`, `--audit-base-url`, `--api-key`, `--timeout`, `--compact-json`.
+
+Tests: `cd python && pytest tests/test_cli_terminal_sdk.py`.
+
 ## Quick start (five steps)
 
 1. **Set `DATABASE_URL`** to a reachable Postgres connection string.
