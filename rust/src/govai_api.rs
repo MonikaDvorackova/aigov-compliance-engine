@@ -7,8 +7,9 @@ use crate::projection;
 use crate::schema::EvidenceEvent;
 use crate::verify_chain;
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::{self, Next};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -199,15 +200,26 @@ pub fn audit_router(log_path: &'static str, policy_version: &'static str) -> Rou
         log_path,
         policy_version,
     };
+    let api_key_cfg = crate::audit_api_key::AuditApiKeyConfig::from_env();
+    let audit_key_layer = middleware::from_fn(move |request: Request, next: Next| {
+        let cfg = api_key_cfg.clone();
+        async move { crate::audit_api_key::gate_audit_routes(cfg, request, next).await }
+    });
 
-    Router::new()
+    let gated = Router::new()
         .route("/evidence", post(ingest))
         .route("/verify", get(verify))
         .route("/bundle", get(bundle_route))
+        .route("/compliance-summary", get(compliance_summary_route))
+        .layer(audit_key_layer)
+        .with_state(state.clone());
+
+    let open = Router::new()
         .route("/bundle-hash", get(bundle_hash_route))
         .route("/verify-log", get(verify_log))
-        .route("/compliance-summary", get(compliance_summary_route))
-        .with_state(state)
+        .with_state(state);
+
+    Router::new().merge(gated).merge(open)
 }
 
 #[derive(Deserialize)]

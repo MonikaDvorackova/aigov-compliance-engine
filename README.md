@@ -19,6 +19,28 @@ Expected:
 {"ok": true, "policy_version": "v0.4_human_approval"}
 ```
 
+### Optional: API key auth
+
+When the audit process is started with **`GOVAI_API_KEYS`** (comma-separated secrets), protected routes require **`Authorization: Bearer <key>`**. If **`GOVAI_API_KEYS`** is unset, behavior matches an open local server.
+
+```bash
+export GOVAI_API_KEYS="test-key"
+# restart audit service so it picks up the env var
+```
+
+Python:
+
+```python
+client = GovAIClient("http://127.0.0.1:8088", api_key="test-key")
+```
+
+CLI: set **`GOVAI_API_KEY`** to a value listed in **`GOVAI_API_KEYS`** so `govai` audit calls (e.g. `compliance-summary`, `fetch-bundle`) send the header. The **`govai`** CLI also honors **`--api-key`** if you already use it.
+
+```bash
+# Protected route (e.g. GET /verify); unauthenticated requests return 401 with {"ok":false,"error":"unauthorized"}.
+curl -sS -H "Authorization: Bearer test-key" "http://127.0.0.1:8088/verify"
+```
+
 ```bash
 # Install Python package
 cd python
@@ -136,6 +158,53 @@ events → hash chain → compliance verdict.
 
 This makes AI systems auditable, testable, and enforceable in CI.
 
+## Example Use Case
+
+### 1. Problem
+
+A **retail bank** maintains an **online transaction fraud scoring model** that gates card-not-present authorizations. Model releases are tied to internal **model risk management** and **second-line review**: each production candidate must show **which data** was used, **how** it was evaluated, **who** approved deployment, and **when** the artifact was released. The bank’s current practice mixes **CI job logs**, **ticketing**, and **email** for sign-off. That breaks down under scrutiny: timestamps and approvers are not bound to a single immutable sequence, **steps can be repeated or skipped** without a machine check, and reconstructing “what was true at release time” requires manual correlation across systems. **Traceability** from a deployed model version back to dataset identity, metrics, and human decision is slow and error-prone.
+
+### 2. How GovAI is used
+
+GovAI is the **audit ledger and policy gate** for one **training and release cycle** identified by a single `run_id`.
+
+**Control flow (strict order):**
+
+1. **Training pipeline** (batch job or CI) generates a **`run_id`** and emits **`data_registered`**: the service accepts `POST /evidence` only if the payload matches the policy schema for that event type.
+2. The same job emits **`model_trained`** after registration for that `run_id`; policy **rejects** `model_trained` if no prior `data_registered` exists for that run.
+3. After evaluation completes offline or in CI, the pipeline emits **`evaluation_reported`** with metrics and pass/fail against bank-defined thresholds.
+4. **Risk workflow** emits **`risk_recorded`**, then **`risk_mitigated`**, then **`risk_reviewed`** as required by policy, linking the run to an assessment record.
+5. A **named approver** (model risk or delegated role) emits **`human_approved`**, referencing the assessment, dataset commitment, and scope for that `run_id`.
+6. **Release automation** emits **`model_promoted`** only when prior events for that `run_id` satisfy policy; otherwise append **fails** and promotion does not enter the log.
+
+**Policy enforcement:** Each successful append is evaluated by **embedded policy** (`v0.4_human_approval`) before write. **Out-of-order or missing prerequisites** result in **rejection of the event**, not a silent partial state: you cannot record promotion without evaluation and approval, and you cannot skip dataset registration before training. **Event emission** is explicit: clients call `POST /evidence` with structured JSON; the ledger stores **append-only** records.
+
+### 3. What data flows through the system
+
+- **`run_id`** — UUID for one candidate release path (one chain of evidence for that training job and its decisions).
+- **`actor`** — Who caused the event (e.g. CI principal `fraud-train-ci`, human `reviewer:jane.doe@bank`, release job `fraud-promote-prod`).
+- **`system`** — Logical producer (e.g. `fraud-model-training-pipeline`, `model-risk-workbench`, `artifact-promotion-service`).
+- **Dataset identifiers and hashes** — In `data_registered` payload: `dataset_id`, `dataset_version`, `dataset_fingerprint` (e.g. SHA-256 of the approved snapshot), `dataset_governance_id`, `dataset_governance_commitment`, plus `ai_system_id` binding the dataset to the fraud engine’s registered AI system id.
+- **Evaluation metrics** — In `evaluation_reported` payload: accuracy or business metrics the bank encodes (e.g. precision/recall at a score cutoff, false positive rate cap), threshold values, and **`passed`** boolean against policy thresholds.
+- **Approval data** — In `human_approved` payload: linkage to the **assessment** id, confirmation of reviewed risk, and references to the same **dataset commitment** and **scope** policy requires for that run.
+- **Promotion data** — In `model_promoted` payload: artifact location or version handle the bank uses (e.g. container digest, model registry id) so the ledger event ties the **released binary** to the **same `run_id`**.
+
+Each event also carries **`event_id`**, **`event_type`**, **`ts_utc`**, and a **`payload`** object shaped by schema and policy for that type.
+
+### 4. What output you get (decision + audit)
+
+**Decision states** (from compliance projection / verification over the run):
+
+- **VALID** — Evaluation requirements are met, human approval is present, and the run is in a state where **promotion is allowed** under policy (all required evidence for that verdict is present and consistent).
+- **BLOCKED** — Required steps are **missing or incomplete** (e.g. evaluation not passed, approval not recorded, or promotion attempted without prerequisites). The run must not be treated as releasable until the chain is completed.
+- **INVALID** — **Evaluation failed** (or equivalent governance rule): the run is **not eligible** for production regardless of later events; do not promote.
+
+**Audit output:**
+
+- **Ordered event chain** — For a given `run_id`, **read APIs** derive a single ordered sequence from the append-only log (e.g. bundle and compliance summary). Reviewers see the **same order** policy enforced at write time.
+- **Hash integrity** — Each record links to the previous via cryptographic hash; **`GET /verify`** (and CLI `govai verify`) reports whether the **chain is intact** and matches stored hashes.
+- **Traceability** — From **production** (artifact referenced in `model_promoted`) back to **dataset fingerprint**, **metrics and pass/fail**, **risk lifecycle**, and **approver identity**, without relying on a separate ticket system as the source of truth.
+
 ## Example: ML pipeline audit
 
 Minimal example: register a dataset event and evaluate compliance.
@@ -210,6 +279,22 @@ Expected:
   ]
 }
 ```
+
+### Example: blocked deployment
+
+```bash
+bash examples/blocked_deployment.sh
+```
+
+Expected:
+
+```json
+{
+  "verdict": "INVALID"
+}
+```
+
+This results in a blocked deployment (non-zero exit code).
 
 ## Core vs Non-Core
 
@@ -410,6 +495,46 @@ Stable location for optional pinned snapshots and notes: **[docs/demo/golden-run
 | [docs/THESIS_REFERENCE_SCOPE.md](docs/THESIS_REFERENCE_SCOPE.md) | Thesis vs repository |
 | [docs/strong-core-contract-note.md](docs/strong-core-contract-note.md) | Identifiers and compliance-summary contract |
 | [docs/technical-documentation.md](docs/technical-documentation.md) | Legacy notes (partially superseded for v0.1) |
+
+## Roadmap
+
+Work after v0.1 is organized into pragmatic horizons. Priority is reliability first, then usability, then expansion. No timelines, no promises.
+
+### Next (immediate)
+
+- API keys  
+  Introduce consistent authentication across all services. Support issue, revoke, and basic scoping. Align behavior across API, CLI, and SDK.
+
+- Hosted platform (foundations)  
+  Stabilize self-hosting: configuration, health checks, logging, and Postgres-backed run storage. Add backup and restore procedures.
+
+- Better SDKs (Python)  
+  Improve typing, error handling, retries, and align methods with real workflows (submit → evaluate → approve → promote → summary → verify).
+
+### Near-term
+
+- Hosted platform (managed)  
+  Provide a managed deployment option. Start with isolated (single-tenant) setups. Focus on provisioning and updates.
+
+- Multi-project support  
+  Enable separation of workloads within one org. Isolated runs and policies per project.
+
+- Better SDKs (TypeScript)  
+  Introduce a minimal TypeScript client for core flows only.
+
+### Later
+
+- Hosted platform (scale)  
+  Improve efficiency and reliability after usage patterns are validated.
+
+- API keys (advanced)  
+  Add fine-grained scopes, rotation, audit logs, and optional IdP integration.
+
+- Multi-project (advanced)  
+  Cross-project reporting, shared templates, and migration tools.
+
+- Better SDKs (maturity)  
+  Stabilize APIs and introduce versioning. Consider generated clients if API surface stabilizes.
 
 ## License
 
