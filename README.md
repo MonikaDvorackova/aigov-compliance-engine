@@ -45,11 +45,7 @@ From that log, the system derives:
 - compliance summary → final decision
 - audit chain → verifiable history
 
-## Details
-
-Package name: aigov-py  
-Import: govai  
-CLI: govai  
+**Distribution:** PyPI/installable package **`aigov-py`**, Python import **`govai`**, terminal command **`govai`**.
 
 ## Quickstart
 
@@ -60,15 +56,19 @@ make audit_bg
 curl -sS http://127.0.0.1:8088/status
 ```
 
+The system computes a compliance state from accepted events under policy; the outputs below reflect that state for the given run.
+
 Expected:
 
 ```json
-{"ok": true, "policy_version": "v0.4_human_approval"}
+{"ok": true, "policy_version": "v0.5_dev", "environment": "dev"}
 ```
+
+(`environment` reflects the server deployment tier, e.g. `dev`, `staging`, or `prod`.)
 
 ### Optional: API key auth
 
-When the audit process is started with **`GOVAI_API_KEYS`** (comma-separated secrets), protected routes require **`Authorization: Bearer <key>`**. If **`GOVAI_API_KEYS`** is unset, behavior matches an open local server.
+When the audit process is started with **`GOVAI_API_KEYS`** (comma-separated bearer secrets; optional per-key caps as `secret:max_requests`), most gated audit routes require **`Authorization: Bearer <key>`**. **`GET /bundle-hash`** and **`GET /verify-log`** stay open (no gate). If **`GOVAI_API_KEYS`** is unset, behavior matches an open local server.
 
 ```bash
 export GOVAI_API_KEYS="test-key"
@@ -81,7 +81,7 @@ Python:
 client = GovAIClient("http://127.0.0.1:8088", api_key="test-key")
 ```
 
-CLI: set **`GOVAI_API_KEY`** to a value listed in **`GOVAI_API_KEYS`** so `govai` audit calls (e.g. `compliance-summary`, `fetch-bundle`) send the header. The **`govai`** CLI also honors **`--api-key`** if you already use it.
+CLI: set **`GOVAI_API_KEY`** to a value listed in **`GOVAI_API_KEYS`** so `govai` audit calls (e.g. `compliance-summary`, `fetch-bundle`, `check`) send the header. The **`govai`** CLI also honors **`--api-key`** if you already use it.
 
 ```bash
 # Protected route (e.g. GET /verify); unauthenticated requests return 401 with {"ok":false,"error":"unauthorized"}.
@@ -151,7 +151,7 @@ PY
 Example output:
 
 ```json
-{"ok": true, "record_hash": "<hex>", "policy_version": "v0.4_human_approval"}
+{"ok": true, "record_hash": "<hex>", "policy_version": "v0.5_dev", "environment": "dev"}
 ```
 
 ```json
@@ -159,7 +159,7 @@ Example output:
 ```
 
 ```json
-{"ok": true, "policy_version": "v0.4_human_approval"}
+{"ok": true, "policy_version": "v0.5_dev"}
 ```
 
 ```bash
@@ -224,7 +224,7 @@ GovAI is the **audit ledger and policy gate** for one **training and release cyc
 5. A **named approver** (model risk or delegated role) emits **`human_approved`**, referencing the assessment, dataset commitment, and scope for that `run_id`.
 6. **Release automation** emits **`model_promoted`** as the **final release decision** only when prior events for that `run_id` satisfy policy; otherwise append fails and promotion does not enter the log.
 
-**Policy enforcement:** Each successful append is evaluated by **embedded policy** (`v0.4_human_approval`) before write. **Out-of-order or missing prerequisites** result in **rejection of the event**, not a silent partial state: you cannot record promotion without evaluation and approval, and you cannot skip dataset registration before training. **Event emission** is explicit: clients call `POST /evidence` with structured JSON; the ledger stores **append-only** records. If an event is rejected, the client must correct missing prerequisites and re-emit the event for the same `run_id`; rejected events are not persisted.
+**Policy enforcement:** Each successful append is evaluated by **embedded policy** for the server tier (`v0.5_dev`, `v0.5_staging`, or `v0.5_prod` from **`AIGOV_ENVIRONMENT`** / **`AIGOV_ENV`** / **`GOVAI_ENV`**; default is dev — see `rust/src/govai_environment.rs`) before write. **Out-of-order or missing prerequisites** result in **rejection of the event**, not a silent partial state: you cannot record promotion without evaluation and approval, and you cannot skip dataset registration before training. **Event emission** is explicit: clients call `POST /evidence` with structured JSON; the ledger stores **append-only** records. If an event is rejected, the client must correct missing prerequisites and re-emit the event for the same `run_id`; rejected events are not persisted.
 
 **CI/CD gating:** The deploy job **reads GovAI** (compliance summary or `govai verify`) for the target `run_id` before changing production artifacts or infrastructure. If the outcome is not **VALID**, the pipeline **stops** and that deployment does not run.
 
@@ -416,8 +416,9 @@ The **core abstractions** (identifiers, evidence events, bundle, projection, com
 
 ## What it does
 
-- **Append-only audit ledger** — Rust service appends hash-chained JSONL (`rust/audit_log.jsonl`) on successful `POST /evidence`; policy version is `v0.4_human_approval` (see `rust/src/main.rs`).
-- **Bundle and compliance views** — `GET /bundle`, `/bundle-hash`, `/compliance-summary` derive from the log; `GET /verify` checks chain integrity.
+- **Append-only audit ledger** — Rust service appends hash-chained JSONL (`rust/audit_log.jsonl`) on successful `POST /evidence`; **`policy_version`** in API responses follows the deployment tier (`v0.5_dev` / `v0.5_staging` / `v0.5_prod`; see `rust/src/govai_environment.rs` and `rust/src/main.rs`).
+- **HTTP surface (Rust, same process)** — Core: `GET /`, `GET /health`, `GET /status`. Audit log: `POST /evidence`, `GET /verify`, `GET /bundle`, `GET /bundle-hash`, `GET /compliance-summary`, `GET /verify-log`, `GET /api/export/:run_id` (machine export JSON). Postgres-backed console: `GET /api/me`, `POST /api/assessments`, `GET`/`POST /api/compliance-workflow`, `GET /api/compliance-workflow/:run_id`, `POST /api/compliance-workflow/:run_id/review`, `POST /api/compliance-workflow/:run_id/promotion`.
+- **Bundle and compliance views** — `GET /bundle`, `/bundle-hash`, `/compliance-summary` derive from the log; `GET /verify` checks chain integrity; `GET /verify-log` returns compact chain JSON for local/CI checks.
 - **Reference training pipeline** — Python `pipeline_train` trains sklearn `LogisticRegression`, emits events to the audit URL, then stops for human approval; `approve` / `promote` complete the lifecycle.
 - **Reports and packs** — Markdown audit reports, audit manifest JSON, and ZIP packs under `docs/` via Makefile targets.
 - **Optional dashboard** — Next.js app reads runs from Supabase after `db_ingest` (see [DEMO_FLOW.md](DEMO_FLOW.md)).
@@ -430,7 +431,7 @@ The **core abstractions** (identifiers, evidence events, bundle, projection, com
 - **Python ≥ 3.10** — venv under `python/.venv`, `pip install -e .` from `python/`
 - **PostgreSQL** — **`DATABASE_URL`** required (Rust builds a pool at startup)
 
-Optional: **Supabase** credentials for `db_ingest` and the dashboard; Rust **`/api/me`** / **`/api/assessments`** need **`SUPABASE_URL`** (JWKS) and a valid Bearer JWT (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+Optional: **Supabase** credentials for `db_ingest` and the dashboard; Rust **`/api/me`**, **`/api/assessments`**, and **`/api/compliance-workflow`** routes need **`SUPABASE_URL`** (JWKS) and a valid Bearer JWT (see [ARCHITECTURE.md](ARCHITECTURE.md)).
 
 ```bash
 cd python && python -m venv .venv && . .venv/bin/activate && pip install -e .
@@ -438,7 +439,7 @@ cd python && python -m venv .venv && . .venv/bin/activate && pip install -e .
 
 ## Python governance library (`import govai`)
 
-Thin **HTTP client** for the **Rust audit API** (`POST /evidence`, `GET /bundle`, `GET /bundle-hash`, `GET /compliance-summary`, `GET /verify`). Shipped in the **`aigov-py`** distribution under the import path **`govai`**. Use **`GovAIClient`** from `govai` — not **`GovaiClient`** in `aigov_py.client`, which targets product/assessment HTTP routes when you wire that separately.
+Thin **HTTP client** for the **Rust audit API** (`POST /evidence`, `GET /bundle`, `GET /bundle-hash`, `GET /compliance-summary`, `GET /verify`). Shipped in the **`aigov-py`** distribution under the import path **`govai`**. Use **`GovAIClient`** from `govai` for those routes. **`GovaiClient`** in `aigov_py.client` is separate: it only implements **`create_assessment`** → **`POST /api/assessments`** (Supabase JWT and team resolution as in your deployment; see [ARCHITECTURE.md](ARCHITECTURE.md)).
 
 **Install** (from repo root):
 
@@ -469,7 +470,7 @@ Install the package from `python/` (`pip install -e .`). The **`govai`** executa
 
 **Config:** `govai init --url http://127.0.0.1:8088` writes `.govai/config.json` in the current directory. Override the path with env `GOVAI_CONFIG`. Precedence for the audit URL is: `GOVAI_AUDIT_BASE_URL` / `AIGOV_AUDIT_URL` / `AIGOV_AUDIT_ENDPOINT`, then `--audit-base-url`, then the config file, then `http://127.0.0.1:8088`. Optional bearer token: `GOVAI_API_KEY`, `--api-key`, or `govai init --store-api-key …`.
 
-**Exit codes:** `0` — success (including `verify` with verdict VALID); `1` — HTTP/network or assessment API error; `2` — invalid usage or `verify` verdict INVALID.
+**Exit codes:** `0` — success (including `verify` with verdict VALID and `check` with VALID); `1` — HTTP/network, assessment API error, or unexpected exception; `2` — invalid usage, `verify` verdict INVALID / failed local checks, or `check` when the compliance label is not VALID (INVALID / BLOCKED).
 
 **Canonical CLI workflow** (Rust service reachable; replace `RUN_ID` after your train/approve/promote steps, or use the Makefile demo to produce artifacts under `docs/`):
 
@@ -482,9 +483,10 @@ govai report --run-id "$RUN_ID"
 govai export-bundle --run-id "$RUN_ID"
 govai verify --run-id "$RUN_ID"        # human-readable report; add --json for machine output
 govai compliance-summary --run-id "$RUN_ID"
+govai check "$RUN_ID"                  # prints VALID | INVALID | BLOCKED from /compliance-summary (exit 0 only if VALID)
 ```
 
-Subcommands: `init`, `verify`, `fetch-bundle`, `report`, `export-bundle`, `compliance-summary`, `create-assessment`, `finalize`, `evidence`. Global flags: `--config`, `--audit-base-url`, `--api-key`, `--timeout`, `--compact-json`.
+Subcommands: `init`, `run demo`, `verify`, `fetch-bundle`, `compliance-summary`, `check`, `report`, `export-bundle`, `create-assessment`. Global flags: `--config`, `--audit-base-url`, `--api-key`, `--timeout`, `--compact-json`.
 
 Tests: `cd python && pytest tests/test_cli_terminal_sdk.py`.
 
@@ -500,7 +502,7 @@ Tests: `cd python && pytest tests/test_cli_terminal_sdk.py`.
 
    On success the server prints `govai listening on http://…` (see `rust/src/main.rs`); `make audit_bg` prints `ready on http://127.0.0.1:8088` when the `/status` probe succeeds.
 
-3. **Sanity check:** `make status` → `{"ok":true,"policy_version":"v0.4_human_approval"}`; `make verify` → JSON with `"ok":true` and `"policy_version"` when the chain is valid.
+3. **Sanity check:** `make status` → `{"ok":true,"policy_version":"v0.5_dev","environment":"dev"}` (values reflect your env); `make verify` → JSON with `"ok":true` and `"policy_version"` when the chain is valid.
 
 4. **Train:** `make run` → note `done run_id=<uuid> accuracy=<float> passed=<true|false>`, then `pending_human_approval`.
 
@@ -521,7 +523,7 @@ Tests: `cd python && pytest tests/test_cli_terminal_sdk.py`.
 | Step | Command | Expected (representative) |
 |------|---------|---------------------------|
 | Service up | `make audit_bg` | `starting aigov_audit…` then `ready on http://127.0.0.1:8088`, or `aigov_audit already running…` |
-| Liveness | `make status` | `{"ok":true,"policy_version":"v0.4_human_approval"}` |
+| Liveness | `make status` | `{"ok":true,"policy_version":"v0.5_dev","environment":"dev"}` (tier-specific) |
 | Chain | `make verify` | `"ok":true` and `policy_version`, or `"ok":false` with `error` |
 | Train | `make run` | `done run_id=…`, `pending_human_approval`, printed `make bundle RUN_ID=…` hint |
 | Approve | `RUN_ID=… make approve` | JSON with `"ok":true` and `record_hash` on success |
