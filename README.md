@@ -45,7 +45,7 @@ From that log, the system derives:
 - compliance summary → final decision
 - audit chain → verifiable history
 
-# GovAI
+## Details
 
 Package name: aigov-py  
 Import: govai  
