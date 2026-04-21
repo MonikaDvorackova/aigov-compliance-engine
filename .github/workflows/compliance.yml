@@ -42,20 +42,28 @@ jobs:
           set -euo pipefail
 
           if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
-            BASE_SHA="${{ github.event.pull_request.base.sha }}"
-            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-          else
-            BASE_SHA="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+            git fetch origin "${{ github.base_ref }}"
+            BASE_SHA="$(git merge-base HEAD "origin/${{ github.base_ref }}")"
             HEAD_SHA="$(git rev-parse HEAD)"
+            REPORTS_CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+            CHANGED_FILES="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" || true)"
+          else
+            HEAD_SHA="$(git rev-parse HEAD)"
+            if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+              BASE_SHA="$(git rev-parse HEAD^)"
+              REPORTS_CHANGED="$(git diff --name-only HEAD^ HEAD -- 'docs/reports/**' || true)"
+              CHANGED_FILES="$(git diff --name-only HEAD^ HEAD || true)"
+            else
+              BASE_SHA="${HEAD_SHA}"
+              REPORTS_CHANGED=""
+              CHANGED_FILES=""
+            fi
           fi
 
           echo "base_sha=${BASE_SHA}" >> "${GITHUB_OUTPUT}"
           echo "head_sha=${HEAD_SHA}" >> "${GITHUB_OUTPUT}"
 
-          REPORTS_CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
-          CHANGED_FILES="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" || true)"
-
-          CORE_CHANGED="$(printf '%s\n' "${CHANGED_FILES}" | grep -E '^(rust/|python/aigov_py/(evaluate|approve|promote|report|evidence_pack|pipeline_train)\.py$|docs/strong-core-contract-note\.md$|ARCHITECTURE\.md$|Makefile$)' || true)"
+          CORE_CHANGED="$(printf '%s\n' "${CHANGED_FILES}" | grep -E '^(rust/|python/govai/|python/aigov_py/(evaluate|approve|promote|report|evidence_pack|pipeline_train)\.py$|docs/strong-core-contract-note\.md$|ARCHITECTURE\.md$|Makefile$)' || true)"
 
           if [ -n "${REPORTS_CHANGED}" ]; then
             echo "reports_changed=true" >> "${GITHUB_OUTPUT}"

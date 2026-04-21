@@ -5,6 +5,10 @@ and hash-chain verification (``GET /verify``).
 No business logic beyond HTTP and response handling.
 """
 
+from importlib.metadata import version
+
+__version__ = version("aigov-py")
+
 from .bundle import get_bundle, get_bundle_hash
 from .client import GovAIAPIError, GovAIClient, GovAIError, GovAIHTTPError
 from .compliance import (
@@ -17,6 +21,7 @@ from .evidence import submit_event
 from .verify import verify_chain
 
 __all__ = [
+    "__version__",
     "GovAIAPIError",
     "GovAIClient",
     "GovAIError",

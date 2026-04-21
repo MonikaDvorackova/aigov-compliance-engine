@@ -1,5 +1,23 @@
 # GovAI
 
+Package name: aigov-py  
+Import: govai  
+CLI: govai  
+
+## Core vs Non-Core
+
+Core (requires audit reports):
+
+- `python/govai/**`
+- `rust/**`
+- architecture definitions (`ARCHITECTURE.md`, `docs/strong-core-contract-note.md`)
+
+Non-core:
+
+- CLI wrappers (`python/aigov_py/cli.py` and related terminal tooling)
+- dashboard
+- tooling
+
 GovAI turns compliance evidence into a production decision.
 
 Most systems log compliance.  
