@@ -1,7 +1,15 @@
+use crate::api_usage::ApiUsageState;
+use crate::api_usage::key_fingerprint;
+use crate::audit_api_key;
 use crate::auth::{AuthConfig, CurrentUser};
 use crate::bundle;
 use crate::db::{self, DbPool};
+use crate::evidence_usage;
+use crate::metering::{self, MeteringConfig, MeteringReject, GovaiPlan};
+use crate::project;
+use crate::govai_environment::GovaiEnvironment;
 use crate::policy;
+use crate::policy_config::PolicyConfig;
 use crate::rbac;
 use crate::projection;
 use crate::schema::EvidenceEvent;
@@ -12,12 +20,13 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
 use uuid::Uuid;
 
-pub fn core_router(policy_version: &'static str) -> Router {
+pub fn core_router(policy_version: &'static str, deployment_env: GovaiEnvironment) -> Router {
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
@@ -25,7 +34,8 @@ pub fn core_router(policy_version: &'static str) -> Router {
             "/status",
             get({
                 let pv = policy_version;
-                move || async move { status(pv).await }
+                let de = deployment_env;
+                move || async move { status(pv, de).await }
             }),
         )
 }
@@ -45,8 +55,12 @@ pub async fn health() -> (StatusCode, Json<serde_json::Value>) {
     (StatusCode::OK, Json(json!({ "ok": true })))
 }
 
-pub async fn status(policy_version: &'static str) -> Json<serde_json::Value> {
-    Json(json!({ "ok": true, "policy_version": policy_version }))
+pub async fn status(policy_version: &'static str, deployment_env: GovaiEnvironment) -> Json<serde_json::Value> {
+    Json(json!({
+        "ok": true,
+        "policy_version": policy_version,
+        "environment": deployment_env.as_str(),
+    }))
 }
 
 #[derive(Deserialize)]
@@ -59,7 +73,59 @@ struct BundleHashQuery {
     run_id: String,
 }
 
-fn reject_duplicate_event_id(log_path: &str, event: &EvidenceEvent) -> Result<(), String> {
+fn normalize_env_label(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "dev" | "development" | "local" => Some("dev"),
+        "staging" | "stage" => Some("staging"),
+        "prod" | "production" => Some("prod"),
+        _ => None,
+    }
+}
+
+/// Reject cross-environment mixing for a run; stamp [`EvidenceEvent::environment`] to the server tier.
+fn prepare_event_for_ingest(
+    event: &mut EvidenceEvent,
+    deployment: GovaiEnvironment,
+    log_path: &str,
+) -> Result<(), String> {
+    let canon = deployment.as_str();
+    if let Some(ref claimed) = event.environment {
+        let norm = normalize_env_label(claimed).ok_or_else(|| {
+            format!("policy_violation: invalid event.environment={claimed:?}")
+        })?;
+        if norm != canon {
+            return Err(format!(
+                "policy_violation: event.environment={claimed:?} does not match server deployment {canon}"
+            ));
+        }
+    }
+
+    let existing = bundle::collect_events_for_run(log_path, &event.run_id)?;
+    for e in &existing {
+        if let Some(ref pe) = e.environment {
+            let norm = normalize_env_label(pe).ok_or_else(|| {
+                format!(
+                    "policy_violation: log contains invalid environment={pe:?} on event_id={}",
+                    e.event_id
+                )
+            })?;
+            if norm != canon {
+                return Err(format!(
+                    "policy_violation: run_id {} already tagged environment={pe:?}; refusing {canon}",
+                    event.run_id
+                ));
+            }
+        }
+    }
+
+    event.environment = Some(canon.to_string());
+    Ok(())
+}
+
+fn collect_existing_and_reject_duplicate(
+    log_path: &str,
+    event: &EvidenceEvent,
+) -> Result<Vec<EvidenceEvent>, String> {
     let existing = bundle::collect_events_for_run(log_path, &event.run_id)?;
     if existing.iter().any(|e| e.event_id == event.event_id) {
         return Err(format!(
@@ -67,7 +133,7 @@ fn reject_duplicate_event_id(log_path: &str, event: &EvidenceEvent) -> Result<()
             event.event_id, event.run_id
         ));
     }
-    Ok(())
+    Ok(existing)
 }
 
 fn canonicalize_events(mut events: Vec<EvidenceEvent>) -> Vec<EvidenceEvent> {
@@ -95,38 +161,344 @@ fn canonicalize_events(mut events: Vec<EvidenceEvent>) -> Vec<EvidenceEvent> {
 struct AuditState {
     log_path: &'static str,
     policy_version: &'static str,
+    deployment_env: GovaiEnvironment,
+    policy: PolicyConfig,
+    pool: DbPool,
+    metering: MeteringConfig,
 }
 
+/// Ingest phases after [`crate::audit_api_key::gate_audit_routes`]:
+/// 1. Prepare + policy validation  
+/// 2. Duplicate rejection  
+/// 3. Legacy billing tenant ([`project::billing_tenant_id`]) when `GOVAI_METERING` is off — same scope as `GET /usage`  
+/// 4. Metering precheck (`GOVAI_METERING=on`) **or** legacy evidence quota  
+/// 5. [`crate::audit_store::append_record`]  
+/// 6. Metering persist **or** [`evidence_usage::increment_evidence_usage`]
 async fn ingest(
     State(audit): State<AuditState>,
-    Json(event): Json<EvidenceEvent>,
+    headers: HeaderMap,
+    Json(mut event): Json<EvidenceEvent>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    if let Err(e) = policy::enforce(&event, audit.log_path) {
+    if let Err(e) = prepare_event_for_ingest(&mut event, audit.deployment_env, audit.log_path) {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
         );
     }
 
-    if let Err(e) = reject_duplicate_event_id(audit.log_path, &event) {
+    if let Err(e) = policy::enforce(
+        &event,
+        audit.log_path,
+        &audit.policy,
+        audit.deployment_env,
+    ) {
         return (
-            StatusCode::CONFLICT,
+            StatusCode::BAD_REQUEST,
             Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
         );
     }
 
+    let existing = match collect_existing_and_reject_duplicate(audit.log_path, &event) {
+        Ok(e) => e,
+        Err(e) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+            );
+        }
+    };
+
+    // Legacy `govai_usage_counters` tenant (only when `GOVAI_METERING` is off); same scope as `GET /usage`.
+    let tenant_id_legacy = if !audit.metering.enabled {
+        Some(project::billing_tenant_id(&headers))
+    } else {
+        None
+    };
+
+    let pre_count = existing.len() as u64;
+    let next_count = pre_count + 1;
+    let is_new_run = pre_count == 0;
+    let run_id = event.run_id.clone();
+
+    let metering_team = if audit.metering.enabled {
+        let key_hash = match audit_api_key::raw_bearer_token(&headers) {
+            None => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({ "ok": false, "error": "unauthorized" })),
+                );
+            }
+            Some(t) => key_fingerprint(t),
+        };
+        let team_id = match metering::team_id_for_key_hash(&audit.pool, &key_hash).await {
+            Ok(t) => t,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "ok": false, "error": "metering_error", "details": e.to_string(), "policy_version": audit.policy_version })),
+                );
+            }
+        };
+        let team_id = match team_id {
+            None => {
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({
+                        "ok": false,
+                        "error": "team_not_configured_for_api_key",
+                        "policy_version": audit.policy_version
+                    })),
+                );
+            }
+            Some(t) => t,
+        };
+        let plan = audit.metering.default_plan;
+        let limits = metering::PlanLimits::for_plan(plan);
+        let ym = metering::year_month_utc_now();
+        let (new_run_ids, evidence_events) = match metering::load_monthly(&audit.pool, team_id, ym).await {
+            Ok(x) => x,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "ok": false, "error": "metering_error", "details": e.to_string(), "policy_version": audit.policy_version })),
+                );
+            }
+        };
+        if let Err(r) = metering::precheck_ingest(
+            plan,
+            limits,
+            new_run_ids,
+            evidence_events,
+            is_new_run,
+            &run_id,
+            next_count,
+        ) {
+            return match r {
+                MeteringReject::MonthlyRunLimit { used, limit } => (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(json!({
+                        "ok": false,
+                        "error": "monthly_run_limit_exceeded",
+                        "used": used,
+                        "limit": limit,
+                        "year_month": ym,
+                        "policy_version": audit.policy_version
+                    })),
+                ),
+                MeteringReject::MonthlyEventLimit { used, limit } => (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(json!({
+                        "ok": false,
+                        "error": "monthly_event_limit_exceeded",
+                        "used": used,
+                        "limit": limit,
+                        "year_month": ym,
+                        "policy_version": audit.policy_version
+                    })),
+                ),
+                MeteringReject::PerRunEventLimit { run_id, would_be, limit } => (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(json!({
+                        "ok": false,
+                        "error": "per_run_event_limit_exceeded",
+                        "run_id": run_id,
+                        "event_count": would_be,
+                        "limit": limit,
+                        "policy_version": audit.policy_version
+                    })),
+                ),
+            };
+        }
+        Some((team_id, plan, ym, limits, new_run_ids, evidence_events))
+    } else {
+        None
+    };
+
+    if let Some(ref tid) = tenant_id_legacy {
+        match evidence_usage::check_evidence_quota(&audit.pool, tid).await {
+            Ok(()) => {}
+            Err(e) if e == "evidence_quota_exceeded" => {
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(json!({
+                        "ok": false,
+                        "error": "evidence_quota_exceeded",
+                        "limit": evidence_usage::FREE_TIER_EVIDENCE_LIMIT,
+                    })),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "ok": false,
+                        "error": e,
+                        "policy_version": audit.policy_version,
+                    })),
+                );
+            }
+        }
+    }
+
     match crate::audit_store::append_record(audit.log_path, event) {
-        Ok(rec) => (
+        Ok(rec) => {
+            if let Some((team_id, plan, ym, limits, new_run_ids, evidence_events)) = metering_team {
+                if let Err(e) = metering::record_successful_ingest(
+                    &audit.pool,
+                    team_id,
+                    ym,
+                    &run_id,
+                    next_count as i64,
+                    is_new_run,
+                )
+                .await
+                {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "ok": false,
+                            "error": e,
+                            "policy_version": audit.policy_version,
+                        })),
+                    );
+                }
+                let nr1 = new_run_ids + if is_new_run { 1 } else { 0 };
+                let ev1 = evidence_events + 1;
+                let warnings = metering::basic_warnings(plan, limits, nr1, ev1, is_new_run);
+                let complexity = metering::run_complexity_label(next_count);
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "ok": true,
+                        "record_hash": rec.record_hash,
+                        "policy_version": audit.policy_version,
+                        "environment": audit.deployment_env.as_str(),
+                        "team_id": team_id.to_string(),
+                        "plan": plan_id_str(plan),
+                        "year_month": ym,
+                        "run": {
+                            "run_id": run_id,
+                            "event_count": next_count,
+                            "run_complexity": complexity
+                        },
+                        "warnings": warnings
+                    })),
+                )
+            } else {
+                let tid = tenant_id_legacy
+                    .as_ref()
+                    .expect("legacy billing tenant when metering is off");
+                if let Err(e) = evidence_usage::increment_evidence_usage(&audit.pool, tid).await {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "ok": false,
+                            "error": e,
+                            "policy_version": audit.policy_version,
+                        })),
+                    );
+                }
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "ok": true,
+                        "record_hash": rec.record_hash,
+                        "policy_version": audit.policy_version,
+                        "environment": audit.deployment_env.as_str(),
+                    })),
+                )
+            }
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+        ),
+    }
+}
+
+fn plan_id_str(p: GovaiPlan) -> &'static str {
+    match p {
+        GovaiPlan::Free => "free",
+        GovaiPlan::Team => "team",
+        GovaiPlan::Growth => "growth",
+        GovaiPlan::Enterprise => "enterprise",
+    }
+}
+
+async fn usage_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if audit.metering.enabled {
+        let key_hash = match audit_api_key::raw_bearer_token(&headers) {
+            None => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({ "ok": false, "error": "unauthorized" })),
+                );
+            }
+            Some(t) => key_fingerprint(t),
+        };
+        let team_id = match metering::team_id_for_key_hash(&audit.pool, &key_hash).await {
+            Ok(t) => t,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "ok": false, "error": e.to_string() })),
+                );
+            }
+        };
+        let Some(team_id) = team_id else {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "ok": false, "error": "team_not_configured_for_api_key" })),
+            );
+        };
+        let plan = audit.metering.default_plan;
+        let limits = metering::PlanLimits::for_plan(plan);
+        let ym = metering::year_month_utc_now();
+        let (new_run_ids, evidence_events) = match metering::load_monthly(&audit.pool, team_id, ym).await {
+            Ok(x) => x,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "ok": false, "error": e.to_string() })),
+                );
+            }
+        };
+        return (
             StatusCode::OK,
             Json(json!({
-                "ok": true,
-                "record_hash": rec.record_hash,
-                "policy_version": audit.policy_version
+                "metering": "on",
+                "team_id": team_id.to_string(),
+                "year_month": ym,
+                "plan": plan_id_str(plan),
+                "new_run_ids": new_run_ids,
+                "evidence_events": evidence_events,
+                "limits": {
+                    "max_runs_per_month": limits.max_runs_per_month,
+                    "max_events_per_month": limits.max_events_per_month,
+                    "max_events_per_run": limits.max_events_per_run
+                }
+            })),
+        );
+    }
+
+    let tenant_id = project::billing_tenant_id(&headers);
+    match evidence_usage::get_evidence_usage(&audit.pool, &tenant_id).await {
+        Ok((count, period)) => (
+            StatusCode::OK,
+            Json(json!({
+                "metering": "off",
+                "tenant_id": tenant_id,
+                "period_start": period.format("%Y-%m-%d").to_string(),
+                "evidence_events_count": count,
+                "limit": evidence_usage::FREE_TIER_EVIDENCE_LIMIT,
             })),
         ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+            Json(json!({ "ok": false, "error": e })),
         ),
     }
 }
@@ -151,6 +523,124 @@ async fn bundle_route(
         }
         Err(e) => Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
     }
+}
+
+/// Machine-readable audit export: metadata, chain hashes, bundle digest, decision extracts, and timestamps.
+/// Uses `bundle::bundle_document_value` and `bundle::bundle_sha256` (same as `/bundle` and `/bundle-hash`).
+async fn export_run_route(
+    State(audit): State<AuditState>,
+    Path(run_id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let run_id = run_id.trim().to_string();
+    if run_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "ok": false, "error": "run_id_required", "policy_version": audit.policy_version })),
+        );
+    }
+
+    let events = match bundle::collect_events_for_run(audit.log_path, &run_id) {
+        Ok(e) => e,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version, "run_id": run_id })),
+            );
+        }
+    };
+    if events.is_empty() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "ok": false, "error": "run_not_found", "policy_version": audit.policy_version, "run_id": run_id })),
+        );
+    }
+
+    let events = canonicalize_events(events);
+    let log_path = format!("rust/{}", audit.log_path);
+    let bundle_doc = bundle::bundle_document_value(&run_id, audit.policy_version, &log_path, &events);
+    let artifact_path = bundle::find_model_artifact_path(&events);
+    let bundle_sha256 = bundle::bundle_sha256(
+        &run_id,
+        audit.policy_version,
+        &log_path,
+        artifact_path.as_deref(),
+        &events,
+    );
+
+    let chain_records = match crate::audit_store::collect_stored_records_for_run(audit.log_path, &run_id) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version, "run_id": run_id })),
+            );
+        }
+    };
+
+    let head_sha256 = chain_records.last().map(|r| r.record_hash.clone());
+    let log_chain: Vec<serde_json::Value> = chain_records
+        .iter()
+        .filter_map(|rec| {
+            let ev: Result<crate::schema::EvidenceEvent, _> = serde_json::from_str(&rec.event_json);
+            let ev = ev.ok()?;
+            Some(json!({
+                "event_id": ev.event_id,
+                "ts_utc": ev.ts_utc,
+                "event_type": ev.event_type,
+                "prev_hash": rec.prev_hash,
+                "record_hash": rec.record_hash
+            }))
+        })
+        .collect();
+
+    let first_ts = events.first().map(|e| e.ts_utc.clone());
+    let last_ts = events.last().map(|e| e.ts_utc.clone());
+
+    let human = bundle_doc.get("human_approval").cloned().unwrap_or(serde_json::Value::Null);
+    let human_ts = human
+        .get("ts_utc")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let promo = bundle_doc.get("promotion").cloned().unwrap_or(serde_json::Value::Null);
+    let promo_ts = promo.get("ts_utc").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    let eval_passed = bundle_doc
+        .get("evaluation")
+        .and_then(|e| e.get("passed"))
+        .and_then(|v| v.as_bool());
+
+    let out = json!({
+        "ok": true,
+        "schema_version": "aigov.audit_export.v1",
+        "policy_version": audit.policy_version,
+        "environment": audit.deployment_env.as_str(),
+        "exported_at_utc": Utc::now().to_rfc3339(),
+        "run": {
+            "run_id": run_id,
+            "policy_version": audit.policy_version,
+            "log_path": log_path,
+            "model_artifact_path": bundle_doc.get("model_artifact_path").cloned().unwrap_or(serde_json::Value::Null),
+            "identifiers": bundle_doc.get("identifiers").cloned().unwrap_or(serde_json::Value::Null)
+        },
+        "evidence_hashes": {
+            "bundle_sha256": bundle_sha256,
+            "chain_head_record_sha256": head_sha256,
+            "log_chain": log_chain
+        },
+        "decision": {
+            "human_approval": human,
+            "promotion": promo,
+            "evaluation_passed": eval_passed
+        },
+        "timestamps": {
+            "first_event_ts_utc": first_ts,
+            "last_event_ts_utc": last_ts,
+            "human_approval_ts_utc": human_ts,
+            "promotion_ts_utc": promo_ts
+        }
+    });
+
+    (StatusCode::OK, Json(out))
 }
 
 async fn bundle_hash_route(
@@ -195,22 +685,38 @@ async fn verify_log(State(audit): State<AuditState>) -> (StatusCode, String) {
     }
 }
 
-pub fn audit_router(log_path: &'static str, policy_version: &'static str) -> Router {
+pub fn audit_router(
+    log_path: &'static str,
+    policy_version: &'static str,
+    deployment_env: GovaiEnvironment,
+    policy: PolicyConfig,
+    api_usage: ApiUsageState,
+    pool: DbPool,
+    metering: MeteringConfig,
+) -> Router {
     let state = AuditState {
         log_path,
         policy_version,
+        deployment_env,
+        policy,
+        pool,
+        metering,
     };
     let api_key_cfg = crate::audit_api_key::AuditApiKeyConfig::from_env();
+    let u = api_usage;
     let audit_key_layer = middleware::from_fn(move |request: Request, next: Next| {
         let cfg = api_key_cfg.clone();
-        async move { crate::audit_api_key::gate_audit_routes(cfg, request, next).await }
+        let usage = u.clone();
+        async move { crate::audit_api_key::gate_audit_routes(cfg, usage, request, next).await }
     });
 
     let gated = Router::new()
         .route("/evidence", post(ingest))
+        .route("/usage", get(usage_route))
         .route("/verify", get(verify))
         .route("/bundle", get(bundle_route))
         .route("/compliance-summary", get(compliance_summary_route))
+        .route("/api/export/:run_id", get(export_run_route))
         .layer(audit_key_layer)
         .with_state(state.clone());
 
@@ -531,6 +1037,25 @@ fn workflow_to_out(r: db::ComplianceWorkflowRow) -> ComplianceWorkflowOut {
     }
 }
 
+/// Declares that authoritative promotion readiness comes only from the ledger projection (`GET /compliance-summary`).
+/// `compliance_workflow` is an operational queue / org override layer, not a second source of compliance truth.
+fn decision_authority_object() -> serde_json::Value {
+    json!({
+        "primary": "ledger_projection",
+        "pipeline": ["immutable_ledger", "bundle", "projection", "compliance_summary"],
+        "workflow_role": "operational_queue_override",
+        "note": "compliance_workflow rows do not replace immutable evidence; reconcile with GET /compliance-summary."
+    })
+}
+
+fn json_ok_workflow(workflow: ComplianceWorkflowOut) -> serde_json::Value {
+    json!({
+        "ok": true,
+        "workflow": workflow,
+        "decision_authority": decision_authority_object(),
+    })
+}
+
 #[derive(Deserialize)]
 pub struct ListWorkflowQuery {
     pub state: Option<String>,
@@ -600,7 +1125,14 @@ async fn list_compliance_workflow(
     };
 
     let out: Vec<ComplianceWorkflowOut> = rows.into_iter().map(workflow_to_out).collect();
-    (StatusCode::OK, Json(json!({ "ok": true, "items": out })))
+    (
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "items": out,
+            "decision_authority": decision_authority_object(),
+        })),
+    )
 }
 
 async fn register_compliance_workflow(
@@ -656,10 +1188,7 @@ async fn register_compliance_workflow(
         }
     };
 
-    (
-        StatusCode::OK,
-        Json(json!({ "ok": true, "workflow": workflow_to_out(rec) })),
-    )
+    (StatusCode::OK, Json(json_ok_workflow(workflow_to_out(rec))))
 }
 
 async fn get_compliance_workflow_one(
@@ -709,7 +1238,7 @@ async fn get_compliance_workflow_one(
     };
 
     match rec {
-        Some(r) => (StatusCode::OK, Json(json!({ "ok": true, "workflow": workflow_to_out(r) }))),
+        Some(r) => (StatusCode::OK, Json(json_ok_workflow(workflow_to_out(r)))),
         None => (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "NOT_FOUND" })),
@@ -785,10 +1314,7 @@ async fn post_review_decision(
     };
 
     match rec {
-        Some(r) => (
-            StatusCode::OK,
-            Json(json!({ "ok": true, "workflow": workflow_to_out(r) })),
-        ),
+        Some(r) => (StatusCode::OK, Json(json_ok_workflow(workflow_to_out(r)))),
         None => (
             StatusCode::CONFLICT,
             Json(json!({
