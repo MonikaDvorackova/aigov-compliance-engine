@@ -1,0 +1,36 @@
+# Thin `govai` HTTP library + python/tests (library-focused). No Rust/DB.
+name: python-govai
+
+on:
+  pull_request:
+    paths:
+      - "python/govai/**"
+      - "python/tests/**"
+      - "python/pyproject.toml"
+  push:
+    branches: [main, staging]
+    paths:
+      - "python/govai/**"
+      - "python/tests/**"
+      - "python/pyproject.toml"
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install package and run tests
+        working-directory: python
+        run: |
+          set -euo pipefail
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install -U pip
+          pip install -e ".[dev]"
+          pytest -v

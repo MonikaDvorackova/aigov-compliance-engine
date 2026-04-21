@@ -123,3 +123,28 @@ class GovAIClient:
             raise GovAIAPIError(err_msg, data)
 
         return data
+
+    def submit_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        from .evidence import submit_event
+
+        return submit_event(self, event)
+
+    def get_bundle(self, run_id: str) -> dict[str, Any]:
+        from .bundle import get_bundle
+
+        return get_bundle(self, run_id)
+
+    def get_bundle_hash(self, run_id: str) -> str:
+        from .bundle import get_bundle_hash
+
+        return get_bundle_hash(self, run_id)
+
+    def get_compliance_summary(self, run_id: str) -> dict[str, Any]:
+        from .compliance import get_compliance_summary
+
+        return get_compliance_summary(self, run_id)
+
+    def verify_chain(self) -> dict[str, Any]:
+        from .verify import verify_chain
+
+        return verify_chain(self)

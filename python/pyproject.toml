@@ -1,6 +1,7 @@
 [project]
 name = "aigov-py"
 version = "0.1.0"
+description = "AIGov Python package: thin govai audit HTTP client (import govai) and related tooling."
 requires-python = ">=3.10"
 dependencies = [
   "requests>=2.31.0",
@@ -36,4 +37,8 @@ include-package-data = true
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["aigov_py*", "govai*"]
-exclude = ["artifacts*"]
+exclude = ["artifacts*", "tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
