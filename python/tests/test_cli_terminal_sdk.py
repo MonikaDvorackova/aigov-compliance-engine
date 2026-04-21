@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from importlib.metadata import version
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -14,6 +15,27 @@ def test_help_does_not_crash() -> None:
     with pytest.raises(SystemExit) as ei:
         build_parser().parse_args(["--help"])
     assert ei.value.code == 0
+
+
+def test_version_matches_metadata(capsys: pytest.CaptureFixture[str]) -> None:
+    expected = version("aigov-py")
+    code = main(["--version"])
+    assert code == cli_exit.EX_OK
+    assert capsys.readouterr().out.strip() == expected
+
+
+def test_short_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    expected = version("aigov-py")
+    code = main(["-V"])
+    assert code == cli_exit.EX_OK
+    assert capsys.readouterr().out.strip() == expected
+
+
+def test_no_subcommand_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
+    code = main([])
+    assert code == cli_exit.EX_OK
+    out = capsys.readouterr().out
+    assert "govai" in out.lower()
 
 
 def test_subcommand_help() -> None:

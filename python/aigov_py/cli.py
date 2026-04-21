@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
-from govai import GovAIClient
+from govai import GovAIClient, __version__
 
 from aigov_py import cli_config
 from aigov_py import cli_exit
@@ -71,7 +71,14 @@ def _print_json(data: Any, *, compact: bool) -> None:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="govai",
-        description="GovAI Terminal SDK v0.1 — audit service workflow and assessment API.",
+        description=f"GovAI Terminal SDK — audit service workflow and assessment API (v{__version__}).",
+    )
+    p.add_argument(
+        "--version",
+        "-V",
+        action="version",
+        version=__version__,
+        help="Print the package version and exit.",
     )
     p.add_argument(
         "--config",
@@ -101,7 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Single-line JSON for assessment subcommands and compliance-summary.",
     )
 
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = p.add_subparsers(dest="cmd", required=False, metavar="COMMAND")
 
     s_init = sub.add_parser("init", help="Write .govai/config.json with audit URL and optional API key.")
     s_init.add_argument(
@@ -151,7 +158,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(list(argv) if argv is not None else None)
+    args_list = list(argv if argv is not None else sys.argv[1:])
+    parser = build_parser()
+    try:
+        args = parser.parse_args(args_list)
+    except SystemExit as se:
+        return _system_exit_code(se)
+
+    if args.cmd is None:
+        parser.print_help()
+        return cli_exit.EX_OK
 
     if args.cmd == "init":
         try:
