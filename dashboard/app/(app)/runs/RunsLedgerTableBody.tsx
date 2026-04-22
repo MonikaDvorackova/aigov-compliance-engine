@@ -44,6 +44,10 @@ export function RunsLedgerTableBody({ runs }: { runs: RunRow[] }) {
           >
             <td style={{ padding: "10px 10px", whiteSpace: "nowrap", fontSize: 13, opacity: 0.9 }}>{fmt(r.created_at)}</td>
 
+            <td style={{ padding: "10px 10px", whiteSpace: "nowrap", fontSize: 13, opacity: 0.86 }}>
+              {r.environment ?? "—"}
+            </td>
+
             <td style={{ padding: "10px 10px", whiteSpace: "nowrap" }}>
               <ModeBadge mode={r.mode} />
             </td>

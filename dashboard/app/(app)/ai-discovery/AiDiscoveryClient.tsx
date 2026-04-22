@@ -142,8 +142,8 @@ function filterChipStyle(active: boolean): CSSProperties {
     padding: "4px 10px",
     borderRadius: 999,
     fontSize: 11.5,
-    border: `1px solid ${active ? "rgba(59, 130, 246, 0.45)" : "var(--govai-border-faint)"}`,
-    background: active ? "rgba(59, 130, 246, 0.12)" : "transparent",
+    border: `1px solid ${active ? "var(--govai-border-strong)" : "var(--govai-border-subtle)"}`,
+    background: active ? "var(--govai-bg-surface-2)" : "transparent",
     color: "var(--govai-text-secondary)",
     cursor: "pointer",
   };
@@ -698,8 +698,8 @@ function AiDiscoveryClientInner() {
                     marginTop: 12,
                     padding: "10px 12px",
                     borderRadius: 8,
-                    border: "1px solid var(--govai-border-faint)",
-                    background: "rgba(59, 130, 246, 0.06)",
+                    border: "1px solid var(--govai-border-default)",
+                    background: "var(--govai-bg-surface)",
                   }}
                 >
                   <div

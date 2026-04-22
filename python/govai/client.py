@@ -140,9 +140,9 @@ class GovAIClient:
         return get_bundle_hash(self, run_id)
 
     def get_compliance_summary(self, run_id: str) -> dict[str, Any]:
-        from .compliance import get_compliance_summary
+        from .api import get_compliance_summary
 
-        return get_compliance_summary(self, run_id)
+        return get_compliance_summary(self, run_id, timeout=30.0)
 
     def verify_chain(self) -> dict[str, Any]:
         from .verify import verify_chain

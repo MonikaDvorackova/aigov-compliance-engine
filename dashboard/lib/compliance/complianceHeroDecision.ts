@@ -13,8 +13,10 @@ export type ComplianceHeroDecision = {
 };
 
 /**
- * Answers “Can this model be promoted to production?” with strict gate order:
- * evaluation → approval → promotion. Missing or invalid audit data never yields VALID.
+ * Answers “Can this model be promoted to production?” from the ledger-derived summary only
+ * (`GET /compliance-summary` → `current_state`). Order: evaluation → approval → promotion.
+ * Does not consult `runs.status`, `compliance_workflow`, or any other DB decision mirror.
+ * Missing or invalid audit data never yields VALID.
  */
 export function complianceHeroDecision(model: ComplianceSummaryModel): ComplianceHeroDecision {
   if (model.kind === "no_payload") {

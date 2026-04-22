@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from .client import GovAIClient
-
 
 def current_state_from_summary(compliance_summary: dict[str, Any]) -> dict[str, Any] | None:
     """
@@ -50,19 +48,57 @@ def decision_signals_from_summary(compliance_summary: dict[str, Any]) -> dict[st
     return decision_signals(cs)
 
 
-def get_compliance_summary(client: GovAIClient, run_id: str) -> dict[str, Any]:
+def compliance_decision_label(summary: dict[str, Any]) -> str:
     """
-    GET ``/compliance-summary?run_id=...``.
+    Map flat readiness fields to **VALID**, **INVALID**, or **BLOCKED**.
 
-    Returns the full JSON object (including ``ok: false`` and ``error`` when the run
-    cannot be loaded); callers inspect ``ok`` as per the API contract.
+    ``summary`` must contain: ``evaluation_passed``, ``human_approval_present``,
+    ``model_promoted_present`` (see :func:`compliance_decision_inputs_from_api`).
     """
-    data = client.request_json(
-        "GET",
-        "/compliance-summary",
-        params={"run_id": run_id},
-        raise_on_body_ok_false=False,
-    )
-    if not isinstance(data, dict):
-        raise TypeError(f"expected dict from /compliance-summary, got {type(data).__name__}")
-    return data
+    if summary.get("evaluation_passed") is False:
+        return "INVALID"
+
+    if summary.get("evaluation_passed") is not True:
+        return "BLOCKED"
+
+    if summary.get("human_approval_present") is not True:
+        return "BLOCKED"
+
+    if summary.get("model_promoted_present") is not True:
+        return "BLOCKED"
+
+    return "VALID"
+
+
+def compliance_decision_inputs_from_api(api: dict[str, Any]) -> dict[str, Any]:
+    """
+    Map a ``/compliance-summary`` JSON body to a flat dict for :func:`compliance_decision_label`.
+
+    Malformed or unexpected shapes fail closed: values that drive ``None``/non-``True``
+    and yield **BLOCKED** in :func:`compliance_decision_label` unless evaluation is **INVALID**.
+
+    If the API reports ``ok`` is not true, the summary is not trusted: return conservative inputs.
+    """
+    try:
+        if not isinstance(api, dict) or api.get("ok") is not True:
+            return {
+                "evaluation_passed": None,
+                "human_approval_present": None,
+                "model_promoted_present": None,
+            }
+        current = api.get("current_state") or {}
+        model = current.get("model") or {}
+        approval = current.get("approval") or {}
+        promotion = current.get("promotion") or {}
+
+        return {
+            "evaluation_passed": model.get("evaluation_passed"),
+            "human_approval_present": approval.get("approved"),
+            "model_promoted_present": promotion.get("promoted"),
+        }
+    except Exception:
+        return {
+            "evaluation_passed": None,
+            "human_approval_present": None,
+            "model_promoted_present": None,
+        }

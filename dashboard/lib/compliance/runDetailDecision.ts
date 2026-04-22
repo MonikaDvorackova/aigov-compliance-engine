@@ -4,10 +4,9 @@ import type { ComplianceSummaryModel } from "./summaryModel";
 export type RunDetailDecisionInput = {
   runId: string;
   modeNorm: string;
+  /** Operational mirror from the `runs` row (CI / importer); not used for promotion readiness. */
   statusNorm: string;
-  isValid: boolean;
   hasClosed: boolean;
-  prodGateOk: boolean;
   hero: ComplianceHeroDecision;
   model: ComplianceSummaryModel;
   integrityLine: string;
@@ -15,52 +14,41 @@ export type RunDetailDecisionInput = {
 
 export type GroupedStatusRow = { label: string; value: string };
 
+/** Single-string readiness label — always from ledger → projection (`/compliance-summary`), never from DB workflow or `runs.status`. */
+function readinessFromProjection(input: RunDetailDecisionInput): string {
+  const { hero, model } = input;
+  if (model.kind === "no_payload") {
+    return model.reason === "no_audit_url" ? "unavailable (no audit URL)" : "unavailable (fetch failed)";
+  }
+  if (model.kind === "invalid") {
+    return "unavailable (summary unreadable)";
+  }
+  if (model.kind === "audit_error") {
+    return "unavailable (audit error)";
+  }
+  if (hero.status === "valid") {
+    return "cleared";
+  }
+  return hero.status === "invalid" ? `failed — ${hero.headline}` : `blocked — ${hero.headline}`;
+}
+
 /** Human-readable grouped status (replaces flat ci/valid/closed chips). */
 export function buildGroupedStatusRows(input: RunDetailDecisionInput): GroupedStatusRow[] {
   const mode = input.modeNorm || "—";
   const modeDisplay = mode === "prod" ? "Production" : mode === "ci" ? "CI" : mode.length ? mode : "—";
   const runStatus = !input.statusNorm ? "unset" : input.statusNorm;
   const lifecycle = input.hasClosed ? "closed" : "open";
-  const gate =
-    input.modeNorm !== "prod" ? "not required" : input.prodGateOk ? "passed" : "blocked";
-  const compliance =
-    input.hero.status === "valid" ? "cleared" : input.hero.status === "invalid" ? "failed" : "blocked";
+  const readiness = readinessFromProjection(input);
 
   return [
     { label: "Run status", value: runStatus },
     { label: "Mode", value: modeDisplay },
     { label: "Lifecycle", value: lifecycle },
-    { label: "Gate", value: gate },
-    { label: "Compliance", value: compliance },
+    {
+      label: "Readiness",
+      value: readiness,
+    },
   ];
-}
-
-/**
- * When ledger and gate look healthy but compliance review is not cleared,
- * explain the split so users do not assume a bug.
- */
-export function buildSignalConflictNote(input: RunDetailDecisionInput): string | null {
-  const complianceNotCleared = input.hero.status !== "valid";
-  const ledgerAndGateOk = input.isValid && input.prodGateOk;
-
-  if (ledgerAndGateOk && complianceNotCleared) {
-    const summaryUnavailable =
-      input.model.kind === "no_payload" || input.model.kind === "invalid" || input.model.kind === "audit_error";
-    if (summaryUnavailable) {
-      return "Run is valid and passed gates, but compliance summary is unavailable.";
-    }
-    return "Run is valid and passed gates, but compliance review is still blocked or incomplete.";
-  }
-
-  if (!input.isValid && complianceNotCleared) {
-    return "Ledger validation did not pass; treat compliance signals as additional context, not a substitute for fixing validation.";
-  }
-
-  if (input.isValid && !input.prodGateOk && complianceNotCleared) {
-    return "Production gate did not pass; compliance review is also not cleared.";
-  }
-
-  return null;
 }
 
 export type RunNextActionBlock = {
@@ -134,7 +122,7 @@ export function buildNextAction(input: RunDetailDecisionInput): RunNextActionBlo
   return {
     title: "Next action",
     why: hero.explanation,
-    nextStep: `Address “${hero.headline}” in your approval or promotion workflow, then refresh this page.`,
+    nextStep: `Address “${hero.headline}” using evidence and approvals recorded in the ledger (see readiness signals), then refresh.`,
     primary: { label: "Review readiness signals", href: "#run-compliance-summary" },
     secondary: { label: "Back to runs", href: "/runs" },
     prominent: true,
@@ -189,7 +177,6 @@ export type CompactStatusPanel = {
 
 export function buildCompactStatusPanel(
   hero: ComplianceHeroDecision,
-  conflictNote: string | null,
   integrityLine: string,
 ): CompactStatusPanel {
   const stateLabel =
@@ -197,7 +184,7 @@ export function buildCompactStatusPanel(
   return {
     stateLabel,
     reason: hero.headline,
-    interpretation: conflictNote ?? integrityLine,
+    interpretation: integrityLine,
     variant: hero.status,
   };
 }
