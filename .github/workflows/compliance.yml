@@ -164,6 +164,8 @@ jobs:
     name: evidence_pack
     runs-on: ubuntu-latest
     needs: [changes, make_verify]
+    outputs:
+      run_id: ${{ steps.govai_emit_run_id.outputs.run_id }}
     env:
       AUDIT_URL: http://127.0.0.1:8088
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -208,6 +210,35 @@ jobs:
           done
           tail -n 300 "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" || true
           exit 1
+
+      - id: govai_emit_run_id
+        if: success()
+        run: |
+          set -euo pipefail
+          OUT="${GITHUB_OUTPUT:?}"
+          if [ "${REPORTS_CHANGED_FLAG}" != "true" ]; then
+            echo "run_id=" >> "${OUT}"
+            exit 0
+          fi
+          REPORTS_CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+          SORTED_UNIQ="$(
+            printf '%s\n' "${REPORTS_CHANGED}" |
+              awk 'NF' |
+              while IFS= read -r report; do basename "${report}" .md; done |
+              sort -u
+          )"
+          c="$(printf '%s\n' "${SORTED_UNIQ}" | awk 'NF' | wc -l | tr -d '[:space:]')"
+          if [ "${c}" -eq 0 ]; then
+            echo "run_id=" >> "${OUT}"
+            exit 0
+          fi
+          if [ "${c}" -gt 1 ]; then
+            joined="$(printf '%s\n' "${SORTED_UNIQ}" | awk 'NF' | paste -sd ',' - | sed 's/,/, /g')"
+            echo "::error::GovAI compliance gate: ${c} distinct report run IDs in one change set (${joined}). Split into one docs/reports/*.md change per PR (or one basename) so a single run_id is validated."
+            exit 1
+          fi
+          only="$(printf '%s\n' "${SORTED_UNIQ}" | awk 'NF{print; exit}')"
+          echo "run_id=${only}" >> "${OUT}"
 
       - name: Build evidence packs
         if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
@@ -254,6 +285,45 @@ jobs:
             ${{ github.workspace }}/.aigov_ci_artifacts/*.zip
           if-no-files-found: error
           include-hidden-files: true
+
+  govai-compliance-gate:
+    name: govai-compliance-gate
+    runs-on: ubuntu-latest
+    needs: [evidence_pack]
+    if: ${{ needs.evidence_pack.result == 'success' && needs.evidence_pack.outputs.run_id != '' }}
+    env:
+      GOVAI_AUDIT_BASE_URL: ${{ vars.GOVAI_AUDIT_BASE_URL }}
+      GOVAI_API_KEY: ${{ secrets.GOVAI_API_KEY }}
+      RUN_ID: ${{ needs.evidence_pack.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install GovAI CLI
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [ -d python ]; then
+            pip install -e ./python
+          else
+            pip install aigov-py
+          fi
+
+      - name: GovAI check (must be VALID)
+        run: |
+          set -euo pipefail
+          if [ -z "${GOVAI_AUDIT_BASE_URL:-}" ]; then
+            echo "Missing GOVAI_AUDIT_BASE_URL: configure repository Variable GOVAI_AUDIT_BASE_URL."
+            exit 1
+          fi
+          if [ -z "${RUN_ID:-}" ]; then
+            echo "Missing RUN_ID: evidence_pack did not emit run_id (empty producer output)."
+            exit 1
+          fi
+          govai check --run-id "${RUN_ID}"
 
   upload_evidence_packs:
     name: upload_evidence_packs
