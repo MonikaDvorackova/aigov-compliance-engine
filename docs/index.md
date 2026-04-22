@@ -69,6 +69,8 @@ VALID
 
 Prerequisites: Rust, Python ≥ 3.10, PostgreSQL (`DATABASE_URL`).
 
+**Deployment tier** (`dev` / `staging` / `prod`): variable precedence, defaults, and migrations — [env-resolution.md](env-resolution.md).
+
 Start the audit service (default `http://127.0.0.1:8088`; see README for `make audit_bg`).
 
 Other flows: `make run` → approve → promote, or `make flow_full`.
@@ -129,9 +131,14 @@ Result: VALID / INVALID / BLOCKED
 
 ### HTTP (Rust audit service)
 
+**Billing:** Successful `POST /evidence` appends increment **`govai_usage_counters`** (canonical); `GOVAI_METERING` team tables are telemetry only. Per-key HTTP caps are not billing. See root README.
+
+**`GET /usage` contract:** The response **always** includes canonical billing fields sourced from **`govai_usage_counters`** (`tenant_id`, `period_start`, `evidence_events_count`, `limit`) for the same billing scope as ingest. Fields such as **`team_id`**, **`plan`**, **`year_month`**, **`new_run_ids`**, **`evidence_events`** (team table), and **`limits`** are **optional telemetry** when `GOVAI_METERING` is on and a team mapping exists. **Missing telemetry does not imply incorrect billing**—the canonical counter is authoritative.
+
 | Method | Path | Role |
 |--------|------|------|
 | POST | `/evidence` | Append one event (policy-gated) |
+| GET | `/usage` | Canonical monthly evidence count + limit (`govai_usage_counters`) |
 | GET | `/bundle` | Bundle JSON for a run |
 | GET | `/bundle-hash` | Canonical bundle hash |
 | GET | `/compliance-summary` | Compliance summary + state |

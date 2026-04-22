@@ -8,5 +8,8 @@ pub struct EvidenceEvent {
     pub actor: String,
     pub system: String,
     pub run_id: String,
+    /// Deployment tier (`dev` | `staging` | `prod`), stamped by the server on ingest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
     pub payload: serde_json::Value,
 }

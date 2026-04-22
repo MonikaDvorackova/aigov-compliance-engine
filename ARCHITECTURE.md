@@ -78,8 +78,8 @@ flowchart LR
 
 - **Binary**: `cargo run` from `rust/` (root `Makefile`: `audit` / `audit_bg`).
 - **Default bind**: `127.0.0.1:8088` — override with `AIGOV_BIND`.
-- **Startup line**: `govai listening on http://{addr}` (`rust/src/main.rs`).
-- **Policy version** (constant in `main.rs`): `v0.4_human_approval`.
+- **Startup line**: includes `environment` and `policy_version` (`rust/src/lib.rs`).
+- **Policy version**: `v0.5_dev` / `v0.5_staging` / `v0.5_prod` from [`rust/src/govai_environment.rs`](rust/src/govai_environment.rs) (tier from `AIGOV_ENVIRONMENT` → `AIGOV_ENV` → `GOVAI_ENV`). Full rules: [docs/env-resolution.md](docs/env-resolution.md).
 - **Audit log path** (relative to **process cwd**, typically `rust/`): `audit_log.jsonl` → from repo root: `rust/audit_log.jsonl`.
 - **Database**: `DATABASE_URL` must be set; the server builds a Postgres pool at startup (`sqlx`). Routes under `/api/*` use this pool.
 
@@ -89,29 +89,30 @@ flowchart LR
 |--------|------|---------|
 | GET | `/` | `ok`, `service` (`govai`), `version` (crate version) |
 | GET | `/health` | `{"ok": true}` |
-| GET | `/status` | `{"ok": true, "policy_version": "<POLICY_VERSION>"}` |
+| GET | `/status` | `ok`, `policy_version`, `environment`, `policy` knobs (`require_approval`, `block_if_missing_evidence`, `enforce_approver_allowlist`) |
 | POST | `/evidence` | Ingest `EvidenceEvent`; policy gate; append to log |
 | GET | `/verify` | Full-chain integrity: `ok` + `policy_version`, or `error` on failure |
 | GET | `/verify-log` | Compact JSON: `{"ok": true}` or `{"ok": false, "error": …}` |
 | GET | `/bundle?run_id=…` | Bundle document (`schema_version`: `aigov.bundle.v1`, includes `events`, `identifiers`, derived sections) |
 | GET | `/bundle-hash?run_id=…` | Canonical `bundle_sha256` for the run |
-| GET | `/compliance-summary?run_id=…` | `ok` + `schema_version` `aigov.compliance_summary.v2`, `policy_version`, `run_id`, `current_state` (projection; inner schema `aigov.compliance_current_state.v2`); or `ok:false` + `error` when the run cannot be loaded |
+| GET | `/compliance-summary?run_id=…` | `ok` + `schema_version` `aigov.compliance_summary.v2`, `policy_version`, `deployment_environment`, `ledger_environment` (from events; `null` if legacy), optional `ledger_environment_note`, `run_id`, `current_state`; or `ok:false` + `error` when the run cannot be loaded |
 | GET | `/api/me` | Supabase JWT — user + teams (each team includes `effective_role` + `permissions` from product RBAC; see `rust/src/rbac.rs`) |
 | POST | `/api/assessments` | Create assessment row (auth + team resolution + **`decision_submit` permission**) |
-| GET | `/api/compliance-workflow` | List workflow rows for resolved team; optional `?state=pending_review` (or other state) |
-| POST | `/api/compliance-workflow` | Register `run_id` in `pending_review` (idempotent if already present) |
-| GET | `/api/compliance-workflow/:run_id` | Fetch one workflow row for the team |
-| POST | `/api/compliance-workflow/:run_id/review` | Body `{"decision":"approve"\|"reject"}` — transitions from `pending_review` only |
-| POST | `/api/compliance-workflow/:run_id/promotion` | Body `{"decision":"allow"\|"block"}` — transitions from `approved` only |
+| GET | `/api/compliance-workflow` | List workflow rows for resolved team; optional `?state=pending_review` (or other state). **200** includes `decision_authority` (ledger is primary; workflow is queue/override only). |
+| POST | `/api/compliance-workflow` | Register `run_id` in `pending_review` (idempotent if already present); **200** includes `workflow` + `decision_authority`. |
+| GET | `/api/compliance-workflow/:run_id` | Fetch one workflow row for the team; **200** includes `decision_authority`. |
+| POST | `/api/compliance-workflow/:run_id/review` | Body `{"decision":"approve"\|"reject"}` — transitions from `pending_review` only; **200** includes `decision_authority`. |
+| POST | `/api/compliance-workflow/:run_id/promotion` | Body `{"decision":"allow"\|"block"}` — transitions from `approved` only; **200** includes `decision_authority`. |
 
 Auth for `/api/me`, `/api/assessments`, and `/api/compliance-workflow*` requires **`SUPABASE_URL`** at minimum (JWKS fetch); optional **`SUPABASE_JWT_AUD`** for audience checks — see `rust/src/auth.rs`. Team scope uses header **`x-govai-team-id`** when set (same as assessments). Without a valid `Authorization: Bearer` JWT, these routes return 401/403 as implemented.
 
-**Compliance workflow (Postgres `compliance_workflow` table)** is **app-layer queue/state only** — it does **not** append to `audit_log.jsonl` or change `policy.rs`. Evidence events (`human_approved`, `model_promoted`, …) remain separate: **manual** via Python/Makefile or any client calling `POST /evidence`. Permissions: list/get require **`review_queue_view`**; register + review require **`decision_submit`**; promotion requires **`promotion_action`** (see `rust/src/rbac.rs`).
+**Compliance workflow (Postgres `compliance_workflow` table)** is **app-layer queue / override only** — not a second interpretation of compliance. Authoritative readiness remains **`GET /compliance-summary`**. Workflow does **not** append to `audit_log.jsonl` or change `policy.rs`. Evidence events (`human_approved`, `model_promoted`, …) remain separate: **manual** via Python/Makefile or any client calling `POST /evidence`. Permissions: list/get require **`review_queue_view`**; register + review require **`decision_submit`**; promotion requires **`promotion_action`** (see `rust/src/rbac.rs`).
 
 ## Policy and evidence schema
 
+- **Deployment tier** (`dev` / `staging` / `prod`): resolution, ingest stamping, DB migration — [docs/env-resolution.md](docs/env-resolution.md). Policy files: **`AIGOV_POLICY_DIR`** (optional search root), then `policy.<env>.json` / `policy.json`, or **`AIGOV_POLICY_FILE`** — `rust/src/policy_config.rs`.
 - Enforcement: `rust/src/policy.rs` on selected `event_type` values (e.g. `data_registered`, `model_trained`, `evaluation_reported`, risk lifecycle events, `human_approved`, `model_promoted`).
-- Event shape: `rust/src/schema.rs` — JSON fields include `event_id`, `event_type`, `ts_utc`, `actor`, `system`, `run_id`, `payload`.
+- Event shape: `rust/src/schema.rs` — JSON fields include `event_id`, `event_type`, `ts_utc`, `actor`, `system`, `run_id`, optional `environment` (stamped on ingest), `payload`.
 - **Canonical identifiers** and summary contract: [docs/strong-core-contract-note.md](docs/strong-core-contract-note.md).
 
 ## Python package (`python/aigov_py`)
