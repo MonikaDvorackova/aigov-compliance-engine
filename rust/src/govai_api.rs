@@ -190,7 +190,6 @@ async fn ingest(
         &event,
         audit.log_path,
         &audit.policy,
-        audit.deployment_env,
     ) {
         return (
             StatusCode::BAD_REQUEST,
