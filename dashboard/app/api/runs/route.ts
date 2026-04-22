@@ -14,6 +14,7 @@ type RunRow = {
   report_sha256: string | null;
   evidence_source: string | null;
   closed_at: string | null;
+  environment: string | null;
 };
 
 export async function GET(_request: Request) {
@@ -41,7 +42,7 @@ export async function GET(_request: Request) {
   const { data, error } = await supabase
     .from("runs")
     .select(
-      "id,created_at,mode,status,policy_version,bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at"
+      "id,created_at,mode,status,policy_version,bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at,environment"
     )
     .order("created_at", { ascending: false })
     .limit(50);

@@ -15,6 +15,7 @@ export type RunLedgerRecord = {
   report_sha256: string | null;
   evidence_source: string | null;
   closed_at: string | null;
+  environment: string | null;
 };
 
 export type RunSignedUrlsState = {
@@ -70,6 +71,7 @@ export function ComplianceRunTechnicalDetails({ run, signed, model, auditRaw }: 
       <KeyValueRow label="Run ID" value={<span style={monoSm}>{run.id}</span>} borderTop={false} mono />
       <KeyValueRow label="Created" value={fmt(run.created_at) || "—"} />
       <KeyValueRow label="Closed" value={fmt(run.closed_at) || "—"} />
+      <KeyValueRow label="Environment" value={run.environment ?? "—"} />
       <KeyValueRow label="Mode" value={run.mode ?? "—"} />
       <KeyValueRow label="Status" value={run.status ?? "—"} />
       <KeyValueRow label="Policy version" value={run.policy_version ?? "—"} />

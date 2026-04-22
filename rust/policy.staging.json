@@ -1,0 +1,7 @@
+{
+  "require_approval": true,
+  "block_if_missing_evidence": true,
+  "require_passed_evaluation_for_promotion": true,
+  "require_risk_review_for_approval": true,
+  "require_risk_review_for_promotion": true
+}

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from aigov_py.env_resolution import resolve_aigov_environment
 from aigov_py.run_rows import upsert_run_row
 from aigov_py.supabase_db import create_supabase_client
 from aigov_py.storage_upload import upload_artifacts_for_run
@@ -176,6 +177,7 @@ def _should_upload_to_storage(mode: str) -> bool:
 
 def build_run_row(run_id: str) -> Dict[str, Any]:
     mode = _get_mode()
+    environment = resolve_aigov_environment()
     paths = _artifact_paths(run_id)
 
     audit_obj = _read_json(paths.audit_json)
@@ -192,7 +194,13 @@ def build_run_row(run_id: str) -> Dict[str, Any]:
 
     if not policy_version:
         m = _norm(mode)
-        policy_version = "v0.4_prod" if m == "prod" else "v0.4_ci"
+        env = _norm(environment)
+        if env == "prod" and m == "prod":
+            policy_version = "v0.5_prod"
+        elif env == "staging":
+            policy_version = "v0.5_staging"
+        else:
+            policy_version = "v0.5_dev"
 
     if not status:
         status = "valid" if _norm(mode) == "ci" else "pending"
@@ -208,6 +216,7 @@ def build_run_row(run_id: str) -> Dict[str, Any]:
         "report_sha256": report_sha,
         "evidence_source": _evidence_source(mode),
         "closed_at": _utc_now_iso(),
+        "environment": environment,
     }
 
     return row

@@ -43,7 +43,7 @@ from aigov_py.psycopg_database_url import resolve_psycopg_database_url
 
 RUN_COLUMNS = (
     "id,created_at,mode,status,policy_version,"
-    "bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at"
+    "bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at,environment"
 )
 
 
@@ -119,6 +119,7 @@ def _row_sig(r: dict[str, Any]) -> tuple:
         _norm_hash(r.get("status")),
         _norm_hash(r.get("mode")),
         _norm_hash(r.get("evidence_source")),
+        _norm_hash(r.get("environment")),
     )
 
 

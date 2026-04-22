@@ -47,7 +47,7 @@ sys.path.insert(0, str(_REPO_ROOT / "python"))
 
 RUN_COLUMNS = (
     "id,created_at,mode,status,policy_version,"
-    "bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at"
+    "bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at,environment"
 )
 
 
@@ -69,9 +69,12 @@ def _normalize_row(row: dict) -> dict:
         "report_sha256",
         "evidence_source",
         "closed_at",
+        "environment",
     ):
         v = row.get(k)
         out[k] = v if v is not None else None
+    if out.get("environment") is None:
+        out["environment"] = "dev"
     return out
 
 
