@@ -9,7 +9,7 @@ export default function AppHeader({ email }: { email: string | null }) {
 
   return (
     <header className="govai-app-header">
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0, flexWrap: "wrap" }}>
         <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.02em", color: "var(--govai-text)" }}>{title}</div>
         <span style={{ color: "var(--govai-text-tertiary)", fontSize: 12, opacity: 0.85 }} aria-hidden="true">
           ·
@@ -21,6 +21,7 @@ export default function AppHeader({ email }: { email: string | null }) {
             fontWeight: 400,
             minWidth: 0,
             maxWidth: "min(52ch, 100%)",
+            marginTop: 1,
           }}
         >
           {subtitle}
@@ -38,8 +39,8 @@ export default function AppHeader({ email }: { email: string | null }) {
             whiteSpace: "nowrap",
             padding: "4px 9px",
             borderRadius: 7,
-            border: "1px solid var(--govai-border-faint)",
-            background: "rgba(255,255,255,0.02)",
+            border: "1px solid var(--govai-border-default)",
+            background: "var(--govai-bg-surface)",
             color: "var(--govai-text-secondary)",
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
             fontWeight: 400,

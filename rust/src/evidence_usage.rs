@@ -1,5 +1,5 @@
-//! Legacy monthly counter when `GOVAI_METERING=off` (`govai_usage_counters`).
-//! When `GOVAI_METERING=on`, quotas are enforced via [`crate::metering`] and `govai_team_usage_monthly` instead.
+//! Canonical evidence-event billing: table `govai_usage_counters` (monthly, per billing tenant).
+//! Team metering tables (`govai_team_usage_monthly`, etc.) are telemetry only when `GOVAI_METERING=on`.
 
 use crate::db::DbPool;
 use chrono::{Datelike, NaiveDate, Utc};

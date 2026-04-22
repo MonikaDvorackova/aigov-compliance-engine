@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,6 +10,8 @@ from govai import (
     GovAIAPIError,
     GovAIClient,
     GovAIHTTPError,
+    compliance_decision_inputs_from_api,
+    compliance_decision_label,
     current_state_from_summary,
     decision_signals_from_summary,
     get_bundle,
@@ -102,6 +105,7 @@ def test_get_compliance_summary_returns_ok_false_without_raise() -> None:
         "/compliance-summary",
         params={"run_id": "missing"},
         raise_on_body_ok_false=False,
+        timeout=30.0,
     )
     assert out["ok"] is False
     assert out["error"] == "run_not_found"
@@ -181,3 +185,65 @@ def test_current_state_and_decision_helpers() -> None:
     bad = {"ok": False, "error": "x"}
     assert current_state_from_summary(bad) is None
     assert decision_signals_from_summary(bad) is None
+
+    assert compliance_decision_label(compliance_decision_inputs_from_api(bad)) == "BLOCKED"
+    assert (
+        compliance_decision_label(compliance_decision_inputs_from_api({"ok": True, "current_state": {}}))
+        == "BLOCKED"
+    )
+
+
+def _valid_api_summary() -> dict:
+    return {
+        "ok": True,
+        "current_state": {
+            "model": {"evaluation_passed": True},
+            "approval": {"approved": True},
+            "promotion": {"promoted": True},
+        },
+    }
+
+
+def test_compliance_decision_label_tristate() -> None:
+    assert (
+        compliance_decision_label(
+            {
+                "evaluation_passed": True,
+                "human_approval_present": True,
+                "model_promoted_present": True,
+            }
+        )
+        == "VALID"
+    )
+    assert (
+        compliance_decision_label(
+            {
+                "evaluation_passed": False,
+                "human_approval_present": True,
+                "model_promoted_present": True,
+            }
+        )
+        == "INVALID"
+    )
+    assert (
+        compliance_decision_label(
+            {
+                "evaluation_passed": True,
+                "human_approval_present": False,
+                "model_promoted_present": True,
+            }
+        )
+        == "BLOCKED"
+    )
+
+
+def test_compliance_decision_inputs_from_api_nested() -> None:
+    assert compliance_decision_label(compliance_decision_inputs_from_api(_valid_api_summary())) == "VALID"
+
+    inv = json.loads(json.dumps(_valid_api_summary()))
+    inv["current_state"]["model"]["evaluation_passed"] = False
+    assert compliance_decision_label(compliance_decision_inputs_from_api(inv)) == "INVALID"
+
+    blocked = json.loads(json.dumps(_valid_api_summary()))
+    blocked["ok"] = False
+    assert compliance_decision_label(compliance_decision_inputs_from_api(blocked)) == "BLOCKED"

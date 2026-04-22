@@ -27,11 +27,3 @@ class AssessmentOut:
     intended_purpose: str
     risk_class: str
     created_at: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class EvidenceBundleOut:
-    assessment_id: str
-    bundle_id: str
-    status: str
-    download_url: Optional[str] = None

@@ -12,8 +12,8 @@ function panelStyle(): CSSProperties {
     marginTop: 12,
     padding: 16,
     borderRadius: 10,
-    border: "1px solid rgba(234, 179, 8, 0.25)",
-    background: "rgba(234, 179, 8, 0.06)",
+    border: "1px solid var(--govai-badge-issue-border)",
+    background: "var(--govai-badge-issue-bg)",
   };
 }
 
@@ -194,8 +194,8 @@ export function AiDiscoveryActionRequiredSection({
                         fontWeight: 600,
                         padding: "4px 10px",
                         borderRadius: 6,
-                        border: "1px solid rgba(234, 179, 8, 0.45)",
-                        background: "rgba(234, 179, 8, 0.12)",
+                        border: "1px solid var(--govai-badge-issue-border)",
+                        background: "var(--govai-badge-issue-bg)",
                         color: "var(--govai-text-secondary)",
                         textDecoration: "none",
                       }}
@@ -251,7 +251,8 @@ export function AiDiscoveryActionRequiredSection({
                         letterSpacing: "0.04em",
                         padding: "3px 8px",
                         borderRadius: 4,
-                        background: "rgba(59, 130, 246, 0.15)",
+                        background: "var(--govai-bg-surface-2)",
+                        border: "1px solid var(--govai-border-default)",
                         color: "var(--govai-text-secondary)",
                       }}
                     >

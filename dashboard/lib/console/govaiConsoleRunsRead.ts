@@ -4,7 +4,7 @@ import type { ConnectionOptions } from "node:tls";
 import type { RunRow } from "./runTypes";
 
 const RUN_SELECT_LIST =
-  "id, created_at, mode, status, policy_version, bundle_sha256, evidence_sha256, report_sha256, evidence_source, closed_at";
+  "id, created_at, mode, status, policy_version, bundle_sha256, evidence_sha256, report_sha256, evidence_source, closed_at, environment";
 
 /**
  * When `node-postgres` is given an explicit `ssl` object, libpq-style query parameters on the
@@ -136,6 +136,7 @@ function mapRunRow(row: Record<string, unknown>): RunRow {
     report_sha256: row.report_sha256 == null ? null : String(row.report_sha256),
     evidence_source: row.evidence_source == null ? null : String(row.evidence_source),
     closed_at: row.closed_at == null ? null : asIsoString(row.closed_at),
+    environment: row.environment == null ? null : String(row.environment),
   };
 }
 

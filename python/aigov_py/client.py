@@ -7,7 +7,7 @@ from urllib.parse import urljoin
 
 import requests
 
-from aigov_py.types import AssessmentCreate, AssessmentOut, EvidenceBundleOut, GovaiError
+from aigov_py.types import AssessmentCreate, AssessmentOut, GovaiError
 
 
 class GovaiClient:
@@ -61,16 +61,4 @@ class GovaiClient:
             intended_purpose=str(out.get("intended_purpose", data.intended_purpose)),
             risk_class=str(out.get("risk_class", data.risk_class)),
             created_at=out.get("created_at"),
-        )
-
-    def finalize_assessment(self, assessment_id: str) -> Dict[str, Any]:
-        return self._request("POST", f"/api/assessments/{assessment_id}/finalize")
-
-    def build_evidence_bundle(self, assessment_id: str) -> EvidenceBundleOut:
-        out = self._request("POST", f"/api/assessments/{assessment_id}/evidence")
-        return EvidenceBundleOut(
-            assessment_id=str(out.get("assessment_id", assessment_id)),
-            bundle_id=str(out["bundle_id"]),
-            status=str(out.get("status", "unknown")),
-            download_url=out.get("download_url"),
         )

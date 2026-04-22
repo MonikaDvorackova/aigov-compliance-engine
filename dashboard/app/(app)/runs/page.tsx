@@ -48,7 +48,7 @@ export default async function RunsPage() {
   const { data, error } = await supabase
     .from("runs")
     .select(
-      "id,created_at,mode,status,policy_version,bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at"
+      "id,created_at,mode,status,policy_version,bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at,environment"
     )
     .order("created_at", { ascending: false })
     .limit(50);
@@ -116,11 +116,14 @@ export default async function RunsPage() {
             }}
           >
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1120 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1200 }}>
                 <thead>
                   <tr style={{ background: "rgba(255,255,255,0.04)" }}>
                     <th style={{ padding: "10px 10px", textAlign: "left", fontSize: 12, opacity: 0.72 }}>
                       Created
+                    </th>
+                    <th style={{ padding: "10px 10px", textAlign: "left", fontSize: 12, opacity: 0.72 }}>
+                      Env
                     </th>
                     <th style={{ padding: "10px 10px", textAlign: "left", fontSize: 12, opacity: 0.72 }}>
                       Mode

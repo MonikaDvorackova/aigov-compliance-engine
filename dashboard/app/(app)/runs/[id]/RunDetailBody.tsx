@@ -23,7 +23,6 @@ type RunDetailBodyProps = {
   compact: CompactStatusPanel;
   nextAction: RunNextActionBlock;
   groupedRows: GroupedStatusRow[];
-  conflictNote: string | null;
   /** Deeper explanation under grouped status (avoid repeating the headline shown in compact panel). */
   narrativeExplanation: string;
   checklist: string[];
@@ -73,7 +72,6 @@ export function RunDetailBody({
   compact,
   nextAction,
   groupedRows,
-  conflictNote,
   narrativeExplanation,
   checklist,
 }: RunDetailBodyProps) {
@@ -126,7 +124,8 @@ export function RunDetailBody({
           Readiness signals
         </div>
         <p className="govai-run-readiness__hint" id="run-readiness-hint">
-          Evaluation, then approval, then promotion. Primary risk is context only.
+          Single pipeline: ledger events → projection in compliance summary. Evaluation, then approval, then promotion.
+          Postgres workflow queues are operational overrides only — they do not replace this read.
         </p>
         <ComplianceReviewPanel model={model} aria-describedby="run-readiness-hint" />
       </section>
@@ -139,11 +138,6 @@ export function RunDetailBody({
               <div className="govai-run-section__title">Status summary</div>
               <GroupedStatusTable rows={groupedRows} />
               <p className="govai-run-status-summary__explain">{narrativeExplanation}</p>
-              {conflictNote ? (
-                <p className="govai-run-status-summary__conflict" role="note">
-                  {conflictNote}
-                </p>
-              ) : null}
               <div className="govai-run-status-summary__meta">
                 Created {fmt(r.created_at) || "—"}
                 <span className="govai-run-signals__metaSep">·</span>

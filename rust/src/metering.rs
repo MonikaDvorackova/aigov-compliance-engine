@@ -151,7 +151,8 @@ pub async fn load_monthly(
     }
 }
 
-/// Enforce plan limits from ledger-derived `pre_count` / `next_count` before append.
+/// Plan-limit guard used in unit tests only. **Ingest enforcement** uses `govai_usage_counters`
+/// ([`crate::evidence_usage`]); team tables here are updated **after** append for telemetry.
 pub fn precheck_ingest(
     plan: GovaiPlan,
     limits: PlanLimits,

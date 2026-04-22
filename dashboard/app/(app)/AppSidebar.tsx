@@ -158,7 +158,7 @@ export default function AppSidebar({ email }: { email: string | null }) {
         <div style={{ marginTop: 4, fontSize: 12.5, color: "var(--govai-text-secondary)" }}>Default</div>
       </div>
 
-      <nav style={{ marginTop: 10, display: "grid", gap: 3 }} aria-label="Primary">
+      <nav style={{ marginTop: 10, display: "grid", gap: 4 }} aria-label="Primary">
         {CONSOLE_NAV.map((item) => {
           const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
           return (
@@ -196,7 +196,7 @@ export default function AppSidebar({ email }: { email: string | null }) {
           paddingTop: 12,
           paddingLeft: 10,
           paddingRight: 6,
-          borderTop: "1px solid var(--govai-border-faint)",
+          borderTop: "1px solid var(--govai-border-subtle)",
         }}
       >
         <div

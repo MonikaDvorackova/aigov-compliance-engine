@@ -75,6 +75,74 @@ export GOVAI_API_KEYS="test-key"
 # restart audit service so it picks up the env var
 ```
 
+## Policy configuration
+
+The audit service enforces an evidence policy at **write time** (on `POST /evidence`). Policy is **environment-specific** and selected at process startup based on `AIGOV_ENVIRONMENT` (default: `dev`).
+
+### Resolution order (policy files)
+
+Policy resolution is deterministic:
+
+- **1. `AIGOV_POLICY_FILE`**: if set (and non-empty), load that file
+- **2. `policy.<env>.json`**: e.g. `policy.dev.json`
+- **3. `policy.json`**
+- **4. defaults** (compiled into the binary)
+
+Search base directory:
+
+- **`AIGOV_POLICY_DIR`** if set (and non-empty), otherwise the **process working directory**.
+
+You can always confirm what is active via `GET /status` → `policy` + `policy.source`.
+
+### Policy matrix (defaults)
+
+| Field | Affects | Default |
+|--------|---------|---------|
+| `require_approval` | `model_promoted` requires `human_approved` reference (`approved_human_event_id`) | `true` |
+| `block_if_missing_evidence` | `model_trained` requires prior `data_registered` | `true` |
+| `require_passed_evaluation_for_promotion` | `model_promoted` requires passed `evaluation_reported` | `true` |
+| `require_risk_review_for_approval` | `human_approved` requires prior `risk_reviewed` (approve) | `true` |
+| `require_risk_review_for_promotion` | `model_promoted` requires prior `risk_reviewed` (approve) | `true` |
+| `enforce_approver_allowlist` | `human_approved.approver` must be allowlisted | `true` |
+
+### Field meanings
+
+- **`require_approval`**:
+  - **true**: promotion requires a prior matching `human_approved` (approve) and a valid `approved_human_event_id`
+  - **false**: promotion does not require any human approval event
+- **`block_if_missing_evidence`**:
+  - **true**: training requires a prior `data_registered`
+  - **false**: training can be recorded without prior dataset registration
+- **`require_passed_evaluation_for_promotion`**:
+  - **true**: promotion requires a prior `evaluation_reported` with `passed=true`
+  - **false**: promotion does not require evaluation
+- **`require_risk_review_for_approval`**:
+  - **true**: `human_approved` requires a prior matching `risk_reviewed` with `decision=approve`
+  - **false**: `human_approved` does not require risk review
+- **`require_risk_review_for_promotion`**:
+  - **true**: promotion requires a prior matching `risk_reviewed` with `decision=approve`
+  - **false**: promotion does not require risk review
+- **`enforce_approver_allowlist`** (+ `approver_allowlist` / `AIGOV_APPROVER_ALLOWLIST`):
+  - **true**: `human_approved.approver` must be in the effective allowlist
+  - **false**: any non-empty `approver` is accepted
+
+### Migration note (important)
+
+Older configs used `block_if_missing_evidence=false` as a “loosen everything” switch. That is **no longer true**:
+
+- `block_if_missing_evidence=false` only affects the **`model_trained` → `data_registered`** prerequisite.
+- Promotion/approval gates are now controlled by **explicit flags**:
+  - `require_passed_evaluation_for_promotion`
+  - `require_risk_review_for_approval`
+  - `require_risk_review_for_promotion`
+  - `require_approval`
+
+### Local dev behavior
+
+- `AIGOV_ENVIRONMENT` defaults to **`dev`** (see `rust/src/govai_environment.rs`).
+- When running the Rust service from the `rust/` directory, the loader will pick **`policy.dev.json`** first if present.
+- This means local dev is often **intentionally looser** than staging/prod; always check `GET /status` for the effective policy and its source.
+
 Python:
 
 ```python
@@ -86,6 +154,18 @@ CLI: set **`GOVAI_API_KEY`** to a value listed in **`GOVAI_API_KEYS`** so `govai
 ```bash
 # Protected route (e.g. GET /verify); unauthenticated requests return 401 with {"ok":false,"error":"unauthorized"}.
 curl -sS -H "Authorization: Bearer test-key" "http://127.0.0.1:8088/verify"
+```
+
+### Evidence billing (single source of truth)
+
+- **Billable unit:** one **successful** append to the audit log from `POST /evidence` (HTTP 200 after the hash-chained write). Policy rejections, duplicates (409), and failed writes are **not** billed.
+- **Canonical quota table:** Postgres **`govai_usage_counters`** (monthly rows per billing tenant from `X-GovAI-Project`, else API-key fingerprint, else `default`). **`GET /usage`** reads the same scope as ingest.
+- **Middleware:** per-key request caps (`GOVAI_API_KEYS` / `GOVAI_API_KEY_DEFAULT_LIMIT`) are **abuse protection only**, not product billing.
+- **`GOVAI_METERING=on`:** team tables (`govai_team_usage_monthly`, etc.) are updated **after** a successful append for **analytics / telemetry**; they do **not** enforce the product evidence quota. Quota enforcement always uses **`govai_usage_counters`**.
+- **Quota exceeded:** `429` with `{"ok":false,"error":"evidence_quota_exceeded","limit":1000}` (free tier; constant in `rust/src/evidence_usage.rs`).
+
+```bash
+curl -sS "http://127.0.0.1:8088/usage" -H "x-govai-project: my-team"
 ```
 
 ```bash
@@ -588,6 +668,24 @@ Work after v0.1 is organized into pragmatic horizons. Priority is reliability fi
 
 - Better SDKs (maturity)  
   Stabilize APIs and introduce versioning. Consider generated clients if API surface stabilizes.
+
+### Operator note (billing)
+
+- **`govai_usage_counters`** is the **only** billing source of truth for evidence usage.
+- **Request-based API limits** (per-key caps on gated routes) are **not** product billing.
+- **`GOVAI_METERING`** does **not** enforce billing limits; metering tables are **analytics only**.
+- **Ingest is not blocked** by team-level metering limits or by missing team/billing key mappings (telemetry may be omitted).
+
+### Billing change checklist (PRs)
+
+When touching ingest, quota, or `/usage`, confirm:
+
+- [ ] Successful append increments usage (`govai_usage_counters`).
+- [ ] Duplicate ingest does **not** increment usage.
+- [ ] Failed append does **not** increment usage.
+- [ ] Quota is enforced **before** append.
+- [ ] Billing path is the same with **`GOVAI_METERING` on or off** (canonical table only).
+- [ ] **`GET /usage`** reflects the canonical counter for the ingest billing scope.
 
 ## License
 
