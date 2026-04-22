@@ -199,7 +199,7 @@ pub async fn insert_assessment(
     })
 }
 
-// --- compliance workflow (app layer; orthogonal to Rust policy) ---
+// --- compliance workflow (app layer; team queue / override — not a second ledger projection) ---
 
 pub struct ComplianceWorkflowRow {
     pub id: Uuid,

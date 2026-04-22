@@ -87,7 +87,7 @@ function PngDotsOccluder() {
         width: PNG_DOTS_OCCLUDER_W_PX,
         height: PNG_DOTS_OCCLUDER_H_PX,
         borderRadius: 4,
-        background: "var(--govai-bg-sidebar)",
+        background: "var(--govai-bg-chrome)",
         zIndex: 1,
         pointerEvents: "none",
       }}

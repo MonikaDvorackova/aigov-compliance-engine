@@ -44,6 +44,7 @@ def test_subcommand_help() -> None:
         "verify",
         "fetch-bundle",
         "compliance-summary",
+        "check",
         "report",
         "export-bundle",
         "create-assessment",
@@ -128,3 +129,57 @@ def test_missing_run_id_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RUN_ID", raising=False)
     code = main(["compliance-summary"])
     assert code == cli_exit.EX_INVALID
+
+
+def _valid_check_summary() -> dict:
+    return {
+        "ok": True,
+        "current_state": {
+            "model": {"evaluation_passed": True},
+            "approval": {"approved": True},
+            "promotion": {"promoted": True},
+        },
+    }
+
+
+def test_check_exits_0_on_valid(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("aigov_py.cli.get_compliance_summary", return_value=_valid_check_summary()) as m:
+        code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
+    assert code == cli_exit.EX_OK
+    m.assert_called_once()
+    assert m.call_args[0][1] == "r1"
+    assert capsys.readouterr().out.strip() == "VALID"
+
+
+def test_check_exits_invalid_on_invalid(capsys: pytest.CaptureFixture[str]) -> None:
+    s = _valid_check_summary()
+    s["current_state"]["model"]["evaluation_passed"] = False
+    with patch("aigov_py.cli.get_compliance_summary", return_value=s):
+        code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
+    assert code == 1
+    assert capsys.readouterr().out.strip() == "INVALID"
+
+
+def test_check_exits_invalid_no_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RUN_ID", raising=False)
+    code = main(["--audit-base-url", "http://audit.test", "check"])
+    assert code == 1
+
+
+def test_check_run_id_flag_overrides_positional(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("aigov_py.cli.get_compliance_summary", return_value=_valid_check_summary()) as m:
+        code = main(["--audit-base-url", "http://audit.test", "check", "ignored", "--run-id", "r2"])
+    assert code == cli_exit.EX_OK
+    assert m.call_args[0][1] == "r2"
+    assert capsys.readouterr().out.strip() == "VALID"
+
+
+def test_check_blocked_through_client(capsys: pytest.CaptureFixture[str]) -> None:
+    """``get_compliance_summary`` path: ok=false from API → BLOCKED, non-zero exit."""
+    with patch("aigov_py.cli.GovAIClient") as client_cls:
+        inst = MagicMock()
+        client_cls.return_value = inst
+        inst.request_json.return_value = {"ok": False, "error": "not found"}
+        code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
+    assert code == 1
+    assert capsys.readouterr().out.strip() == "BLOCKED"

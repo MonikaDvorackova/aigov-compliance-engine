@@ -10,7 +10,6 @@ import {
   buildGroupedStatusRows,
   buildNextAction,
   buildRunChecklist,
-  buildSignalConflictNote,
 } from "@/lib/compliance/runDetailDecision";
 import { deriveIntegritySummary } from "@/lib/console/runDetail";
 import type { RunLedgerRecord, RunSignedUrlsState } from "@/app/components/ComplianceRunTechnicalDetails";
@@ -90,7 +89,7 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
   } else {
     const { data: sbData, error } = await supabase
       .from("runs")
-      .select("id,created_at,mode,status,policy_version,bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at")
+      .select("id,created_at,mode,status,policy_version,bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at,environment")
       .eq("id", runIdTrimmed)
       .maybeSingle();
 
@@ -108,11 +107,7 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
   const mode = norm(r.mode);
   const status = norm(r.status);
 
-  const isValid = status === "valid";
-
   const hasClosed = Boolean(r.closed_at && String(r.closed_at).trim().length > 0);
-
-  const prodGateOk = mode !== "prod" || isValid;
 
   const signed = await fetchSignedUrls(r.id);
 
@@ -133,16 +128,13 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
     runId: r.id,
     modeNorm: mode,
     statusNorm: status,
-    isValid,
     hasClosed,
-    prodGateOk,
     hero: decision,
     model: summaryModel,
     integrityLine,
   };
 
-  const conflictNote = buildSignalConflictNote(decisionInput);
-  const compact = buildCompactStatusPanel(decision, conflictNote, integrityLine);
+  const compact = buildCompactStatusPanel(decision, integrityLine);
   const nextAction = buildNextAction(decisionInput);
   const groupedRows = buildGroupedStatusRows(decisionInput);
   const checklist = buildRunChecklist(decisionInput);
@@ -187,7 +179,6 @@ export default async function RunDetailPage({ params }: RunDetailPageProps) {
           compact={compact}
           nextAction={nextAction}
           groupedRows={groupedRows}
-          conflictNote={conflictNote}
           narrativeExplanation={decision.explanation}
           checklist={checklist}
         />

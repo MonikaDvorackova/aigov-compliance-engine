@@ -14,6 +14,8 @@ from govai import (
     GovAIClient,
     GovAIHTTPError,
     __version__,
+    compliance_decision_inputs_from_api,
+    compliance_decision_label,
     current_state_from_summary,
     get_compliance_summary,
     submit_event,
@@ -393,6 +395,13 @@ def build_parser() -> argparse.ArgumentParser:
     s_sum = sub.add_parser("compliance-summary", help="GET /compliance-summary for a run_id.")
     s_sum.add_argument("--run-id", default=None, help="Run UUID (fallback: env RUN_ID).")
 
+    s_check = sub.add_parser(
+        "check",
+        help="Check compliance decision (VALID / INVALID / BLOCKED). Exit 0 only if VALID.",
+    )
+    s_check.add_argument("--run-id", dest="check_run_id", default=None, help="Run UUID (overrides positional / RUN_ID).")
+    s_check.add_argument("run_id", nargs="?", default=None, help="Run UUID (fallback: env RUN_ID).")
+
     s_report = sub.add_parser("report", help="Render docs/reports/<run_id>.md from evidence JSON.")
     s_report.add_argument("--run-id", default=None, help="Run UUID (fallback: env RUN_ID).")
 
@@ -405,12 +414,6 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--risk-class", required=True)
     c.add_argument("--team-id", default=os.environ.get("GOVAI_TEAM_ID"), help="Team UUID (or GOVAI_TEAM_ID).")
     c.add_argument("--created-by", default=os.environ.get("GOVAI_CREATED_BY"), help="User UUID (or GOVAI_CREATED_BY).")
-
-    f = sub.add_parser("finalize", help="Finalize an assessment.")
-    f.add_argument("--assessment-id", required=True)
-
-    e = sub.add_parser("evidence", help="Request evidence bundle build for an assessment.")
-    e.add_argument("--assessment-id", required=True)
 
     return p
 
@@ -518,6 +521,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_json(out, compact=args.compact_json)
         return cli_exit.EX_OK
 
+    if args.cmd == "check":
+        opt = (getattr(args, "check_run_id", None) or "").strip()
+        run_id = opt or _resolve_run_id(args)
+        if not run_id:
+            print("run id required", file=sys.stderr)
+            return 1
+        try:
+            client = GovAIClient(audit_url, api_key=api_key)
+            summary = get_compliance_summary(client, run_id, timeout=args.timeout)
+            inputs = compliance_decision_inputs_from_api(summary)
+            label = compliance_decision_label(inputs)
+        except Exception as e:
+            print(str(e), file=sys.stderr)
+            print("BLOCKED")
+            return 1
+        print(label)
+        return 0 if label == "VALID" else 1
+
     if args.cmd == "report":
         run_id = _resolve_run_id(args)
         if not run_id:
@@ -567,16 +588,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     created_by=args.created_by,
                 )
             )
-            _print_json(out.__dict__, compact=args.compact_json)
-            return cli_exit.EX_OK
-
-        if args.cmd == "finalize":
-            out = client.finalize_assessment(args.assessment_id)
-            _print_json(out, compact=args.compact_json)
-            return cli_exit.EX_OK
-
-        if args.cmd == "evidence":
-            out = client.build_evidence_bundle(args.assessment_id)
             _print_json(out.__dict__, compact=args.compact_json)
             return cli_exit.EX_OK
 

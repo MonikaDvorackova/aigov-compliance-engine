@@ -44,6 +44,16 @@ The data chain is intentionally linear:
 - `evidence.bundle_hash` is available in summary and derived from the canonical bundle hash.
 - `evidence.bundle_generated_at` is currently `null` in summary because bundle generation time is not emitted in immutable ledger events and is not persisted in the current core summary path.
 
+## Enterprise workflow (`compliance_workflow`) — override only
+
+The Postgres **`compliance_workflow`** table and **`/api/compliance-workflow*`** routes provide a **team-scoped queue** (register, approve/reject, promotion allow/block). They **do not** append to the ledger, replace **`policy.rs`**, or define a second compliance projection.
+
+**Authoritative readiness** for “can this run be promoted?” is always:
+
+`immutable ledger` → `bundle` → `projection` → **`GET /compliance-summary`** (`current_state`).
+
+Workflow state may **block or allow operationally** inside a product (e.g. internal sign-off) but must be **reconciled** with the summary; API responses include **`decision_authority`** on successful workflow calls to make this explicit.
+
 ## Repo packaging note
 
 The contracts above describe the **semantic core**. What is treated as open-source “core” vs. optional product surfaces for v0.1 is summarized in [`OPEN_SOURCE_SCOPE.md`](../OPEN_SOURCE_SCOPE.md) (no repo split).
