@@ -77,13 +77,12 @@ pub async fn run() -> Result<(), String> {
         .merge(govai_api::core_router(
             policy_version,
             deployment_env,
-            resolved_policy.clone(),
         ))
         .merge(govai_api::audit_router(
             LOG_PATH,
             policy_version,
             deployment_env,
-            resolved_policy,
+            resolved_policy.config,
             api_usage,
             pool.clone(),
             metering,
