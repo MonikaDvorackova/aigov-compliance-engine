@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,9 +11,11 @@ from govai import (
     GovAIHTTPError,
     current_state_from_summary,
     decision_signals_from_summary,
+    export_run,
     get_bundle,
     get_bundle_hash,
     get_compliance_summary,
+    get_usage,
     submit_event,
     verify_chain,
 )
@@ -131,6 +132,34 @@ def test_verify_chain_broken_returns_body() -> None:
         out = verify_chain(client)
     assert out["ok"] is False
     assert "hash_chain" in out["error"]
+
+
+def test_get_usage_passes_project_header_and_is_lossless() -> None:
+    client = GovAIClient("http://example.test")
+    server_payload = {"metering": "off", "tenant_id": "t1", "period_start": "2026-01-01", "evidence_events_count": 3, "limit": 100}
+    with patch.object(client, "request_json", return_value=server_payload) as req:
+        out = get_usage(client, project="proj-1")
+    req.assert_called_once_with(
+        "GET",
+        "/usage",
+        headers={"X-GovAI-Project": "proj-1"},
+        raise_on_body_ok_false=False,
+    )
+    assert out["raw"] == server_payload
+
+
+def test_export_run_calls_correct_path() -> None:
+    client = GovAIClient("http://example.test")
+    server_payload = {"ok": True, "schema_version": "aigov.audit_export.v1", "run": {"run_id": "r1"}}
+    with patch.object(client, "request_json", return_value=server_payload) as req:
+        out = export_run(client, "r1")
+    req.assert_called_once_with(
+        "GET",
+        "/api/export/r1",
+        headers=None,
+        raise_on_body_ok_false=False,
+    )
+    assert out == server_payload
 
 
 def test_http_error_on_evidence() -> None:
