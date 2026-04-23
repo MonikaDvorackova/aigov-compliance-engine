@@ -14,6 +14,8 @@ from govai import (
     GovAIClient,
     GovAIHTTPError,
     __version__,
+    export_run,
+    get_usage,
     get_compliance_summary,
     submit_event,
 )
@@ -391,6 +393,24 @@ def build_parser() -> argparse.ArgumentParser:
     s_export = sub.add_parser("export-bundle", help="Write docs/audit + docs/packs zip for a run.")
     s_export.add_argument("--run-id", default=None, help="Run UUID (fallback: env RUN_ID).")
 
+    s_export_run = sub.add_parser(
+        "export-run",
+        help="GET /api/export/:run_id (machine-readable JSON).",
+    )
+    s_export_run.add_argument("--run-id", default=None, help="Run UUID (fallback: env RUN_ID).")
+    s_export_run.add_argument(
+        "--project",
+        default=os.environ.get("GOVAI_PROJECT"),
+        help="Optional X-GovAI-Project header (or GOVAI_PROJECT).",
+    )
+
+    s_usage = sub.add_parser("usage", help="GET /usage (machine-readable JSON).")
+    s_usage.add_argument(
+        "--project",
+        default=os.environ.get("GOVAI_PROJECT"),
+        help="Optional X-GovAI-Project header (or GOVAI_PROJECT).",
+    )
+
     c = sub.add_parser("create-assessment", help="Create a new assessment (POST /api/assessments).")
     c.add_argument("--system-name", required=True)
     c.add_argument("--intended-purpose", required=True)
@@ -563,6 +583,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         except Exception as e:
             print(json.dumps({"error": str(e)}, ensure_ascii=False), file=sys.stderr)
             return cli_exit.EX_ERR
+        return cli_exit.EX_OK
+
+    if args.cmd == "export-run":
+        run_id = _resolve_run_id(args)
+        if not run_id:
+            print("run id required: pass --run-id or set RUN_ID", file=sys.stderr)
+            return cli_exit.EX_INVALID
+        try:
+            client = GovAIClient(audit_url, api_key=api_key)
+            out = export_run(client, run_id, project=getattr(args, "project", None))
+        except Exception as e:
+            print(json.dumps({"error": str(e)}, ensure_ascii=False), file=sys.stderr)
+            return cli_exit.EX_ERR
+        _print_json(out, compact=True)
+        return cli_exit.EX_OK
+
+    if args.cmd == "usage":
+        try:
+            client = GovAIClient(audit_url, api_key=api_key)
+            out = get_usage(client, project=getattr(args, "project", None))
+        except Exception as e:
+            print(json.dumps({"error": str(e)}, ensure_ascii=False), file=sys.stderr)
+            return cli_exit.EX_ERR
+        _print_json(out, compact=True)
         return cli_exit.EX_OK
 
     # Assessment API — same origin as audit service (Rust binary)

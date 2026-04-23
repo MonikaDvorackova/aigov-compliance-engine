@@ -18,6 +18,8 @@ from .compliance import (
     decision_signals_from_summary,
 )
 from .evidence import submit_event
+from .export import export_run
+from .usage import get_usage
 from .verify import verify_chain
 
 __all__ = [
@@ -32,6 +34,8 @@ __all__ = [
     "get_bundle",
     "get_bundle_hash",
     "get_compliance_summary",
+    "get_usage",
+    "export_run",
     "submit_event",
     "verify_chain",
 ]
