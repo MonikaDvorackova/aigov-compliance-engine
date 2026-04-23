@@ -754,11 +754,13 @@ async fn compliance_summary_route(
                 Some(bundle_hash),
                 None,
             );
+            let verdict = compliance_verdict_from_state(&derived);
             Json(json!({
                 "ok": true,
                 "schema_version": "aigov.compliance_summary.v2",
                 "policy_version": audit.policy_version,
                 "run_id": q.run_id,
+                "verdict": verdict,
                 "current_state": derived,
             }))
         }
@@ -769,6 +771,27 @@ async fn compliance_summary_route(
             "policy_version": audit.policy_version,
             "run_id": q.run_id,
         })),
+    }
+}
+
+fn compliance_verdict_from_state(state: &projection::ComplianceCurrentState) -> &'static str {
+    // Authoritative rule order (server-side): evaluation → approval → promotion.
+    // - INVALID: evaluation explicitly failed.
+    // - VALID: evaluation passed, risk reviewed + human approved (approve), and promotion executed.
+    // - BLOCKED: anything else (missing prerequisites / not yet promoted).
+    if state.model.evaluation_passed == Some(false) {
+        return "INVALID";
+    }
+
+    let eval_ok = state.model.evaluation_passed == Some(true);
+    let risk_ok = state.approval.risk_review_decision.as_deref() == Some("approve");
+    let approval_ok = state.approval.human_approval_decision.as_deref() == Some("approve");
+    let promoted = state.model.promotion.model_promoted_present && state.model.promotion.state == "promoted";
+
+    if eval_ok && risk_ok && approval_ok && promoted {
+        "VALID"
+    } else {
+        "BLOCKED"
     }
 }
 
