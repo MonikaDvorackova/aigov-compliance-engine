@@ -47,6 +47,8 @@ def test_subcommand_help() -> None:
         "check",
         "report",
         "export-bundle",
+        "export-run",
+        "usage",
         "create-assessment",
     ):
         with pytest.raises(SystemExit) as ei:
