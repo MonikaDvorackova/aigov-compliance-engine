@@ -14,9 +14,6 @@ from govai import (
     GovAIClient,
     GovAIHTTPError,
     __version__,
-    compliance_decision_inputs_from_api,
-    compliance_decision_label,
-    current_state_from_summary,
     get_compliance_summary,
     submit_event,
 )
@@ -90,26 +87,12 @@ def _utc_now_z() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _projection_promoted_ok(state: dict[str, Any] | None) -> bool:
-    if not state:
-        return False
-    model = state.get("model")
-    if not isinstance(model, dict):
-        return False
-    if model.get("evaluation_passed") is not True:
-        return False
-    promotion = model.get("promotion")
-    if not isinstance(promotion, dict):
-        return False
-    return promotion.get("state") == "promoted"
-
-
 def _demo_event_id(kind: str, run_id: str) -> str:
     return f"demo_{kind}_{run_id}"
 
 
 def run_demo(audit_url: str, api_key: str | None) -> int:
-    """``govai run demo``: submit a full compliance sequence; print VALID or BLOCKED."""
+    """``govai run demo``: submit a full compliance sequence; print server verdict."""
     actor = (os.environ.get("AIGOV_ACTOR") or "govai_demo").strip() or "govai_demo"
     system = (os.environ.get("AIGOV_SYSTEM") or "govai_demo_cli").strip() or "govai_demo_cli"
 
@@ -312,16 +295,16 @@ def run_demo(audit_url: str, api_key: str | None) -> int:
             submit_event(client, ev)
         summary = get_compliance_summary(client, run_id)
     except (GovAIAPIError, GovAIHTTPError, OSError, TypeError, ValueError):
-        print("BLOCKED")
         return cli_exit.EX_ERR
 
-    state = current_state_from_summary(summary)
-    if summary.get("ok") is not True or not _projection_promoted_ok(state):
-        print("BLOCKED")
+    verdict = summary.get("verdict") if isinstance(summary, dict) else None
+    if not isinstance(verdict, str) or not verdict.strip():
+        print("error: /compliance-summary missing verdict", file=sys.stderr)
         return cli_exit.EX_ERR
 
-    print("VALID")
-    return cli_exit.EX_OK
+    verdict = verdict.strip()
+    print(verdict)
+    return cli_exit.EX_OK if verdict == "VALID" else cli_exit.EX_ERR
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -526,18 +509,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = opt or _resolve_run_id(args)
         if not run_id:
             print("run id required", file=sys.stderr)
-            return 1
+            return cli_exit.EX_INVALID
         try:
             client = GovAIClient(audit_url, api_key=api_key)
             summary = get_compliance_summary(client, run_id, timeout=args.timeout)
-            inputs = compliance_decision_inputs_from_api(summary)
-            label = compliance_decision_label(inputs)
         except Exception as e:
             print(str(e), file=sys.stderr)
-            print("BLOCKED")
-            return 1
-        print(label)
-        return 0 if label == "VALID" else 1
+            return cli_exit.EX_ERR
+
+        if not isinstance(summary, dict):
+            print("error: expected object from /compliance-summary", file=sys.stderr)
+            return cli_exit.EX_ERR
+
+        verdict = summary.get("verdict")
+        if not isinstance(verdict, str) or not verdict.strip():
+            print("error: /compliance-summary missing verdict", file=sys.stderr)
+            return cli_exit.EX_ERR
+
+        verdict = verdict.strip()
+        print(verdict)
+        return cli_exit.EX_OK if verdict == "VALID" else cli_exit.EX_INVALID
 
     if args.cmd == "report":
         run_id = _resolve_run_id(args)

@@ -134,11 +134,7 @@ def test_missing_run_id_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
 def _valid_check_summary() -> dict:
     return {
         "ok": True,
-        "current_state": {
-            "model": {"evaluation_passed": True},
-            "approval": {"approved": True},
-            "promotion": {"promoted": True},
-        },
+        "verdict": "VALID",
     }
 
 
@@ -152,18 +148,17 @@ def test_check_exits_0_on_valid(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_check_exits_invalid_on_invalid(capsys: pytest.CaptureFixture[str]) -> None:
-    s = _valid_check_summary()
-    s["current_state"]["model"]["evaluation_passed"] = False
+    s = {"ok": True, "verdict": "INVALID"}
     with patch("aigov_py.cli.get_compliance_summary", return_value=s):
         code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
-    assert code == 1
+    assert code == cli_exit.EX_INVALID
     assert capsys.readouterr().out.strip() == "INVALID"
 
 
 def test_check_exits_invalid_no_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RUN_ID", raising=False)
     code = main(["--audit-base-url", "http://audit.test", "check"])
-    assert code == 1
+    assert code == cli_exit.EX_INVALID
 
 
 def test_check_run_id_flag_overrides_positional(capsys: pytest.CaptureFixture[str]) -> None:
@@ -175,11 +170,18 @@ def test_check_run_id_flag_overrides_positional(capsys: pytest.CaptureFixture[st
 
 
 def test_check_blocked_through_client(capsys: pytest.CaptureFixture[str]) -> None:
-    """``get_compliance_summary`` path: ok=false from API → BLOCKED, non-zero exit."""
+    """Missing verdict must fail (EX_ERR)."""
     with patch("aigov_py.cli.GovAIClient") as client_cls:
         inst = MagicMock()
         client_cls.return_value = inst
-        inst.request_json.return_value = {"ok": False, "error": "not found"}
+        inst.request_json.return_value = {"ok": True}
         code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
-    assert code == 1
-    assert capsys.readouterr().out.strip() == "BLOCKED"
+    assert code == cli_exit.EX_ERR
+    assert capsys.readouterr().out.strip() == ""
+
+
+def test_check_exits_err_when_verdict_missing(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("aigov_py.cli.get_compliance_summary", return_value={"ok": True}):
+        code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
+    assert code == cli_exit.EX_ERR
+    assert capsys.readouterr().out.strip() == ""

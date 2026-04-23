@@ -10,8 +10,6 @@ from govai import (
     GovAIAPIError,
     GovAIClient,
     GovAIHTTPError,
-    compliance_decision_inputs_from_api,
-    compliance_decision_label,
     current_state_from_summary,
     decision_signals_from_summary,
     get_bundle,
@@ -186,64 +184,10 @@ def test_current_state_and_decision_helpers() -> None:
     assert current_state_from_summary(bad) is None
     assert decision_signals_from_summary(bad) is None
 
-    assert compliance_decision_label(compliance_decision_inputs_from_api(bad)) == "BLOCKED"
-    assert (
-        compliance_decision_label(compliance_decision_inputs_from_api({"ok": True, "current_state": {}}))
-        == "BLOCKED"
-    )
 
-
-def _valid_api_summary() -> dict:
-    return {
-        "ok": True,
-        "current_state": {
-            "model": {"evaluation_passed": True},
-            "approval": {"approved": True},
-            "promotion": {"promoted": True},
-        },
-    }
-
-
-def test_compliance_decision_label_tristate() -> None:
-    assert (
-        compliance_decision_label(
-            {
-                "evaluation_passed": True,
-                "human_approval_present": True,
-                "model_promoted_present": True,
-            }
-        )
-        == "VALID"
-    )
-    assert (
-        compliance_decision_label(
-            {
-                "evaluation_passed": False,
-                "human_approval_present": True,
-                "model_promoted_present": True,
-            }
-        )
-        == "INVALID"
-    )
-    assert (
-        compliance_decision_label(
-            {
-                "evaluation_passed": True,
-                "human_approval_present": False,
-                "model_promoted_present": True,
-            }
-        )
-        == "BLOCKED"
-    )
-
-
-def test_compliance_decision_inputs_from_api_nested() -> None:
-    assert compliance_decision_label(compliance_decision_inputs_from_api(_valid_api_summary())) == "VALID"
-
-    inv = json.loads(json.dumps(_valid_api_summary()))
-    inv["current_state"]["model"]["evaluation_passed"] = False
-    assert compliance_decision_label(compliance_decision_inputs_from_api(inv)) == "INVALID"
-
-    blocked = json.loads(json.dumps(_valid_api_summary()))
-    blocked["ok"] = False
-    assert compliance_decision_label(compliance_decision_inputs_from_api(blocked)) == "BLOCKED"
+def test_compliance_summary_verdict_is_forwarded() -> None:
+    client = GovAIClient("http://example.test")
+    body = {"ok": True, "schema_version": "aigov.compliance_summary.v2", "run_id": "r1", "verdict": "VALID"}
+    with patch.object(client, "request_json", return_value=body):
+        out = get_compliance_summary(client, "r1")
+    assert out["verdict"] == "VALID"

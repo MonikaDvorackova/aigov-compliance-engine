@@ -13,8 +13,6 @@ from .api import get_compliance_summary
 from .bundle import get_bundle, get_bundle_hash
 from .client import GovAIAPIError, GovAIClient, GovAIError, GovAIHTTPError
 from .compliance import (
-    compliance_decision_inputs_from_api,
-    compliance_decision_label,
     current_state_from_summary,
     decision_signals,
     decision_signals_from_summary,
@@ -28,8 +26,6 @@ __all__ = [
     "GovAIClient",
     "GovAIError",
     "GovAIHTTPError",
-    "compliance_decision_inputs_from_api",
-    "compliance_decision_label",
     "current_state_from_summary",
     "decision_signals",
     "decision_signals_from_summary",
