@@ -1,6 +1,6 @@
 # Technical documentation (v0.1)
 
-**Authoritative layout for the current implementation:** [ARCHITECTURE.md](../ARCHITECTURE.md), [DEMO_FLOW.md](../DEMO_FLOW.md), [OPEN_SOURCE_SCOPE.md](../OPEN_SOURCE_SCOPE.md). This file retains a compact technical summary.
+**Authoritative layout for the current implementation:** [ARCHITECTURE.md](../ARCHITECTURE.md), [DEMO_FLOW.md](../DEMO_FLOW.md), [OPEN_SOURCE_SCOPE.md](../OPEN_SOURCE_SCOPE.md). **Canonical HTTP v1 contract:** [`api/govai-http-v1.openapi.yaml`](../api/govai-http-v1.openapi.yaml). This file retains a compact technical summary.
 
 ## Scope
 
@@ -14,13 +14,14 @@ Proof-of-concept for:
 ## Rust evidence service (`rust/`)
 
 - **Ingest:** `POST /evidence` — body: `EvidenceEvent` (`event_id`, `event_type`, `ts_utc`, `actor`, `system`, `run_id`, `payload`).
+- **Usage / export:** `GET /usage`, `GET /api/export/:run_id`.
 - **Chain:** `GET /verify`, `GET /verify-log`
 - **Bundle:** `GET /bundle?run_id=…`, `GET /bundle-hash?run_id=…`
-- **Summary:** `GET /compliance-summary?run_id=…` — `ok`, `schema_version` (`aigov.compliance_summary.v2`), `policy_version`, `run_id`, `current_state` (inner `schema_version`: `aigov.compliance_current_state.v2`, same projection as bundle `identifiers` for canonical fields)
+- **Summary:** `GET /compliance-summary?run_id=…` — `ok`, `schema_version` (`aigov.compliance_summary.v2`), `policy_version`, `run_id`; when `ok` is true — `verdict` (`VALID` / `INVALID` / `BLOCKED`) and `current_state` (inner `schema_version`: `aigov.compliance_current_state.v2`, same projection as bundle `identifiers` for canonical fields).
 - **Storage:** append-only `audit_log.jsonl` (relative to process cwd when running from `rust/`).
-- **Other:** `GET /status` (`{"ok":true,"policy_version":"…"}`); `GET /`, `/health` — service metadata.
+- **Other:** `GET /status` (`ok`, `policy_version`, `environment`); `GET /`, `/health` — service metadata (`GET /` is **internal** per OpenAPI).
 
-Authenticated routes (Supabase JWT): `GET /api/me`, `POST /api/assessments`.
+Authenticated routes (Supabase JWT; **stable** enterprise surface): `GET /api/me`, `POST /api/assessments`, `/api/compliance-workflow*` — see OpenAPI.
 
 ## Python ML pipeline
 

@@ -22,7 +22,7 @@ JSON files: `policy.<env>.json` then `policy.json`, resolved under `AIGOV_POLICY
 
 - **`AIGOV_APPROVER_ALLOWLIST`**: if set to a non-empty value after trim, it **replaces** `approver_allowlist` from the file for ingest enforcement only. Format: comma-separated names; same trimming, lowercasing, and de-duplication as file entries.
 
-The HTTP **`GET /status`** response includes the boolean knobs above, `policy.approver_allowlist` (from the loaded file / defaults), `policy.approver_allowlist_env_override` (whether `AIGOV_APPROVER_ALLOWLIST` is non-empty at request time), and `policy.approver_allowlist_effective` (the list actually used for allowlist checks at ingest).
+The HTTP **`GET /status`** response includes **`ok`**, **`policy_version`**, and **`environment`** only (see [`api/govai-http-v1.openapi.yaml`](../api/govai-http-v1.openapi.yaml)). Policy knobs and allowlists live in resolved policy files / env at process start (`rust/src/policy_config.rs`), not in this JSON.
 
 ## Code invariants (not policy files)
 
@@ -44,4 +44,4 @@ Unknown event types are accepted without additional policy checks (pass-through)
 
 ## Release note (summary)
 
-Policy files may declare **`approver_allowlist`** explicitly; defaults match the former hardcoded default list. **`AIGOV_APPROVER_ALLOWLIST`** remains supported as a runtime override for ingest. Invalid combinations (`enforce_approver_allowlist` with an empty allowlist after normalization) fail validation at load and trigger fallback to compile-time defaults. **`GET /status`** exposes all policy booleans, configured allowlist, env-override flag, and effective allowlist. Fine-grained promotion gates use **`require_passed_evaluation_for_promotion`** and **`require_risk_review_for_promotion`** in `rust/src/policy.rs` (no longer tied to `block_if_missing_evidence` for the promotion risk-review step).
+Policy files may declare **`approver_allowlist`** explicitly; defaults match the former hardcoded default list. **`AIGOV_APPROVER_ALLOWLIST`** remains supported as a runtime override for ingest. Invalid combinations (`enforce_approver_allowlist` with an empty allowlist after normalization) fail validation at load and trigger fallback to compile-time defaults. Fine-grained promotion gates use **`require_passed_evaluation_for_promotion`** and **`require_risk_review_for_promotion`** in `rust/src/policy.rs` (no longer tied to `block_if_missing_evidence` for the promotion risk-review step).
