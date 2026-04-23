@@ -93,7 +93,7 @@ def main() -> None:
 
     try:
         out = _post_json(url, event)
-    except Exception as e:
+    except Exception:
         raise
 
     print(json.dumps(out, ensure_ascii=False))
