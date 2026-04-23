@@ -159,12 +159,17 @@ fn canonicalize_events(mut events: Vec<EvidenceEvent>) -> Vec<EvidenceEvent> {
 
 #[derive(Clone)]
 struct AuditState {
-    log_path: &'static str,
+    ledger_base: &'static str,
     policy_version: &'static str,
     deployment_env: GovaiEnvironment,
     policy: PolicyConfig,
     pool: DbPool,
     metering: MeteringConfig,
+}
+
+fn tenant_log_path(audit: &AuditState, headers: &HeaderMap) -> Result<String, String> {
+    let tenant_id = project::require_tenant_id_for_ledger(headers, audit.deployment_env)?;
+    Ok(project::resolve_ledger_path(audit.ledger_base, &tenant_id))
 }
 
 /// Ingest phases after [`crate::audit_api_key::gate_audit_routes`]:
@@ -179,7 +184,17 @@ async fn ingest(
     headers: HeaderMap,
     Json(mut event): Json<EvidenceEvent>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    if let Err(e) = prepare_event_for_ingest(&mut event, audit.deployment_env, audit.log_path) {
+    let log_path = match tenant_log_path(&audit, &headers) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+            )
+        }
+    };
+
+    if let Err(e) = prepare_event_for_ingest(&mut event, audit.deployment_env, &log_path) {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
@@ -188,7 +203,7 @@ async fn ingest(
 
     if let Err(e) = policy::enforce(
         &event,
-        audit.log_path,
+        &log_path,
         &audit.policy,
     ) {
         return (
@@ -197,7 +212,7 @@ async fn ingest(
         );
     }
 
-    let existing = match collect_existing_and_reject_duplicate(audit.log_path, &event) {
+    let existing = match collect_existing_and_reject_duplicate(&log_path, &event) {
         Ok(e) => e,
         Err(e) => {
             return (
@@ -339,7 +354,7 @@ async fn ingest(
         }
     }
 
-    match crate::audit_store::append_record(audit.log_path, event) {
+    match crate::audit_store::append_record(&log_path, event) {
         Ok(rec) => {
             if let Some((team_id, plan, ym, limits, new_run_ids, evidence_events)) = metering_team {
                 if let Err(e) = metering::record_successful_ingest(
@@ -502,25 +517,48 @@ async fn usage_route(
     }
 }
 
-async fn verify(State(audit): State<AuditState>) -> Json<serde_json::Value> {
-    match crate::audit_store::verify_chain(audit.log_path) {
-        Ok(_) => Json(json!({ "ok": true, "policy_version": audit.policy_version })),
-        Err(e) => Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+async fn verify(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let log_path = match tenant_log_path(&audit, &headers) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+            )
+        }
+    };
+    match crate::audit_store::verify_chain(&log_path) {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(json!({ "ok": true, "policy_version": audit.policy_version })),
+        ),
+        Err(e) => (
+            StatusCode::OK,
+            Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+        ),
     }
 }
 
 async fn bundle_route(
     State(audit): State<AuditState>,
+    headers: HeaderMap,
     Query(q): Query<BundleQuery>,
-) -> Json<serde_json::Value> {
-    match bundle::collect_events_for_run(audit.log_path, &q.run_id) {
+) -> (StatusCode, Json<serde_json::Value>) {
+    let log_path = match tenant_log_path(&audit, &headers) {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version }))),
+    };
+    match bundle::collect_events_for_run(&log_path, &q.run_id) {
         Ok(events) => {
             let events = canonicalize_events(events);
-            let log_path = format!("rust/{}", audit.log_path);
-            let doc = bundle::bundle_document_value(&q.run_id, audit.policy_version, &log_path, &events);
-            Json(doc)
+            let lp = format!("rust/{}", log_path);
+            let doc = bundle::bundle_document_value(&q.run_id, audit.policy_version, &lp, &events);
+            (StatusCode::OK, Json(doc))
         }
-        Err(e) => Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+        Err(e) => (StatusCode::OK, Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version }))),
     }
 }
 
@@ -528,6 +566,7 @@ async fn bundle_route(
 /// Uses `bundle::bundle_document_value` and `bundle::bundle_sha256` (same as `/bundle` and `/bundle-hash`).
 async fn export_run_route(
     State(audit): State<AuditState>,
+    headers: HeaderMap,
     Path(run_id): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let run_id = run_id.trim().to_string();
@@ -538,7 +577,17 @@ async fn export_run_route(
         );
     }
 
-    let events = match bundle::collect_events_for_run(audit.log_path, &run_id) {
+    let log_path = match tenant_log_path(&audit, &headers) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+            )
+        }
+    };
+
+    let events = match bundle::collect_events_for_run(&log_path, &run_id) {
         Ok(e) => e,
         Err(e) => {
             return (
@@ -555,18 +604,18 @@ async fn export_run_route(
     }
 
     let events = canonicalize_events(events);
-    let log_path = format!("rust/{}", audit.log_path);
-    let bundle_doc = bundle::bundle_document_value(&run_id, audit.policy_version, &log_path, &events);
+    let log_path_report = format!("rust/{}", log_path);
+    let bundle_doc = bundle::bundle_document_value(&run_id, audit.policy_version, &log_path_report, &events);
     let artifact_path = bundle::find_model_artifact_path(&events);
     let bundle_sha256 = bundle::bundle_sha256(
         &run_id,
         audit.policy_version,
-        &log_path,
+        &log_path_report,
         artifact_path.as_deref(),
         &events,
     );
 
-    let chain_records = match crate::audit_store::collect_stored_records_for_run(audit.log_path, &run_id) {
+    let chain_records = match crate::audit_store::collect_stored_records_for_run(&log_path, &run_id) {
         Ok(r) => r,
         Err(e) => {
             return (
@@ -617,7 +666,7 @@ async fn export_run_route(
         "run": {
             "run_id": run_id,
             "policy_version": audit.policy_version,
-            "log_path": log_path,
+            "log_path": log_path_report,
             "model_artifact_path": bundle_doc.get("model_artifact_path").cloned().unwrap_or(serde_json::Value::Null),
             "identifiers": bundle_doc.get("identifiers").cloned().unwrap_or(serde_json::Value::Null)
         },
@@ -644,35 +693,55 @@ async fn export_run_route(
 
 async fn bundle_hash_route(
     State(audit): State<AuditState>,
+    headers: HeaderMap,
     Query(q): Query<BundleHashQuery>,
-) -> Json<serde_json::Value> {
-    match bundle::collect_events_for_run(audit.log_path, &q.run_id) {
+) -> (StatusCode, Json<serde_json::Value>) {
+    let log_path = match tenant_log_path(&audit, &headers) {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version }))),
+    };
+    match bundle::collect_events_for_run(&log_path, &q.run_id) {
         Ok(events) => {
             let events = canonicalize_events(events);
             let artifact_path = bundle::find_model_artifact_path(&events);
-            let log_path = format!("rust/{}", audit.log_path);
+            let lp = format!("rust/{}", log_path);
 
             let digest = bundle::bundle_sha256(
                 &q.run_id,
                 audit.policy_version,
-                &log_path,
+                &lp,
                 artifact_path.as_deref(),
                 &events,
             );
 
-            Json(json!({
+            (StatusCode::OK, Json(json!({
                 "ok": true,
                 "run_id": q.run_id,
                 "policy_version": audit.policy_version,
                 "bundle_sha256": digest
-            }))
+            })))
         }
-        Err(e) => Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+        Err(e) => (StatusCode::OK, Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version }))),
     }
 }
 
-async fn verify_log(State(audit): State<AuditState>) -> (StatusCode, String) {
-    match verify_chain::verify_chain(audit.log_path) {
+async fn verify_log(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+) -> (StatusCode, String) {
+    let log_path = match tenant_log_path(&audit, &headers) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    serde_json::to_string(&e).unwrap_or_else(|_| "\"serialization_error\"".to_string())
+                ),
+            )
+        }
+    };
+    match verify_chain::verify_chain(&log_path) {
         Ok(_) => (StatusCode::OK, "{\"ok\":true}".to_string()),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -694,7 +763,7 @@ pub fn audit_router(
     metering: MeteringConfig,
 ) -> Router {
     let state = AuditState {
-        log_path,
+        ledger_base: log_path,
         policy_version,
         deployment_env,
         policy,
@@ -734,17 +803,22 @@ struct ComplianceSummaryQuery {
 
 async fn compliance_summary_route(
     State(audit): State<AuditState>,
+    headers: HeaderMap,
     Query(q): Query<ComplianceSummaryQuery>,
-) -> Json<serde_json::Value> {
-    match bundle::collect_events_for_run(audit.log_path, &q.run_id) {
+) -> (StatusCode, Json<serde_json::Value>) {
+    let log_path = match tenant_log_path(&audit, &headers) {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version, "run_id": q.run_id }))),
+    };
+    match bundle::collect_events_for_run(&log_path, &q.run_id) {
         Ok(events) => {
             let events = canonicalize_events(events);
             let artifact_path = bundle::find_model_artifact_path(&events);
-            let log_path = format!("rust/{}", audit.log_path);
+            let lp = format!("rust/{}", log_path);
             let bundle_hash = bundle::bundle_sha256(
                 &q.run_id,
                 audit.policy_version,
-                &log_path,
+                &lp,
                 artifact_path.as_deref(),
                 &events,
             );
@@ -755,22 +829,22 @@ async fn compliance_summary_route(
                 None,
             );
             let verdict = compliance_verdict_from_state(&derived);
-            Json(json!({
+            (StatusCode::OK, Json(json!({
                 "ok": true,
                 "schema_version": "aigov.compliance_summary.v2",
                 "policy_version": audit.policy_version,
                 "run_id": q.run_id,
                 "verdict": verdict,
                 "current_state": derived,
-            }))
+            })))
         }
-        Err(e) => Json(json!({
+        Err(e) => (StatusCode::OK, Json(json!({
             "ok": false,
             "schema_version": "aigov.compliance_summary.v2",
             "error": e,
             "policy_version": audit.policy_version,
             "run_id": q.run_id,
-        })),
+        }))),
     }
 }
 
