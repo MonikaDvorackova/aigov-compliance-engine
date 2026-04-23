@@ -38,7 +38,8 @@ class GovAIClient:
     """
     Thin HTTP client for the GovAI audit API (Rust core).
 
-    ``base_url`` should be the origin only (e.g. ``http://127.0.0.1:8088``); paths are appended as documented.
+    ``base_url`` should be the origin only (e.g. ``http://127.0.0.1:8088``). Stable paths and
+    JSON shapes are defined in the repo root ``api/govai-http-v1.openapi.yaml`` (v1 contract).
     """
 
     def __init__(

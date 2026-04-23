@@ -89,20 +89,24 @@ flowchart LR
 |--------|------|---------|
 | GET | `/` | `ok`, `service` (`govai`), `version` (crate version) |
 | GET | `/health` | `{"ok": true}` |
-| GET | `/status` | `ok`, `policy_version`, `environment`, `policy` knobs (`require_approval`, `block_if_missing_evidence`, `enforce_approver_allowlist`) |
+| GET | `/status` | `ok`, `policy_version`, `environment` (`dev` / `staging` / `prod`) — policy file knobs are **not** in this JSON (see `policy.*.json` / `rust/src/policy_config.rs`) |
 | POST | `/evidence` | Ingest `EvidenceEvent`; policy gate; append to log |
+| GET | `/usage` | Usage and limits (`metering` off/on shapes); canonical schema in [`api/govai-http-v1.openapi.yaml`](api/govai-http-v1.openapi.yaml) |
 | GET | `/verify` | Full-chain integrity: `ok` + `policy_version`, or `error` on failure |
 | GET | `/verify-log` | Compact JSON: `{"ok": true}` or `{"ok": false, "error": …}` |
 | GET | `/bundle?run_id=…` | Bundle document (`schema_version`: `aigov.bundle.v1`, includes `events`, `identifiers`, derived sections) |
 | GET | `/bundle-hash?run_id=…` | Canonical `bundle_sha256` for the run |
-| GET | `/compliance-summary?run_id=…` | `ok` + `schema_version` `aigov.compliance_summary.v2`, `policy_version`, `deployment_environment`, `ledger_environment` (from events; `null` if legacy), optional `ledger_environment_note`, `run_id`, `current_state`; or `ok:false` + `error` when the run cannot be loaded |
+| GET | `/compliance-summary?run_id=…` | `ok` + `schema_version` `aigov.compliance_summary.v2`, `policy_version`, `run_id`; when `ok` is true — `verdict` (`VALID` / `INVALID` / `BLOCKED`) and `current_state`; when `ok` is false — `error` |
+| GET | `/api/export/:run_id` | Machine-readable export (`aigov.audit_export.v1`); see OpenAPI |
 | GET | `/api/me` | Supabase JWT — user + teams (each team includes `effective_role` + `permissions` from product RBAC; see `rust/src/rbac.rs`) |
 | POST | `/api/assessments` | Create assessment row (auth + team resolution + **`decision_submit` permission**) |
 | GET | `/api/compliance-workflow` | List workflow rows for resolved team; optional `?state=pending_review` (or other state). **200** includes `decision_authority` (ledger is primary; workflow is queue/override only). |
 | POST | `/api/compliance-workflow` | Register `run_id` in `pending_review` (idempotent if already present); **200** includes `workflow` + `decision_authority`. |
 | GET | `/api/compliance-workflow/:run_id` | Fetch one workflow row for the team; **200** includes `decision_authority`. |
 | POST | `/api/compliance-workflow/:run_id/review` | Body `{"decision":"approve"\|"reject"}` — transitions from `pending_review` only; **200** includes `decision_authority`. |
-| POST | `/api/compliance-workflow/:run_id/promotion` | Body `{"decision":"allow"\|"block"}` — transitions from `approved` only; **200** includes `decision_authority`. |
+| POST | `/api/compliance-workflow/:run_id/promotion` | Body `{"decision":"allow"\|"block"}` — transitions from `approved` only; **200** returns `ok` + `workflow` only (no `decision_authority` field). |
+
+**HTTP contract (OpenAPI):** [`api/govai-http-v1.openapi.yaml`](api/govai-http-v1.openapi.yaml) — source of truth for v1 request/response shapes and `x-govai-surface` (`stable` vs `internal`). `GET /` is **internal**; all other routes in that file are **stable** for v1.
 
 Auth for `/api/me`, `/api/assessments`, and `/api/compliance-workflow*` requires **`SUPABASE_URL`** at minimum (JWKS fetch); optional **`SUPABASE_JWT_AUD`** for audience checks — see `rust/src/auth.rs`. Team scope uses header **`x-govai-team-id`** when set (same as assessments). Without a valid `Authorization: Bearer` JWT, these routes return 401/403 as implemented.
 

@@ -2,7 +2,8 @@
 # Fails unless `govai check` exits 0 (outcome VALID only).
 #
 # Repository Variables (Settings → Secrets and variables → Actions → Variables):
-#   GOVAI_AUDIT_BASE_URL — audit / ledger base URL (required)
+#   GOVAI_AUDIT_BASE_URL — audit / ledger base URL (required for this workflow to run;
+#     if unset, the job is skipped so forks/CI without a deployed audit still pass)
 #   RUN_ID — GovAI run UUID (required unless overridden; see Resolve RUN_ID step)
 #
 # Optional Secret:
@@ -30,6 +31,7 @@ on:
 
 jobs:
   govai-compliance-gate:
+    if: ${{ vars.GOVAI_AUDIT_BASE_URL != '' }}
     runs-on: ubuntu-latest
     env:
       GOVAI_AUDIT_BASE_URL: ${{ vars.GOVAI_AUDIT_BASE_URL }}

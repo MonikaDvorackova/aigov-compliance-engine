@@ -1,0 +1,1389 @@
+openapi: 3.0.3
+info:
+  title: GovAI Audit HTTP API
+  version: 1.0.0
+  description: |
+    # GovAI HTTP API — frozen contract (v1)
+
+    ## API version
+
+    This document defines **API major version 1** for the Rust `aigov_audit` binary.
+
+    - **Implicit v1:** There is **no** `/v1/` path prefix. All paths below are v1.
+    - **Breaking changes** (when they become necessary) require either a **new major API version** (e.g. v2) with an explicit **`/v2/...` namespace** (or another explicitly documented version mechanism), or a coordinated major product release that documents migration. Clients MUST NOT assume new paths appear without a version bump story in this repository.
+
+    ## Stability classification (`x-govai-surface`)
+
+    Every operation is tagged:
+
+    - **`stable`:** Safe for long-term external integration; backward-compatible evolution follows the rules below.
+    - **`internal`:** Operational / diagnostic only; **not** part of the externally supported contract. May change with less notice (still not redesigned in patch releases without cause).
+    - **`deprecated`:** Still callable; scheduled for removal per **Deprecation policy** (none are deprecated today).
+
+    **Core stable surface (ledger + reads):** `GET /health`, `GET /status`, `POST /evidence`, `GET /usage`, `GET /verify`, `GET /verify-log`, `GET /bundle`, `GET /bundle-hash`, `GET /compliance-summary`, `GET /api/export/{run_id}`.
+
+    **Enterprise stable surface (Supabase JWT + Postgres):** `GET /api/me`, `POST /api/assessments`, and all `/api/compliance-workflow*` routes are **`stable`** as a single tier. Rationale: the published **`govai` CLI** uses `POST /api/assessments` (`create-assessment`); the same product installation documents `GET /api/me` and workflow routes for demos and dashboards. Per project rule, enterprise routes are **all stable** or **all internal** — because the CLI depends on assessments, the **entire enterprise group is stable**.
+
+    **Internal only:** `GET /` (service banner).
+
+    ## Breaking vs non-breaking changes (v1)
+
+    **Breaking (requires new major version or `/v2/...` as above):**
+
+    - Removing or renaming an endpoint or operation.
+    - Changing the HTTP method for an existing path.
+    - Adding a **required** header, query parameter, or request body field without a new major version.
+    - Removing a response field that v1 marked **required** for success responses, or renaming it.
+    - Changing JSON **types** or documented **semantics** of a stable field.
+    - Changing HTTP status code **meaning** for the same client-visible outcome in a way that breaks existing clients.
+
+    **Non-breaking:**
+
+    - Adding **optional** request or response fields.
+    - Adding **optional** query parameters.
+    - Adding new endpoints (additive).
+    - Stricter validation that maps to existing 4xx patterns where clients already handle errors.
+    - Documentation fixes that align text with server behavior.
+
+    ## Deprecation policy
+
+    When an endpoint or field is deprecated:
+
+    1. Set OpenAPI `deprecated: true` on the operation or property.
+    2. Optionally set extension **`x-govai-deprecation-date`** (`YYYY-MM-DD`) for the earliest removal date.
+    3. **Removal window:** A deprecated stable endpoint MUST remain **fully functional** until **at least one full major API version cycle** (e.g. until v2 is published and documented) **or** until the date given in `x-govai-deprecation-date`, whichever provides integrators **more** notice when both apply.
+    4. No stable endpoint is deprecated in v1.0.0 of this document.
+
+    ## Authentication (summary)
+
+    - **Audit API keys:** When `GOVAI_API_KEYS` is non-empty, routes behind the audit middleware require `Authorization: Bearer <secret>`. When unset or empty, those routes accept unauthenticated requests (local default).
+    - **Supabase JWT:** `/api/me`, `/api/assessments`, `/api/compliance-workflow*` require `Authorization: Bearer <JWT>` and JWKS (`SUPABASE_URL`, optional `SUPABASE_JWT_AUD`). Optional `x-govai-team-id` for team scope.
+
+servers:
+  - url: http://127.0.0.1:8088
+    description: Default bind (`AIGOV_BIND` overrides)
+
+tags:
+  - name: CoreMetadata
+  - name: CoreLedger
+  - name: Enterprise
+
+paths:
+  /:
+    get:
+      tags: [CoreMetadata]
+      summary: Service root
+      operationId: getRoot
+      x-govai-surface: internal
+      security: []
+      responses:
+        "200":
+          description: Service identity (not required for integrations).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RootResponse"
+
+  /health:
+    get:
+      tags: [CoreMetadata]
+      summary: Liveness
+      operationId: getHealth
+      x-govai-surface: stable
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /status:
+    get:
+      tags: [CoreMetadata]
+      summary: Policy version and deployment tier
+      operationId: getStatus
+      x-govai-surface: stable
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+  /evidence:
+    post:
+      tags: [CoreLedger]
+      summary: Ingest one evidence event
+      operationId: postEvidence
+      x-govai-surface: stable
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceEvent"
+      responses:
+        "200":
+          description: Appended (shape depends on metering mode).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceIngestSuccess"
+        "400":
+          description: Validation / policy / tenant error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceIngestError"
+        "401":
+          description: Unauthorized (API keys enforced)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleOkFalse"
+        "403":
+          description: Forbidden (e.g. team not configured for key)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceIngestError"
+        "409":
+          description: Duplicate event_id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceIngestError"
+        "429":
+          description: Quota / metering limits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceIngestError"
+        "500":
+          description: Append or metering persistence failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceIngestError"
+
+  /usage:
+    get:
+      tags: [CoreLedger]
+      summary: Usage and limits
+      operationId: getUsage
+      x-govai-surface: stable
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-GovAI-Project
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success (no top-level `ok` field in current implementation).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/UsageMeteringOff"
+                  - $ref: "#/components/schemas/UsageMeteringOn"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleOkFalse"
+        "403":
+          description: Team not configured for API key (metering on)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleOkFalse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageError"
+
+  /verify:
+    get:
+      tags: [CoreLedger]
+      summary: Verify full append-only hash chain
+      operationId: getVerify
+      x-govai-surface: stable
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Valid or invalid chain (both use HTTP 200; inspect `ok`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyResponse"
+        "400":
+          description: Bad request (e.g. tenant resolution)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyBadRequest"
+
+  /verify-log:
+    get:
+      tags: [CoreLedger]
+      summary: Compact chain check (plaintext JSON body)
+      operationId: getVerifyLog
+      x-govai-surface: stable
+      security: []
+      responses:
+        "200":
+          description: Chain OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyLogOk"
+        "400":
+          description: Tenant error or chain failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyLogError"
+
+  /bundle:
+    get:
+      tags: [CoreLedger]
+      summary: Bundle document for a run
+      operationId: getBundle
+      x-govai-surface: stable
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: run_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success bundle or logical error (`ok:false` still HTTP 200).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BundleDocumentSuccess"
+                  - $ref: "#/components/schemas/BundleDocumentError"
+
+  /bundle-hash:
+    get:
+      tags: [CoreLedger]
+      summary: Canonical bundle SHA-256
+      operationId: getBundleHash
+      x-govai-surface: stable
+      security: []
+      parameters:
+        - name: run_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Digest or logical error (`ok:false`, HTTP 200).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/BundleHashSuccess"
+                  - $ref: "#/components/schemas/BundleDocumentError"
+
+  /compliance-summary:
+    get:
+      tags: [CoreLedger]
+      summary: Compliance summary for a run
+      operationId: getComplianceSummary
+      x-govai-surface: stable
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: run_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Summary (HTTP 200 for both `ok` true and false).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ComplianceSummarySuccess"
+                  - $ref: "#/components/schemas/ComplianceSummaryError"
+        "400":
+          description: Tenant resolution failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceSummaryBadRequest"
+
+  /api/export/{run_id}:
+    get:
+      tags: [CoreLedger]
+      summary: Machine-readable audit export
+      operationId: getApiExportRunId
+      x-govai-surface: stable
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Export document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditExportSuccess"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditExportError"
+        "404":
+          description: Run has no events in ledger
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditExportError"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditExportError"
+
+  /api/me:
+    get:
+      tags: [Enterprise]
+      summary: Current user and teams
+      operationId: getApiMe
+      x-govai-surface: stable
+      security:
+        - supabaseJWT: []
+      parameters:
+        - name: x-govai-team-id
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+        "401":
+          description: Unauthorized
+        "500":
+          description: Configuration or database error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseError"
+
+  /api/assessments:
+    post:
+      tags: [Enterprise]
+      summary: Create assessment
+      operationId: postApiAssessments
+      x-govai-surface: stable
+      security:
+        - supabaseJWT: []
+      parameters:
+        - name: x-govai-team-id
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAssessmentBody"
+      responses:
+        "200":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssessmentOut"
+        "400":
+          description: Invalid team header
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseError"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseForbidden"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseError"
+
+  /api/compliance-workflow:
+    get:
+      tags: [Enterprise]
+      summary: List workflow rows
+      operationId: getApiComplianceWorkflow
+      x-govai-surface: stable
+      security:
+        - supabaseJWT: []
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: x-govai-team-id
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowListResponse"
+        "403":
+          description: Insufficient permission
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseForbidden"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseError"
+    post:
+      tags: [Enterprise]
+      summary: Register run in workflow queue
+      operationId: postApiComplianceWorkflow
+      x-govai-surface: stable
+      security:
+        - supabaseJWT: []
+      parameters:
+        - name: x-govai-team-id
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterWorkflowBody"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowSingleResponse"
+        "400":
+          description: Missing run_id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseError"
+        "403":
+          description: Insufficient permission
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseForbidden"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseError"
+
+  /api/compliance-workflow/{run_id}:
+    get:
+      tags: [Enterprise]
+      summary: Get one workflow row
+      operationId: getApiComplianceWorkflowRunId
+      x-govai-surface: stable
+      security:
+        - supabaseJWT: []
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: x-govai-team-id
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowSingleResponse"
+        "403":
+          description: Insufficient permission
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseForbidden"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseError"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseError"
+
+  /api/compliance-workflow/{run_id}/review:
+    post:
+      tags: [Enterprise]
+      summary: Review decision (pending_review → approved|rejected)
+      operationId: postApiComplianceWorkflowRunIdReview
+      x-govai-surface: stable
+      security:
+        - supabaseJWT: []
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: x-govai-team-id
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewDecisionBody"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowSingleResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseError"
+        "403":
+          description: Insufficient permission
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseForbidden"
+        "409":
+          description: Invalid state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseError"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseError"
+
+  /api/compliance-workflow/{run_id}/promotion:
+    post:
+      tags: [Enterprise]
+      summary: Promotion decision (approved → promotion_allowed|promotion_blocked)
+      operationId: postApiComplianceWorkflowRunIdPromotion
+      x-govai-surface: stable
+      security:
+        - supabaseJWT: []
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: x-govai-team-id
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PromotionDecisionBody"
+      responses:
+        "200":
+          description: OK — returns `ok` and `workflow` only (no `decision_authority` field).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromotionResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseError"
+        "403":
+          description: Insufficient permission
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseForbidden"
+        "409":
+          description: Invalid state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseError"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnterpriseError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Raw secret from `GOVAI_API_KEYS` when enforcement is enabled; optional when unset.
+    supabaseJWT:
+      type: http
+      scheme: bearer
+      description: Supabase-issued JWT.
+
+  schemas:
+    RootResponse:
+      type: object
+      required: [ok, service, version]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        service:
+          type: string
+          example: govai
+        version:
+          type: string
+          description: Rust crate / binary version string
+
+    HealthResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+
+    StatusResponse:
+      type: object
+      required: [ok, policy_version, environment]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        policy_version:
+          type: string
+        environment:
+          type: string
+          description: "`dev` | `staging` | `prod`"
+
+    EvidenceEvent:
+      type: object
+      required: [event_id, event_type, ts_utc, actor, system, run_id, payload]
+      properties:
+        event_id:
+          type: string
+        event_type:
+          type: string
+        ts_utc:
+          type: string
+        actor:
+          type: string
+        system:
+          type: string
+        run_id:
+          type: string
+        environment:
+          type: string
+          description: Optional on ingest; server may stamp/replace per deployment tier.
+        payload:
+          description: Event-specific JSON object (`rust/src/policy.rs` enforced types).
+          type: object
+          additionalProperties: true
+
+    EvidenceIngestSuccess:
+      type: object
+      required: [ok, record_hash, policy_version, environment]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        record_hash:
+          type: string
+        policy_version:
+          type: string
+        environment:
+          type: string
+        team_id:
+          type: string
+          description: Present when `GOVAI_METERING=on`.
+        plan:
+          type: string
+          description: "`free` | `team` | `growth` | `enterprise` when metering on."
+        year_month:
+          type: string
+          description: "`YYYY-MM` when metering on."
+        run:
+          type: object
+          description: Run counters when metering on.
+          additionalProperties: true
+        warnings:
+          type: array
+          items: {}
+          description: Advisory strings when metering on.
+
+    EvidenceIngestError:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+        policy_version:
+          type: string
+        details:
+          type: string
+        used:
+          type: integer
+        limit:
+          type: integer
+        year_month:
+          type: string
+        run_id:
+          type: string
+        event_count:
+          type: integer
+
+    SimpleOkFalse:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+        policy_version:
+          type: string
+
+    UsageMeteringOff:
+      type: object
+      required: [metering, tenant_id, period_start, evidence_events_count, limit]
+      properties:
+        metering:
+          type: string
+          enum: ["off"]
+        tenant_id:
+          type: string
+        period_start:
+          type: string
+        evidence_events_count:
+          type: integer
+        limit:
+          type: integer
+
+    UsageMeteringOn:
+      type: object
+      required: [metering, team_id, year_month, plan, new_run_ids, evidence_events, limits]
+      properties:
+        metering:
+          type: string
+          enum: ["on"]
+        team_id:
+          type: string
+        year_month:
+          type: string
+        plan:
+          type: string
+        new_run_ids:
+          type: integer
+        evidence_events:
+          type: integer
+        limits:
+          type: object
+          required: [max_runs_per_month, max_events_per_month, max_events_per_run]
+          properties:
+            max_runs_per_month:
+              type: integer
+            max_events_per_month:
+              type: integer
+            max_events_per_run:
+              type: integer
+
+    UsageError:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+
+    VerifyResponse:
+      type: object
+      required: [ok, policy_version]
+      properties:
+        ok:
+          type: boolean
+        policy_version:
+          type: string
+        error:
+          type: string
+          description: Present when `ok` is false.
+
+    VerifyBadRequest:
+      type: object
+      required: [ok, error, policy_version]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+        policy_version:
+          type: string
+
+    VerifyLogOk:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+
+    VerifyLogError:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+
+    BundleDocumentSuccess:
+      type: object
+      required:
+        - ok
+        - run_id
+        - policy_version
+        - schema_version
+        - log_path
+        - identifiers
+        - events
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        run_id:
+          type: string
+        policy_version:
+          type: string
+        schema_version:
+          type: string
+          enum: [aigov.bundle.v1]
+        log_path:
+          type: string
+        model_artifact_path:
+          nullable: true
+        identifiers:
+          type: object
+          additionalProperties: true
+        dataset_governance:
+          nullable: true
+        model_version:
+          nullable: true
+        evaluation:
+          nullable: true
+        risk_register:
+          nullable: true
+        human_approval:
+          nullable: true
+        promotion:
+          nullable: true
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvidenceEvent"
+
+    BundleDocumentError:
+      type: object
+      required: [ok, error, policy_version]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+        policy_version:
+          type: string
+
+    BundleHashSuccess:
+      type: object
+      required: [ok, run_id, policy_version, bundle_sha256]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        run_id:
+          type: string
+        policy_version:
+          type: string
+        bundle_sha256:
+          type: string
+
+    ComplianceSummarySuccess:
+      type: object
+      required:
+        - ok
+        - schema_version
+        - policy_version
+        - run_id
+        - verdict
+        - current_state
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        schema_version:
+          type: string
+          enum: [aigov.compliance_summary.v2]
+        policy_version:
+          type: string
+        run_id:
+          type: string
+        verdict:
+          type: string
+          enum: [VALID, INVALID, BLOCKED]
+        current_state:
+          $ref: "#/components/schemas/ComplianceCurrentState"
+
+    ComplianceCurrentState:
+      type: object
+      description: Projection `ComplianceCurrentState` (`rust/src/projection.rs`). `dataset` and `risks` may be null.
+      required: [schema_version, run_id, identifiers, system, model, approval, evidence]
+      properties:
+        schema_version:
+          type: string
+          example: aigov.compliance_current_state.v2
+        run_id:
+          type: string
+        identifiers:
+          type: object
+          additionalProperties: true
+        system:
+          type: object
+          additionalProperties: true
+        dataset:
+          nullable: true
+          description: Present or null per projection.
+        model:
+          type: object
+          additionalProperties: true
+        risks:
+          nullable: true
+          description: Present or null when no risk events.
+        approval:
+          type: object
+          additionalProperties: true
+        evidence:
+          type: object
+          additionalProperties: true
+
+    ComplianceSummaryError:
+      type: object
+      required: [ok, schema_version, error, policy_version, run_id]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        schema_version:
+          type: string
+          enum: [aigov.compliance_summary.v2]
+        error:
+          type: string
+        policy_version:
+          type: string
+        run_id:
+          type: string
+
+    ComplianceSummaryBadRequest:
+      type: object
+      required: [ok, error, policy_version, run_id]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+        policy_version:
+          type: string
+        run_id:
+          type: string
+
+    ChainLogEntry:
+      type: object
+      required: [event_id, ts_utc, event_type, prev_hash, record_hash]
+      properties:
+        event_id:
+          type: string
+        ts_utc:
+          type: string
+        event_type:
+          type: string
+        prev_hash:
+          nullable: true
+        record_hash:
+          type: string
+
+    AuditExportSuccess:
+      type: object
+      required:
+        - ok
+        - schema_version
+        - policy_version
+        - environment
+        - exported_at_utc
+        - run
+        - evidence_hashes
+        - decision
+        - timestamps
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        schema_version:
+          type: string
+          enum: [aigov.audit_export.v1]
+        policy_version:
+          type: string
+        environment:
+          type: string
+        exported_at_utc:
+          type: string
+        run:
+          type: object
+          required: [run_id, policy_version, log_path]
+          properties:
+            run_id:
+              type: string
+            policy_version:
+              type: string
+            log_path:
+              type: string
+            model_artifact_path: {}
+            identifiers: {}
+        evidence_hashes:
+          type: object
+          required: [bundle_sha256, chain_head_record_sha256, log_chain]
+          properties:
+            bundle_sha256:
+              type: string
+            chain_head_record_sha256:
+              nullable: true
+            log_chain:
+              type: array
+              items:
+                $ref: "#/components/schemas/ChainLogEntry"
+        decision:
+          type: object
+          required: [human_approval, promotion, evaluation_passed]
+          properties:
+            human_approval: {}
+            promotion: {}
+            evaluation_passed:
+              nullable: true
+        timestamps:
+          type: object
+          required:
+            - first_event_ts_utc
+            - last_event_ts_utc
+            - human_approval_ts_utc
+            - promotion_ts_utc
+          properties:
+            first_event_ts_utc:
+              nullable: true
+            last_event_ts_utc:
+              nullable: true
+            human_approval_ts_utc:
+              nullable: true
+            promotion_ts_utc:
+              nullable: true
+
+    AuditExportError:
+      type: object
+      required: [ok, error, policy_version]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+        policy_version:
+          type: string
+        run_id:
+          type: string
+
+    ProductPermissions:
+      type: object
+      required:
+        - review_queue_view
+        - artifact_view
+        - decision_submit
+        - promotion_action
+        - admin_override
+      properties:
+        review_queue_view:
+          type: boolean
+        artifact_view:
+          type: boolean
+        decision_submit:
+          type: boolean
+        promotion_action:
+          type: boolean
+        admin_override:
+          type: boolean
+
+    TeamOut:
+      type: object
+      required: [id, name, effective_role, role, permissions]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        effective_role:
+          type: string
+        role:
+          type: string
+        permissions:
+          $ref: "#/components/schemas/ProductPermissions"
+
+    MeResponse:
+      type: object
+      required: [user_id, teams]
+      properties:
+        user_id:
+          type: string
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamOut"
+
+    CreateAssessmentBody:
+      type: object
+      required: [system_name, intended_purpose, risk_class]
+      properties:
+        system_name:
+          type: string
+        intended_purpose:
+          type: string
+        risk_class:
+          type: string
+
+    AssessmentOut:
+      type: object
+      required: [id, team_id, created_by, created_at, status, system_name, intended_purpose, risk_class]
+      properties:
+        id:
+          type: string
+        team_id:
+          type: string
+        created_by:
+          type: string
+        created_at:
+          type: string
+        status:
+          type: string
+        system_name:
+          nullable: true
+        intended_purpose:
+          nullable: true
+        risk_class:
+          nullable: true
+
+    DecisionAuthority:
+      type: object
+      required: [primary, pipeline, workflow_role, note]
+      properties:
+        primary:
+          type: string
+        pipeline:
+          type: array
+          items:
+            type: string
+        workflow_role:
+          type: string
+        note:
+          type: string
+
+    ComplianceWorkflowOut:
+      type: object
+      required: [id, team_id, run_id, state, created_at, updated_at, created_by]
+      properties:
+        id:
+          type: string
+        team_id:
+          type: string
+        run_id:
+          type: string
+        state:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+        created_by:
+          type: string
+        updated_by:
+          type: string
+          nullable: true
+          description: Omitted when null (serde default).
+
+    WorkflowListResponse:
+      type: object
+      required: [ok, items, decision_authority]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComplianceWorkflowOut"
+        decision_authority:
+          $ref: "#/components/schemas/DecisionAuthority"
+
+    WorkflowSingleResponse:
+      type: object
+      required: [ok, workflow, decision_authority]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        workflow:
+          $ref: "#/components/schemas/ComplianceWorkflowOut"
+        decision_authority:
+          $ref: "#/components/schemas/DecisionAuthority"
+
+    PromotionResponse:
+      type: object
+      required: [ok, workflow]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        workflow:
+          $ref: "#/components/schemas/ComplianceWorkflowOut"
+
+    RegisterWorkflowBody:
+      type: object
+      required: [run_id]
+      properties:
+        run_id:
+          type: string
+
+    ReviewDecisionBody:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [approve, reject]
+
+    PromotionDecisionBody:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [allow, block]
+
+    EnterpriseError:
+      type: object
+      properties:
+        error:
+          type: string
+        details:
+          type: string
+        message:
+          type: string
+        expected:
+          type: array
+          items:
+            type: string
+
+    EnterpriseForbidden:
+      type: object
+      properties:
+        error:
+          type: string
+        reason:
+          type: string
+        required_permission:
+          type: string

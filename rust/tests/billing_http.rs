@@ -17,6 +17,7 @@ use aigov_audit::govai_api;
 use aigov_audit::govai_environment::{policy_version_for, GovaiEnvironment};
 use aigov_audit::metering::{GovaiPlan, MeteringConfig};
 use aigov_audit::policy_config::ResolvedPolicyConfig;
+use aigov_audit::project;
 use aigov_audit::schema::EvidenceEvent;
 
 static CWD_LOCK: Mutex<()> = Mutex::new(());
@@ -463,7 +464,8 @@ async fn ingest_policy_violation_includes_code_and_message() {
     assert!(v["message"].as_str().unwrap_or("").contains("model_trained"));
 
     // Decision is persisted into the same audit log (replayable / regulator-readable).
-    let decisions = read_policy_decisions("audit_log.jsonl", &run_id);
+    let log_path = project::resolve_ledger_path("audit_log.jsonl", "default");
+    let decisions = read_policy_decisions(&log_path, &run_id);
     assert!(!decisions.is_empty(), "expected policy_decision records");
     let last = decisions.last().cloned().unwrap_or(Value::Null);
     assert_eq!(last["decision"], "rejected");
@@ -512,7 +514,8 @@ async fn allowed_ingest_emits_policy_decision_record() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 
-    let decisions = read_policy_decisions("audit_log.jsonl", &run_id);
+    let log_path = project::resolve_ledger_path("audit_log.jsonl", "default");
+    let decisions = read_policy_decisions(&log_path, &run_id);
     assert!(!decisions.is_empty(), "expected policy_decision records");
     let last = decisions.last().cloned().unwrap_or(Value::Null);
     assert_eq!(last["decision"], "allowed");
