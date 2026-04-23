@@ -1,0 +1,66 @@
+name: govai-ci
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  govai-verify:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install GovAI
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ./python
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build audit service
+        run: cd rust && cargo build
+
+      - name: Start audit service
+        run: make audit_bg
+
+      - name: Wait for audit /status
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 2 "http://127.0.0.1:8088/status"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "audit /status not reachable"
+          exit 1
+
+      - name: Run blocked deployment example (should fail)
+        run: |
+          chmod +x examples/blocked_deployment.sh
+          bash examples/blocked_deployment.sh

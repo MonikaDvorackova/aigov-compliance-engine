@@ -16,6 +16,11 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 jsonwebtoken = "9"
 once_cell = "1"
 
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "uuid", "chrono", "tls-rustls"] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "uuid", "chrono", "tls-rustls", "migrate"] }
 sha2 = "0.10"
 hex = "0.4"
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+tempfile = "3"

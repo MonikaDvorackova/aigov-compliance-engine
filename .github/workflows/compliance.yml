@@ -42,20 +42,28 @@ jobs:
           set -euo pipefail
 
           if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
-            BASE_SHA="${{ github.event.pull_request.base.sha }}"
-            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-          else
-            BASE_SHA="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+            git fetch origin "${{ github.base_ref }}"
+            BASE_SHA="$(git merge-base HEAD "origin/${{ github.base_ref }}")"
             HEAD_SHA="$(git rev-parse HEAD)"
+            REPORTS_CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+            CHANGED_FILES="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" || true)"
+          else
+            HEAD_SHA="$(git rev-parse HEAD)"
+            if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+              BASE_SHA="$(git rev-parse HEAD^)"
+              REPORTS_CHANGED="$(git diff --name-only HEAD^ HEAD -- 'docs/reports/**' || true)"
+              CHANGED_FILES="$(git diff --name-only HEAD^ HEAD || true)"
+            else
+              BASE_SHA="${HEAD_SHA}"
+              REPORTS_CHANGED=""
+              CHANGED_FILES=""
+            fi
           fi
 
           echo "base_sha=${BASE_SHA}" >> "${GITHUB_OUTPUT}"
           echo "head_sha=${HEAD_SHA}" >> "${GITHUB_OUTPUT}"
 
-          REPORTS_CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
-          CHANGED_FILES="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" || true)"
-
-          CORE_CHANGED="$(printf '%s\n' "${CHANGED_FILES}" | grep -E '^(rust/|python/aigov_py/(evaluate|approve|promote|report|evidence_pack|pipeline_train)\.py$|docs/strong-core-contract-note\.md$|ARCHITECTURE\.md$|Makefile$)' || true)"
+          CORE_CHANGED="$(printf '%s\n' "${CHANGED_FILES}" | grep -E '^(rust/|python/govai/|python/aigov_py/(evaluate|approve|promote|report|evidence_pack|pipeline_train)\.py$|docs/strong-core-contract-note\.md$|ARCHITECTURE\.md$|Makefile$)' || true)"
 
           if [ -n "${REPORTS_CHANGED}" ]; then
             echo "reports_changed=true" >> "${GITHUB_OUTPUT}"
@@ -156,6 +164,8 @@ jobs:
     name: evidence_pack
     runs-on: ubuntu-latest
     needs: [changes, make_verify]
+    outputs:
+      run_id: ${{ steps.govai_emit_run_id.outputs.run_id }}
     env:
       AUDIT_URL: http://127.0.0.1:8088
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -201,6 +211,35 @@ jobs:
           tail -n 300 "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" || true
           exit 1
 
+      - id: govai_emit_run_id
+        if: success()
+        run: |
+          set -euo pipefail
+          OUT="${GITHUB_OUTPUT:?}"
+          if [ "${REPORTS_CHANGED_FLAG}" != "true" ]; then
+            echo "run_id=" >> "${OUT}"
+            exit 0
+          fi
+          REPORTS_CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
+          SORTED_UNIQ="$(
+            printf '%s\n' "${REPORTS_CHANGED}" |
+              awk 'NF' |
+              while IFS= read -r report; do basename "${report}" .md; done |
+              sort -u
+          )"
+          c="$(printf '%s\n' "${SORTED_UNIQ}" | awk 'NF' | wc -l | tr -d '[:space:]')"
+          if [ "${c}" -eq 0 ]; then
+            echo "run_id=" >> "${OUT}"
+            exit 0
+          fi
+          if [ "${c}" -gt 1 ]; then
+            joined="$(printf '%s\n' "${SORTED_UNIQ}" | awk 'NF' | paste -sd ',' - | sed 's/,/, /g')"
+            echo "::error::GovAI compliance gate: ${c} distinct report run IDs in one change set (${joined}). Split into one docs/reports/*.md change per PR (or one basename) so a single run_id is validated."
+            exit 1
+          fi
+          only="$(printf '%s\n' "${SORTED_UNIQ}" | awk 'NF{print; exit}')"
+          echo "run_id=${only}" >> "${OUT}"
+
       - name: Build evidence packs
         if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
         run: |
@@ -227,6 +266,24 @@ jobs:
             cp "docs/packs/${RUN_ID}.zip" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
           done
 
+      # `govai check` calls GET /compliance-summary on the audit API. The local audit
+      # started above only exists on this runner; a separate job cannot reach it without
+      # a repository Variable. Use the same AUDIT_URL as evidence_pack / Makefile.
+      - name: GovAI check (local audit, must be VALID)
+        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
+        working-directory: python
+        env:
+          GOVAI_AUDIT_BASE_URL: http://127.0.0.1:8088
+          RUN_ID: ${{ steps.govai_emit_run_id.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RUN_ID:-}" ]; then
+            echo "Skipping GovAI check: empty run_id"
+            exit 0
+          fi
+          . .venv/bin/activate
+          govai check --run-id "${RUN_ID}"
+
       - name: Ensure artifacts exist
         if: always()
         run: |
@@ -246,6 +303,47 @@ jobs:
             ${{ github.workspace }}/.aigov_ci_artifacts/*.zip
           if-no-files-found: error
           include-hidden-files: true
+
+  govai-compliance-gate:
+    name: govai-compliance-gate
+    runs-on: ubuntu-latest
+    needs: [evidence_pack]
+    # Local audit + `govai check` already run in job `evidence_pack`. This job is only
+    # for an optional external audit base URL (repository Variable).
+    if: ${{ needs.evidence_pack.result == 'success' && needs.evidence_pack.outputs.run_id != '' && vars.GOVAI_AUDIT_BASE_URL != '' }}
+    env:
+      GOVAI_AUDIT_BASE_URL: ${{ vars.GOVAI_AUDIT_BASE_URL }}
+      GOVAI_API_KEY: ${{ secrets.GOVAI_API_KEY }}
+      RUN_ID: ${{ needs.evidence_pack.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install GovAI CLI
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [ -d python ]; then
+            pip install -e ./python
+          else
+            pip install aigov-py
+          fi
+
+      - name: GovAI check (must be VALID)
+        run: |
+          set -euo pipefail
+          if [ -z "${GOVAI_AUDIT_BASE_URL:-}" ]; then
+            echo "Missing GOVAI_AUDIT_BASE_URL: configure repository Variable GOVAI_AUDIT_BASE_URL."
+            exit 1
+          fi
+          if [ -z "${RUN_ID:-}" ]; then
+            echo "Missing RUN_ID: evidence_pack did not emit run_id (empty producer output)."
+            exit 1
+          fi
+          govai check --run-id "${RUN_ID}"
 
   upload_evidence_packs:
     name: upload_evidence_packs

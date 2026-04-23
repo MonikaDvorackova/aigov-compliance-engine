@@ -1,0 +1,93 @@
+# GovAI CLI — compliance gate for merge / deploy.
+# Fails unless `govai check` exits 0 (outcome VALID only).
+#
+# Repository Variables (Settings → Secrets and variables → Actions → Variables):
+#   GOVAI_AUDIT_BASE_URL — audit / ledger base URL (required for this workflow to run;
+#     if unset, the job is skipped so forks/CI without a deployed audit still pass)
+#   RUN_ID — GovAI run UUID (required unless overridden; see Resolve RUN_ID step)
+#
+# Optional Secret:
+#   GOVAI_API_KEY — Bearer token for the audit API
+#
+# Dynamic RUN_ID from another job in this workflow:
+#   1. Add `needs: [your-job]` to job `govai-compliance-gate`.
+#   2. Set job env `UPSTREAM_RUN_ID: ${{ needs.your-job.outputs.run_id }}`
+#      (replace `your-job` / output name with your workflow).
+
+name: govai-check
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Optional GovAI run UUID (non-empty overrides repository variable RUN_ID)"
+        required: false
+        type: string
+        default: ""
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  govai-compliance-gate:
+    if: ${{ vars.GOVAI_AUDIT_BASE_URL != '' }}
+    runs-on: ubuntu-latest
+    env:
+      GOVAI_AUDIT_BASE_URL: ${{ vars.GOVAI_AUDIT_BASE_URL }}
+      GOVAI_API_KEY: ${{ secrets.GOVAI_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install GovAI CLI
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [ -d python ]; then
+            pip install -e ./python
+          else
+            pip install aigov-py
+          fi
+
+      - name: Resolve RUN_ID
+        id: run
+        env:
+          DISPATCH_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_id || '' }}
+          VAR_RUN_ID: ${{ vars.RUN_ID }}
+        run: |
+          set -euo pipefail
+          UPSTREAM="${UPSTREAM_RUN_ID:-}"
+          EFFECTIVE=""
+          if [ -n "${UPSTREAM}" ]; then
+            EFFECTIVE="${UPSTREAM}"
+          elif [ -n "${DISPATCH_RUN_ID}" ]; then
+            EFFECTIVE="${DISPATCH_RUN_ID}"
+          elif [ -n "${VAR_RUN_ID}" ]; then
+            EFFECTIVE="${VAR_RUN_ID}"
+          fi
+          {
+            echo "effective<<__GOVAI_RUN_ID__"
+            printf '%s\n' "${EFFECTIVE}"
+            echo "__GOVAI_RUN_ID__"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: GovAI check (must be VALID)
+        env:
+          RUN_ID: ${{ steps.run.outputs.effective }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GOVAI_AUDIT_BASE_URL:-}" ]; then
+            echo "Missing GOVAI_AUDIT_BASE_URL: add repository Variable GOVAI_AUDIT_BASE_URL."
+            exit 1
+          fi
+          if [ -z "${RUN_ID:-}" ]; then
+            echo "Missing RUN_ID: set repository Variable RUN_ID, use workflow_dispatch input run_id, or set job env UPSTREAM_RUN_ID from a prior job output (see workflow comments)."
+            exit 1
+          fi
+          govai check --run-id "${RUN_ID}"

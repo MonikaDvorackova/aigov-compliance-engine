@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from importlib.metadata import version
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -16,14 +17,38 @@ def test_help_does_not_crash() -> None:
     assert ei.value.code == 0
 
 
+def test_version_matches_metadata(capsys: pytest.CaptureFixture[str]) -> None:
+    expected = version("aigov-py")
+    code = main(["--version"])
+    assert code == cli_exit.EX_OK
+    assert capsys.readouterr().out.strip() == expected
+
+
+def test_short_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    expected = version("aigov-py")
+    code = main(["-V"])
+    assert code == cli_exit.EX_OK
+    assert capsys.readouterr().out.strip() == expected
+
+
+def test_no_subcommand_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
+    code = main([])
+    assert code == cli_exit.EX_OK
+    out = capsys.readouterr().out
+    assert "govai" in out.lower()
+
+
 def test_subcommand_help() -> None:
     for sub in (
         "init",
         "verify",
         "fetch-bundle",
         "compliance-summary",
+        "check",
         "report",
         "export-bundle",
+        "export-run",
+        "usage",
         "create-assessment",
     ):
         with pytest.raises(SystemExit) as ei:
@@ -106,3 +131,59 @@ def test_missing_run_id_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RUN_ID", raising=False)
     code = main(["compliance-summary"])
     assert code == cli_exit.EX_INVALID
+
+
+def _valid_check_summary() -> dict:
+    return {
+        "ok": True,
+        "verdict": "VALID",
+    }
+
+
+def test_check_exits_0_on_valid(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("aigov_py.cli.get_compliance_summary", return_value=_valid_check_summary()) as m:
+        code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
+    assert code == cli_exit.EX_OK
+    m.assert_called_once()
+    assert m.call_args[0][1] == "r1"
+    assert capsys.readouterr().out.strip() == "VALID"
+
+
+def test_check_exits_invalid_on_invalid(capsys: pytest.CaptureFixture[str]) -> None:
+    s = {"ok": True, "verdict": "INVALID"}
+    with patch("aigov_py.cli.get_compliance_summary", return_value=s):
+        code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
+    assert code == cli_exit.EX_INVALID
+    assert capsys.readouterr().out.strip() == "INVALID"
+
+
+def test_check_exits_invalid_no_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RUN_ID", raising=False)
+    code = main(["--audit-base-url", "http://audit.test", "check"])
+    assert code == cli_exit.EX_INVALID
+
+
+def test_check_run_id_flag_overrides_positional(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("aigov_py.cli.get_compliance_summary", return_value=_valid_check_summary()) as m:
+        code = main(["--audit-base-url", "http://audit.test", "check", "ignored", "--run-id", "r2"])
+    assert code == cli_exit.EX_OK
+    assert m.call_args[0][1] == "r2"
+    assert capsys.readouterr().out.strip() == "VALID"
+
+
+def test_check_blocked_through_client(capsys: pytest.CaptureFixture[str]) -> None:
+    """Missing verdict must fail (EX_ERR)."""
+    with patch("aigov_py.cli.GovAIClient") as client_cls:
+        inst = MagicMock()
+        client_cls.return_value = inst
+        inst.request_json.return_value = {"ok": True}
+        code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
+    assert code == cli_exit.EX_ERR
+    assert capsys.readouterr().out.strip() == ""
+
+
+def test_check_exits_err_when_verdict_missing(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("aigov_py.cli.get_compliance_summary", return_value={"ok": True}):
+        code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
+    assert code == cli_exit.EX_ERR
+    assert capsys.readouterr().out.strip() == ""

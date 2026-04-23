@@ -43,3 +43,4 @@ docs/packs/
 .aigov_ci_audit.log
 python/artifacts/
 rust/audit_log*.jsonl
+.aigov_audit.pid

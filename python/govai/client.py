@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 
 import requests
 
@@ -41,13 +41,22 @@ class GovAIClient:
     ``base_url`` should be the origin only (e.g. ``http://127.0.0.1:8088``); paths are appended as documented.
     """
 
-    def __init__(self, base_url: str, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: Optional[str] = None,
+        *,
+        default_project: Optional[str] = None,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
+        self._default_project = (default_project or "").strip() or None
         self._session = requests.Session()
         self._session.headers.setdefault("Accept", "application/json")
         if api_key:
             self._session.headers["Authorization"] = f"Bearer {api_key}"
+        if self._default_project:
+            self._session.headers["X-GovAI-Project"] = self._default_project
 
     @property
     def base_url(self) -> str:
@@ -65,6 +74,7 @@ class GovAIClient:
         *,
         params: Mapping[str, str | int] | None = None,
         json_body: Any = None,
+        headers: Mapping[str, str] | None = None,
         timeout: float = 30.0,
         raise_on_body_ok_false: bool = False,
     ) -> Any:
@@ -81,6 +91,8 @@ class GovAIClient:
             kwargs["params"] = dict(params)
         if json_body is not None:
             kwargs["json"] = json_body
+        if headers is not None:
+            kwargs["headers"] = dict(headers)
 
         try:
             response = self._session.request(method.upper(), url, **kwargs)
@@ -140,11 +152,21 @@ class GovAIClient:
         return get_bundle_hash(self, run_id)
 
     def get_compliance_summary(self, run_id: str) -> dict[str, Any]:
-        from .compliance import get_compliance_summary
+        from .api import get_compliance_summary
 
-        return get_compliance_summary(self, run_id)
+        return get_compliance_summary(self, run_id, timeout=30.0)
 
     def verify_chain(self) -> dict[str, Any]:
         from .verify import verify_chain
 
         return verify_chain(self)
+
+    def get_usage(self, *, project: str | None = None) -> dict[str, Any]:
+        from .usage import get_usage
+
+        return get_usage(self, project=project)
+
+    def export_run(self, run_id: str, *, project: str | None = None) -> dict[str, Any]:
+        from .export import export_run
+
+        return export_run(self, run_id, project=project)

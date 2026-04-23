@@ -4,6 +4,14 @@ use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 
+/// Integration / manual tests only: when `AIGOV_TEST_APPEND_FAIL=1`, [`append_record`] errors before I/O.
+fn append_fail_test_hook_active() -> bool {
+    matches!(
+        std::env::var("AIGOV_TEST_APPEND_FAIL").as_deref(),
+        Ok("1") | Ok("true")
+    )
+}
+
 const GENESIS: &str = "GENESIS";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +60,9 @@ fn read_last_hash(log_path: &str) -> Result<String, String> {
 }
 
 pub fn append_record(log_path: &str, event: EvidenceEvent) -> Result<StoredRecord, String> {
+    if append_fail_test_hook_active() {
+        return Err("test_simulated_append_failure".to_string());
+    }
     let prev_hash = read_last_hash(log_path)?;
     let event_json = serde_json::to_string(&event).map_err(|e| e.to_string())?;
     let record_hash = compute_record_hash(&prev_hash, &event_json);
@@ -111,4 +122,34 @@ pub fn verify_chain(log_path: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// All append-only log records for a `run_id`, in file order (chain order).
+pub fn collect_stored_records_for_run(log_path: &str, run_id: &str) -> Result<Vec<StoredRecord>, String> {
+    let f = File::open(log_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            format!("log not found: {}", log_path)
+        } else {
+            e.to_string()
+        }
+    })?;
+
+    let reader = BufReader::new(f);
+    let mut out: Vec<StoredRecord> = Vec::new();
+
+    for line in reader.lines() {
+        let l = line.map_err(|e| e.to_string())?;
+        let t = l.trim();
+        if t.is_empty() {
+            continue;
+        }
+
+        let rec: StoredRecord = serde_json::from_str(t).map_err(|e| e.to_string())?;
+        let ev: EvidenceEvent = serde_json::from_str(&rec.event_json).map_err(|e| e.to_string())?;
+        if ev.run_id == run_id {
+            out.push(rec);
+        }
+    }
+
+    Ok(out)
 }

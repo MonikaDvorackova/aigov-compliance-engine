@@ -9,6 +9,7 @@ dependencies = [
  "axum",
  "chrono",
  "hex",
+ "http-body-util",
  "jsonwebtoken",
  "once_cell",
  "reqwest",
@@ -16,7 +17,9 @@ dependencies = [
  "serde_json",
  "sha2",
  "sqlx",
+ "tempfile",
  "tokio",
+ "tower",
  "uuid",
 ]
 
