@@ -59,3 +59,30 @@ The compliance workflow now runs `govai check` against the local audit service i
 
 - `cargo test --manifest-path rust/Cargo.toml`
 - Rust tests passed, including route level tenant isolation coverage.
+
+## Evaluation gate
+
+The change was evaluated against its intended safety and compatibility goals.
+
+Checks performed:
+- Tenant ledger isolation is enforced per request.
+- Tenant A cannot read Tenant B data through bundle, compliance summary, or export routes.
+- Ingest writes only to the resolved tenant ledger.
+- Bearer token fallback resolves to a deterministic tenant fingerprint.
+- Development mode without tenant context resolves to the default tenant ledger.
+- Staging and production reject missing tenant context for ledger touching routes.
+
+Result: passed.
+
+## Human approval gate
+
+This change requires human approval because it modifies core audit ledger behavior and introduces a non dev tenant context requirement.
+
+Approval checklist:
+- Tenant isolation model reviewed.
+- Compatibility impact reviewed.
+- Intentional behavior change documented.
+- Rust test suite passed.
+- CI workflow impact documented.
+
+Approval status: pending reviewer approval through the pull request review process.
