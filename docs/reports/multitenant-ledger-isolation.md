@@ -2,7 +2,7 @@
 
 ## Summary
 
-This change enforces tenant scoped ledger isolation for audit routes.
+This change enforces tenant scoped ledger isolation for GovAI audit routes.
 
 ## Scope
 
@@ -11,26 +11,31 @@ Changed files:
 - `rust/src/project.rs`
 - `rust/tests/billing_http.rs`
 - `rust/tests/tenant_isolation_http.rs`
+- `.github/workflows/compliance.yml`
+- `.github/workflows/govai-check.yml`
 
 ## What changed
 
-- ledger access is now resolved per request
-- `X-GovAI-Project` is the primary tenant source
-- Bearer token fingerprint is the fallback tenant source
-- ledger paths are tenant scoped as `audit_log__<tenant>.jsonl`
-- in `staging` and `prod`, missing tenant context returns `400` with `missing_tenant_context`
+- Ledger access is resolved per request.
+- `X-GovAI-Project` is the primary tenant source.
+- Bearer token fingerprint is the fallback tenant source.
+- Ledger paths are tenant scoped as `audit_log__<tenant>.jsonl`.
+- In `staging` and `prod`, missing tenant context returns `400` with `missing_tenant_context`.
 
 ## Compatibility
 
-Preserved where possible:
-- `GET /bundle` keeps `200` with `ok:false` for non success cases
-- `GET /bundle-hash` keeps `200` with `ok:false` for non success cases
-- `GET /compliance-summary` keeps `200` with `ok:false` for non success cases
-- `GET /verify` keeps `200` with `ok:false` for verification failures
-- `GET /api/export/:run_id` keeps prior error classification except for missing tenant context in non dev
+Prior response semantics are preserved where possible:
+- `GET /bundle` keeps `200` with `ok:false` for non success cases.
+- `GET /bundle-hash` keeps `200` with `ok:false` for non success cases.
+- `GET /compliance-summary` keeps `200` with `ok:false` for non success cases.
+- `GET /verify` keeps `200` with `ok:false` for verification failures.
+- `GET /api/export/:run_id` keeps prior error classification except for missing tenant context in non dev.
 
-Intentional behavioral change:
-- ledger touching routes now require tenant context in `staging` and `prod`
+## Intentional behavioral change
+
+Ledger touching routes now require tenant context in `staging` and `prod`:
+- `X-GovAI-Project`, or
+- Bearer token fallback.
 
 Affected routes:
 - `POST /evidence`
@@ -41,13 +46,16 @@ Affected routes:
 - `GET /verify-log`
 - `GET /api/export/:run_id`
 
+## CI change
+
+The compliance workflow now runs `govai check` against the local audit service in the same job where the audit service is started. The external GovAI audit gate is skipped when `GOVAI_AUDIT_BASE_URL` is not configured.
+
 ## Risks
 
-- clients in `staging` and `prod` must provide tenant context via `X-GovAI-Project` or Bearer token
-- open style verification/hash routes are now tenant context dependent in non dev
+- Clients in `staging` and `prod` must provide tenant context.
+- `GET /bundle-hash` and `GET /verify-log` remain open in auth terms, but are tenant context dependent in non dev environments.
 
 ## Validation
 
 - `cargo test --manifest-path rust/Cargo.toml`
-- all Rust tests passed, including tenant isolation coverage
-
+- Rust tests passed, including route level tenant isolation coverage.
