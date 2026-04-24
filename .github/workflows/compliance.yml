@@ -269,8 +269,11 @@ jobs:
 
             cd python
             . .venv/bin/activate
-            python aigov_py/ci_fallback.py "${RUN_ID}"
             cd "${GITHUB_WORKSPACE}"
+
+            make run RUN_ID="${RUN_ID}"
+            make approve RUN_ID="${RUN_ID}"
+            make promote RUN_ID="${RUN_ID}"
 
             make report_prepare RUN_ID="${RUN_ID}"
             make evidence_pack RUN_ID="${RUN_ID}"
