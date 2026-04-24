@@ -12,6 +12,14 @@ import { primaryCardDescription } from "./_ui/console/surfaces";
 import InfraShell from "./_ui/InfraShell";
 import { LandingCopyBlock } from "./components/LandingCopyBlock";
 
+const PRIVATE_PILOT_MAILTO =
+  "mailto:hello@govbase.dev?subject=" + encodeURIComponent("GovAI private pilot request");
+
+const DOCS_CUSTOMER_QUICKSTART =
+  "https://github.com/MonikaDvorackova/aigov-compliance-engine/blob/main/docs/customer-quickstart.md";
+const DOCS_GITHUB_ACTION =
+  "https://github.com/MonikaDvorackova/aigov-compliance-engine/blob/main/docs/github-action.md";
+
 /** Muted shell — no chromatic gradients; optional neutral lift only */
 const LANDING_SHELL_BACKGROUND = [
   "radial-gradient(900px 480px at 50% -8%, rgba(255,255,255,0.035) 0%, transparent 58%)",
@@ -62,7 +70,25 @@ export default function Page() {
 
         <div
           style={{
-            marginTop: 36,
+            display: "flex",
+            gap: 8,
+            justifyContent: "center",
+            alignItems: "center",
+            flexWrap: "wrap",
+            marginTop: 18,
+          }}
+        >
+          <a className="govai_btn govai_btnPrimary" href={PRIVATE_PILOT_MAILTO}>
+            Request private pilot
+          </a>
+          <a className="govai_btn govai_btnGhost" href="#pricing">
+            View pricing
+          </a>
+        </div>
+
+        <div
+          style={{
+            marginTop: 22,
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
@@ -91,23 +117,19 @@ export default function Page() {
           </div>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            justifyContent: "center",
-            alignItems: "center",
-            flexWrap: "wrap",
-            marginTop: 16,
-          }}
-        >
-          <Link className="govai_btn govai_btnPrimary" href="/runs">
-            Get started
+        <p style={{ margin: "14px 0 0", fontSize: 11.5, lineHeight: 1.45, color: "var(--govai-text-tertiary)" }}>
+          <Link href="/runs" style={{ color: "var(--govai-text-secondary)" }}>
+            Open runs
           </Link>
-          <Link className="govai_btn govai_btnGhost" href="/login">
-            Request demo
+          {" · "}
+          <Link href="/login" style={{ color: "var(--govai-text-secondary)" }}>
+            Sign in
           </Link>
-        </div>
+          {" · "}
+          <a href={DOCS_CUSTOMER_QUICKSTART} style={{ color: "var(--govai-text-secondary)" }} rel="noreferrer" target="_blank">
+            Quickstart (docs)
+          </a>
+        </p>
       </div>
 
       <div
@@ -139,6 +161,104 @@ export default function Page() {
         </p>
       </div>
 
+      <Panel
+        style={{
+          padding: "10px 12px 11px",
+          marginTop: 26,
+          background: "var(--govai-bg-panel)",
+          border: "1px solid var(--govai-border-faint)",
+          boxShadow: "0 1px 0 rgba(255,255,255,0.03) inset",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            flexWrap: "wrap",
+            marginBottom: 4,
+          }}
+        >
+          <span style={{ fontSize: 12.5, fontWeight: 600, letterSpacing: "-0.02em", color: "var(--govai-text)" }}>
+            How it works
+          </span>
+          <span
+            style={{
+              fontSize: 9.5,
+              fontWeight: 500,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "var(--govai-text-label)",
+            }}
+          >
+            Walkthrough video
+          </span>
+        </div>
+        <p style={{ ...primaryCardDescription(), margin: "0 0 8px", fontSize: 11.5, lineHeight: 1.4 }}>
+          Evidence → deterministic compliance summary → exportable audit JSON. The hero video shows the CI gate and
+          ledger flow.
+        </p>
+        <div role="presentation" aria-hidden="true" className="govai_walkthrough_shell" />
+      </Panel>
+
+      <div style={{ marginTop: 26, maxWidth: 560, marginLeft: "auto", marginRight: "auto" }}>
+        <div
+          style={{
+            fontSize: 9.5,
+            fontWeight: 600,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: "var(--govai-text-label)",
+            marginBottom: 12,
+            textAlign: "center",
+          }}
+        >
+          VALID / INVALID / BLOCKED
+        </div>
+        <ul
+          style={{
+            margin: 0,
+            padding: 0,
+            listStyle: "none",
+            display: "grid",
+            gap: 14,
+          }}
+        >
+          {[
+            {
+              title: "When to use",
+              detail: "Deploying ML models; enforcing approval workflows; preparing for audits.",
+            },
+            {
+              title: "Decision states",
+              detail: "VALID: allowed. INVALID: rejected. BLOCKED: missing evidence.",
+            },
+            {
+              title: "Gate behavior",
+              detail: "CI fails unless verdict = VALID.",
+            },
+            {
+              title: "Audit export",
+              detail: "Exportable JSON for external verification.",
+            },
+          ].map((item) => (
+            <li
+              key={item.title}
+              style={{
+                padding: "12px 14px",
+                borderRadius: 8,
+                border: "1px solid var(--govai-border-faint)",
+                background: "var(--govai-bg-elevated)",
+              }}
+            >
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--govai-text)", marginBottom: 4 }}>{item.title}</div>
+              <div style={{ fontSize: 12, lineHeight: 1.45, color: "var(--govai-text-secondary)" }}>{item.detail}</div>
+            </li>
+          ))}
+        </ul>
+      </div>
+
       <div style={{ marginTop: 26, maxWidth: 560, marginLeft: "auto", marginRight: "auto" }}>
         <div
           style={{
@@ -165,7 +285,8 @@ export default function Page() {
             Run AI compliance checks in CI
           </div>
           <div style={{ marginTop: 4, fontSize: 12.5, lineHeight: 1.45, color: "var(--govai-text-secondary)" }}>
-            Deterministic verdicts. No heuristics. No ambiguity.
+            Official package <span style={{ fontFamily: "ui-monospace, monospace" }}>aigov-py==0.1.0</span> on PyPI. One{" "}
+            <span style={{ fontFamily: "ui-monospace, monospace" }}>GOVAI_RUN_ID</span> for evidence, check, and export.
           </div>
 
           <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
@@ -212,10 +333,29 @@ export default function Page() {
             <li>Fails CI on non-compliant runs</li>
             <li>Fully auditable decision path</li>
           </ul>
+          <p style={{ margin: "10px 0 0", fontSize: 12, lineHeight: 1.45 }}>
+            <a href={DOCS_GITHUB_ACTION} style={{ color: "var(--govai-text-secondary)" }} rel="noreferrer" target="_blank">
+              GitHub Action reference (docs)
+            </a>
+          </p>
         </div>
       </div>
 
-      <div style={{ marginTop: 26, maxWidth: 560, marginLeft: "auto", marginRight: "auto" }}>
+      <div
+        id="private-pilot"
+        style={{
+          marginTop: 28,
+          maxWidth: 560,
+          marginLeft: "auto",
+          marginRight: "auto",
+          padding: "16px 14px 14px",
+          borderRadius: 10,
+          border: "1px solid var(--govai-border-faint)",
+          background: "var(--govai-bg-panel)",
+          boxShadow: "0 1px 0 rgba(255,255,255,0.03) inset",
+          textAlign: "left",
+        }}
+      >
         <div
           style={{
             fontSize: 9.5,
@@ -223,94 +363,169 @@ export default function Page() {
             letterSpacing: "0.12em",
             textTransform: "uppercase",
             color: "var(--govai-text-label)",
-            marginBottom: 12,
+            marginBottom: 8,
             textAlign: "center",
           }}
         >
-          How GovAI decides
+          Private pilot
         </div>
-        <ul
+        <p style={{ margin: "0 0 12px", fontSize: 13, lineHeight: 1.5, color: "var(--govai-text-secondary)" }}>
+          Structured access for teams that want GovAI on a real AI system or CI pipeline before wider rollout. No
+          self-service billing; we align on scope by email.
+        </p>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--govai-text)", marginBottom: 6 }}>Who it is for</div>
+        <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 12.5, lineHeight: 1.45, color: "var(--govai-text-secondary)" }}>
+          <li>AI teams owning model lifecycle and releases</li>
+          <li>Compliance teams needing evidence and a clear gate</li>
+          <li>Engineering teams shipping AI systems through CI/CD</li>
+        </ul>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--govai-text)", marginBottom: 6 }}>What you get</div>
+        <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 12.5, lineHeight: 1.45, color: "var(--govai-text-secondary)" }}>
+          <li>CI compliance gate (GitHub Action + PyPI CLI)</li>
+          <li>Deterministic VALID / INVALID / BLOCKED decision from evidence</li>
+          <li>Audit evidence export for the run</li>
+          <li>Onboarding support for wiring evidence and the gate</li>
+        </ul>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--govai-text)", marginBottom: 6 }}>What we expect</div>
+        <ul style={{ margin: "0 0 14px", paddingLeft: 18, fontSize: 12.5, lineHeight: 1.45, color: "var(--govai-text-secondary)" }}>
+          <li>One AI system or one CI pipeline in scope</li>
+          <li>A hosted or self-hosted GovAI audit endpoint you can reach from CI</li>
+          <li>Feedback during the pilot (what blocked, what evidence was missing)</li>
+        </ul>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+          <a className="govai_btn govai_btnPrimary" href={PRIVATE_PILOT_MAILTO}>
+            Request private pilot
+          </a>
+          <a className="govai_btn govai_btnGhost" href="#pricing">
+            View pricing
+          </a>
+        </div>
+      </div>
+
+      <div id="pricing" style={{ marginTop: 28, maxWidth: 720, marginLeft: "auto", marginRight: "auto" }}>
+        <div
           style={{
-            margin: 0,
-            padding: 0,
-            listStyle: "none",
-            display: "grid",
-            gap: 14,
+            fontSize: 9.5,
+            fontWeight: 600,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: "var(--govai-text-label)",
+            marginBottom: 10,
+            textAlign: "center",
           }}
         >
+          Pricing
+        </div>
+        <p
+          style={{
+            margin: "0 0 12px",
+            fontSize: 12.5,
+            lineHeight: 1.45,
+            color: "var(--govai-text-secondary)",
+            textAlign: "center",
+          }}
+        >
+          Indicative tiers. No checkout on this site; Pro and Enterprise are agreed directly.
+        </p>
+        <div className="govai_pricing_tiers">
           {[
             {
-              title: "When to use",
-              detail: "Deploying ML models; enforcing approval workflows; preparing for audits.",
+              name: "Free",
+              price: "€0",
+              blurb: "Local testing and evaluation",
+              bullets: ["Limited runs", "CLI (PyPI)", "Audit evidence export"],
             },
             {
-              title: "Decision states",
-              detail: "VALID: allowed. INVALID: rejected. BLOCKED: missing evidence.",
+              name: "Pro",
+              price: "€199 / month",
+              blurb: "Production CI pipelines",
+              bullets: [
+                "Higher run and event limits",
+                "GitHub Action",
+                "Hosted audit endpoint",
+                "Standard support",
+              ],
             },
             {
-              title: "Gate behavior",
-              detail: "CI fails unless verdict = VALID.",
+              name: "Enterprise",
+              price: "Custom",
+              blurb: "Regulated or larger teams",
+              bullets: [
+                "Custom limits",
+                "Self-hosted or dedicated deployment",
+                "SSO / access control where supported",
+                "Audit and procurement support",
+              ],
             },
-            {
-              title: "Audit export",
-              detail: "Exportable JSON for external verification.",
-            },
-          ].map((item) => (
-            <li
-              key={item.title}
+          ].map((tier) => (
+            <div
+              key={tier.name}
               style={{
-                padding: "12px 14px",
-                borderRadius: 8,
+                padding: "14px 12px 12px",
+                borderRadius: 10,
                 border: "1px solid var(--govai-border-faint)",
                 background: "var(--govai-bg-elevated)",
               }}
             >
-              <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--govai-text)", marginBottom: 4 }}>{item.title}</div>
-              <div style={{ fontSize: 12, lineHeight: 1.45, color: "var(--govai-text-secondary)" }}>{item.detail}</div>
-            </li>
+              <div style={{ fontSize: 12.5, fontWeight: 650, color: "var(--govai-text)" }}>{tier.name}</div>
+              <div style={{ marginTop: 4, fontSize: 18, fontWeight: 650, letterSpacing: "-0.02em", color: "var(--govai-text)" }}>
+                {tier.price}
+              </div>
+              <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.4, color: "var(--govai-text-secondary)" }}>{tier.blurb}</div>
+              <ul
+                style={{
+                  margin: "10px 0 0",
+                  paddingLeft: 16,
+                  fontSize: 12,
+                  lineHeight: 1.45,
+                  color: "var(--govai-text-secondary)",
+                }}
+              >
+                {tier.bullets.map((b) => (
+                  <li key={b}>{b}</li>
+                ))}
+              </ul>
+            </div>
           ))}
-        </ul>
+        </div>
       </div>
 
-      <Panel
+      <div
         style={{
-          padding: "10px 12px 11px",
-          marginTop: 26,
-          background: "var(--govai-bg-panel)",
+          marginTop: 22,
+          maxWidth: 560,
+          marginLeft: "auto",
+          marginRight: "auto",
+          padding: "14px 14px 12px",
+          borderRadius: 10,
           border: "1px solid var(--govai-border-faint)",
-          boxShadow: "0 1px 0 rgba(255,255,255,0.03) inset",
+          background: "var(--govai-bg-panel)",
+          textAlign: "left",
         }}
       >
         <div
           style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 10,
-            flexWrap: "wrap",
-            marginBottom: 4,
+            fontSize: 9.5,
+            fontWeight: 600,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: "var(--govai-text-label)",
+            marginBottom: 8,
+            textAlign: "center",
           }}
         >
-          <span style={{ fontSize: 12.5, fontWeight: 600, letterSpacing: "-0.02em", color: "var(--govai-text)" }}>
-            How it works
-          </span>
-          <span
-            style={{
-              fontSize: 9.5,
-              fontWeight: 500,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              color: "var(--govai-text-label)",
-            }}
-          >
-            Walkthrough video
-          </span>
+          Trust & auditability
         </div>
-        <p style={{ ...primaryCardDescription(), margin: "0 0 8px", fontSize: 11.5, lineHeight: 1.4 }}>
-          Evidence → decision → export.
+        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, lineHeight: 1.5, color: "var(--govai-text-secondary)" }}>
+          <li>Append-only audit logs for evidence</li>
+          <li>Hash-chained records for integrity checks</li>
+          <li>Deterministic verdicts from policy + evidence</li>
+          <li>Exportable audit evidence you can archive or review offline</li>
+        </ul>
+        <p style={{ margin: "10px 0 0", fontSize: 12, lineHeight: 1.5, color: "var(--govai-text-tertiary)" }}>
+          GovAI is not legal advice, does not replace legal review, and does not certify regulatory approval.
         </p>
-        <div role="presentation" aria-hidden="true" className="govai_walkthrough_shell" />
-      </Panel>
+      </div>
 
       <div style={{ marginTop: 28 }}>
         <div
@@ -352,20 +567,37 @@ export default function Page() {
         <CapabilityProofStrip items={PROOF_ITEMS} />
       </div>
 
-      <p
+      <div
         style={{
+          marginTop: 26,
+          padding: "18px 14px 16px",
+          borderRadius: 10,
+          border: "1px solid var(--govai-border-faint)",
+          background: "var(--govai-bg-panel)",
           textAlign: "center",
-          marginTop: 22,
-          marginBottom: 0,
-          fontSize: 11,
-          lineHeight: 1.45,
-          color: "var(--govai-text-tertiary)",
         }}
       >
-        Append-only evidence · deterministic verdict · exportable audit JSON
-      </p>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--govai-text)", marginBottom: 6 }}>Request access</div>
+        <p style={{ margin: "0 0 14px", fontSize: 12.5, lineHeight: 1.45, color: "var(--govai-text-secondary)", maxWidth: "42ch", marginLeft: "auto", marginRight: "auto" }}>
+          Email us to start a private pilot or to discuss Pro / Enterprise limits and deployment.
+        </p>
+        <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+          <a className="govai_btn govai_btnPrimary" href={PRIVATE_PILOT_MAILTO}>
+            Request private pilot
+          </a>
+          <a className="govai_btn govai_btnGhost" href="#pricing">
+            View pricing
+          </a>
+        </div>
+      </div>
 
       <style>{`
+        .govai_pricing_tiers {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          align-items: stretch;
+        }
         .govai_code_card {
           border-radius: 10px;
           background: var(--govai-bg-panel);
@@ -679,6 +911,12 @@ export default function Page() {
         @keyframes govai_bundle_soft {
           0%, 100% { opacity: 0.65; }
           50% { opacity: 1; }
+        }
+
+        @media (max-width: 720px) {
+          .govai_pricing_tiers {
+            grid-template-columns: 1fr;
+          }
         }
 
         @media (max-width: 640px) {
