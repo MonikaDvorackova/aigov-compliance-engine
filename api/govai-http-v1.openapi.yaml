@@ -21,6 +21,7 @@ info:
     - **`deprecated`:** Still callable; scheduled for removal per **Deprecation policy** (none are deprecated today).
 
     **Core stable surface (ledger + reads):** `GET /health`, `GET /status`, `POST /evidence`, `GET /usage`, `GET /verify`, `GET /verify-log`, `GET /bundle`, `GET /bundle-hash`, `GET /compliance-summary`, `GET /api/export/{run_id}`.
+    **Commercial metadata (stable):** `GET /pricing` (plans + usage units; no payments).
 
     **Enterprise stable surface (Supabase JWT + Postgres):** `GET /api/me`, `POST /api/assessments`, and all `/api/compliance-workflow*` routes are **`stable`** as a single tier. Rationale: the published **`govai` CLI** uses `POST /api/assessments` (`create-assessment`); the same product installation documents `GET /api/me` and workflow routes for demos and dashboards. Per project rule, enterprise routes are **all stable** or **all internal** — because the CLI depends on assessments, the **entire enterprise group is stable**.
 
@@ -113,6 +114,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StatusResponse"
+
+  /pricing:
+    get:
+      tags: [CoreMetadata]
+      summary: Get pricing plans
+      operationId: getPricing
+      x-govai-surface: stable
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingResponse"
 
   /evidence:
     post:
@@ -333,6 +349,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ComplianceSummaryBadRequest"
+        "401":
+          description: Unauthorized (API keys enforced)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleOkFalse"
+        "429":
+          description: Per-API-key request cap exceeded (`GOVAI_API_KEYS` entry limit)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceIngestError"
 
   /api/export/{run_id}:
     get:
@@ -739,6 +767,47 @@ components:
           type: string
           description: "`dev` | `staging` | `prod`"
 
+    PricingResponse:
+      type: object
+      required: [units, definitions, plans]
+      properties:
+        units:
+          type: object
+          required: [primary, secondary]
+          properties:
+            primary:
+              type: string
+              enum: [evidence_event]
+            secondary:
+              type: string
+              enum: [run]
+        definitions:
+          type: object
+          required: [evidence_event, run]
+          properties:
+            evidence_event:
+              type: string
+            run:
+              type: string
+        plans:
+          type: array
+          items:
+            $ref: "#/components/schemas/PricingPlan"
+
+    PricingPlan:
+      type: object
+      required: [name, evidence_events_per_month, runs_per_month, events_per_run]
+      properties:
+        name:
+          type: string
+          enum: [free, pro, team]
+        evidence_events_per_month:
+          type: integer
+        runs_per_month:
+          type: integer
+        events_per_run:
+          type: integer
+
     EvidenceEvent:
       type: object
       required: [event_id, event_type, ts_utc, actor, system, run_id, payload]
@@ -796,23 +865,46 @@ components:
 
     EvidenceIngestError:
       type: object
-      required: [ok, error]
+      required: [ok, error, code, message]
       properties:
         ok:
           type: boolean
           enum: [false]
         error:
           type: string
+          description: Machine-readable error category or code.
+        code:
+          type: string
+          description: More specific machine-readable discriminator. Usually equals `error`; for `policy_violation`, this is the policy rule code.
+        message:
+          type: string
+          description: Human-friendly explanation intended for end users.
         policy_version:
           type: string
         details:
+          type: string
+        metering:
+          type: string
+          description: "`on` | `off` for plan quotas; `n/a` for per-key request cap only."
+        count_kind:
+          type: string
+          description: "What `used`/`limit` refer to, e.g. `evidence_events`, `new_runs_month`, `api_key_total_requests`."
+        tenant_id:
+          type: string
+          description: Legacy quota scope when `metering=off`.
+        team_id:
+          type: string
+          description: Team scope when `metering=on`.
+        plan:
+          type: string
+        period_start:
           type: string
         used:
           type: integer
         limit:
           type: integer
         year_month:
-          type: string
+          type: integer
         run_id:
           type: string
         event_count:
@@ -820,12 +912,16 @@ components:
 
     SimpleOkFalse:
       type: object
-      required: [ok, error]
+      required: [ok, error, code, message]
       properties:
         ok:
           type: boolean
           enum: [false]
         error:
+          type: string
+        code:
+          type: string
+        message:
           type: string
         policy_version:
           type: string
@@ -845,6 +941,14 @@ components:
           type: integer
         limit:
           type: integer
+        plan:
+          type: string
+        usage:
+          $ref: "#/components/schemas/UsageNormalized"
+        limits:
+          $ref: "#/components/schemas/LimitsNormalized"
+        remaining:
+          $ref: "#/components/schemas/RemainingNormalized"
 
     UsageMeteringOn:
       type: object
@@ -873,15 +977,66 @@ components:
               type: integer
             max_events_per_run:
               type: integer
+            evidence_events:
+              type: integer
+            runs:
+              type: integer
+        usage:
+          $ref: "#/components/schemas/UsageNormalized"
+        remaining:
+          $ref: "#/components/schemas/RemainingNormalized"
+        legacy_metering_limits:
+          type: object
+          required: [max_runs_per_month, max_events_per_month, max_events_per_run]
+          properties:
+            max_runs_per_month:
+              nullable: true
+            max_events_per_month:
+              nullable: true
+            max_events_per_run:
+              nullable: true
+
+    UsageNormalized:
+      type: object
+      required: [evidence_events, runs]
+      properties:
+        evidence_events:
+          type: integer
+        runs:
+          type: integer
+
+    LimitsNormalized:
+      type: object
+      required: [evidence_events, runs, events_per_run]
+      properties:
+        evidence_events:
+          type: integer
+        runs:
+          type: integer
+        events_per_run:
+          type: integer
+
+    RemainingNormalized:
+      type: object
+      required: [evidence_events, runs]
+      properties:
+        evidence_events:
+          type: integer
+        runs:
+          type: integer
 
     UsageError:
       type: object
-      required: [ok, error]
+      required: [ok, error, code, message]
       properties:
         ok:
           type: boolean
           enum: [false]
         error:
+          type: string
+        code:
+          type: string
+        message:
           type: string
 
     VerifyResponse:
@@ -898,12 +1053,16 @@ components:
 
     VerifyBadRequest:
       type: object
-      required: [ok, error, policy_version]
+      required: [ok, error, code, message, policy_version]
       properties:
         ok:
           type: boolean
           enum: [false]
         error:
+          type: string
+        code:
+          type: string
+        message:
           type: string
         policy_version:
           type: string
@@ -918,12 +1077,16 @@ components:
 
     VerifyLogError:
       type: object
-      required: [ok, error]
+      required: [ok, error, code, message]
       properties:
         ok:
           type: boolean
           enum: [false]
         error:
+          type: string
+        code:
+          type: string
+        message:
           type: string
 
     BundleDocumentSuccess:
@@ -973,12 +1136,16 @@ components:
 
     BundleDocumentError:
       type: object
-      required: [ok, error, policy_version]
+      required: [ok, error, code, message, policy_version]
       properties:
         ok:
           type: boolean
           enum: [false]
         error:
+          type: string
+        code:
+          type: string
+        message:
           type: string
         policy_version:
           type: string
@@ -1057,7 +1224,7 @@ components:
 
     ComplianceSummaryError:
       type: object
-      required: [ok, schema_version, error, policy_version, run_id]
+      required: [ok, schema_version, error, code, message, policy_version, run_id]
       properties:
         ok:
           type: boolean
@@ -1067,6 +1234,12 @@ components:
           enum: [aigov.compliance_summary.v2]
         error:
           type: string
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: string
         policy_version:
           type: string
         run_id:
@@ -1074,12 +1247,16 @@ components:
 
     ComplianceSummaryBadRequest:
       type: object
-      required: [ok, error, policy_version, run_id]
+      required: [ok, error, code, message, policy_version, run_id]
       properties:
         ok:
           type: boolean
           enum: [false]
         error:
+          type: string
+        code:
+          type: string
+        message:
           type: string
         policy_version:
           type: string
@@ -1177,12 +1354,18 @@ components:
 
     AuditExportError:
       type: object
-      required: [ok, error, policy_version]
+      required: [ok, error, code, message, policy_version]
       properties:
         ok:
           type: boolean
           enum: [false]
         error:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+        details:
           type: string
         policy_version:
           type: string
@@ -1367,11 +1550,16 @@ components:
     EnterpriseError:
       type: object
       properties:
+        ok:
+          type: boolean
+          enum: [false]
         error:
           type: string
-        details:
+        code:
           type: string
         message:
+          type: string
+        details:
           type: string
         expected:
           type: array
@@ -1381,7 +1569,14 @@ components:
     EnterpriseForbidden:
       type: object
       properties:
+        ok:
+          type: boolean
+          enum: [false]
         error:
+          type: string
+        code:
+          type: string
+        message:
           type: string
         reason:
           type: string

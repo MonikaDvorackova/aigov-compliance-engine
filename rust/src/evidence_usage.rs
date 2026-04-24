@@ -1,17 +1,44 @@
-//! Canonical evidence-event billing: table `govai_usage_counters` (monthly, per billing tenant).
-//! Team metering tables (`govai_team_usage_monthly`, etc.) are telemetry only when `GOVAI_METERING=on`.
+//! Canonical evidence-event quota when `GOVAI_METERING=off`: table `govai_usage_counters`
+//! (monthly calendar period, per billing tenant from [`crate::project::billing_tenant_id`] —
+//! same scope as `GET /usage`).
+//!
+//! **What is counted:** each **successful** `POST /evidence` append increments
+//! `evidence_events_count` by one (duplicates / validation failures do not increment).
+//! This is **not** “runs”; run cardinality is only enforced when `GOVAI_METERING=on`
+//! ([`crate::metering`]).
+//!
+//! When `GOVAI_METERING=on`, team plan limits are enforced in [`crate::govai_api::ingest`] via
+//! [`crate::metering`] (monthly evidence events, monthly new run_ids, per-run event cap).
 
 use crate::db::DbPool;
 use chrono::{Datelike, NaiveDate, Utc};
 
 pub const FREE_TIER_EVIDENCE_LIMIT: u64 = 1000;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyEvidenceQuotaExceeded {
+    pub used: u64,
+    pub limit: u64,
+    pub period_start: NaiveDate,
+}
+
+#[derive(Debug)]
+pub enum CheckEvidenceQuotaError {
+    Exceeded(LegacyEvidenceQuotaExceeded),
+    Database(String),
+}
+
 pub fn current_period_start_utc() -> NaiveDate {
     let now = Utc::now().date_naive();
     NaiveDate::from_ymd_opt(now.year(), now.month(), 1).expect("valid month day")
 }
 
-pub async fn check_evidence_quota(pool: &DbPool, tenant_id: &str) -> Result<(), String> {
+/// Returns `Exceeded` when the tenant is already at or over the monthly evidence cap
+/// (ingesting another event would exceed the limit).
+pub async fn check_evidence_quota(
+    pool: &DbPool,
+    tenant_id: &str,
+) -> Result<(), CheckEvidenceQuotaError> {
     let period = current_period_start_utc();
     let count: Option<i64> = sqlx::query_scalar(
         r#"
@@ -24,11 +51,15 @@ pub async fn check_evidence_quota(pool: &DbPool, tenant_id: &str) -> Result<(), 
     .bind(period)
     .fetch_optional(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| CheckEvidenceQuotaError::Database(e.to_string()))?;
 
     let n = count.unwrap_or(0).max(0) as u64;
     if n >= FREE_TIER_EVIDENCE_LIMIT {
-        return Err("evidence_quota_exceeded".to_string());
+        return Err(CheckEvidenceQuotaError::Exceeded(LegacyEvidenceQuotaExceeded {
+            used: n,
+            limit: FREE_TIER_EVIDENCE_LIMIT,
+            period_start: period,
+        }));
     }
     Ok(())
 }
@@ -128,9 +159,14 @@ mod tests {
         .execute(&pool)
         .await
         .expect("seed");
-        assert_eq!(
-            check_evidence_quota(&pool, &tid).await,
-            Err("evidence_quota_exceeded".to_string())
-        );
+        let err = check_evidence_quota(&pool, &tid).await.expect_err("at limit");
+        match err {
+            CheckEvidenceQuotaError::Exceeded(e) => {
+                assert_eq!(e.used, FREE_TIER_EVIDENCE_LIMIT);
+                assert_eq!(e.limit, FREE_TIER_EVIDENCE_LIMIT);
+                assert_eq!(e.period_start, p);
+            }
+            CheckEvidenceQuotaError::Database(d) => panic!("unexpected db err: {d}"),
+        }
     }
 }

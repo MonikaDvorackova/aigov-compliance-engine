@@ -8,14 +8,15 @@ use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
+use uuid::Uuid;
 use std::sync::Mutex;
 use tower::ServiceExt;
 
-use aigov_audit::api_usage::ApiUsageState;
+use aigov_audit::api_usage::{key_fingerprint, ApiUsageState};
 use aigov_audit::evidence_usage::FREE_TIER_EVIDENCE_LIMIT;
 use aigov_audit::govai_api;
 use aigov_audit::govai_environment::{policy_version_for, GovaiEnvironment};
-use aigov_audit::metering::{GovaiPlan, MeteringConfig};
+use aigov_audit::metering::{self, GovaiPlan, MeteringConfig};
 use aigov_audit::policy_config::ResolvedPolicyConfig;
 use aigov_audit::project;
 use aigov_audit::schema::EvidenceEvent;
@@ -248,7 +249,14 @@ async fn canonical_evidence_billing_http() {
     let v: Value = serde_json::from_slice(&bytes).expect("json body");
     assert_eq!(v["ok"], false);
     assert_eq!(v["error"], "evidence_quota_exceeded");
+    assert_eq!(v["code"], "evidence_quota_exceeded");
+    assert!(v["message"].as_str().unwrap_or("").trim().len() > 0);
+    assert_eq!(v["metering"], "off");
+    assert_eq!(v["count_kind"], "evidence_events");
+    assert_eq!(v["tenant_id"], json!(tenant));
+    assert_eq!(v["used"].as_u64(), Some(FREE_TIER_EVIDENCE_LIMIT));
     assert_eq!(v["limit"].as_u64(), Some(FREE_TIER_EVIDENCE_LIMIT));
+    assert!(v["period_start"].as_str().is_some());
     let c3 = aigov_audit::evidence_usage::get_evidence_usage(&pool, &tenant)
         .await
         .unwrap()
@@ -459,8 +467,10 @@ async fn ingest_policy_violation_includes_code_and_message() {
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
     let v: Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(v.get("error").is_some());
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["error"], "policy_violation");
     assert_eq!(v["code"], "missing_data_registered");
+    assert!(v["message"].as_str().unwrap_or("").trim().len() > 0);
     assert!(v["message"].as_str().unwrap_or("").contains("model_trained"));
 
     // Decision is persisted into the same audit log (replayable / regulator-readable).
@@ -523,4 +533,116 @@ async fn allowed_ingest_emits_policy_decision_record() {
     assert_eq!(last["policy_environment"], "dev");
     assert_eq!(last["policy_version"], policy_version_for(GovaiEnvironment::Dev));
     assert!(last["violation"].is_null());
+}
+
+/// `GOVAI_METERING=on` path: monthly **new run** cap uses the same `team_id` as `GET /usage` for the API key.
+#[tokio::test]
+async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
+    let Some(url) = database_url() else {
+        eprintln!("skip metering_on_monthly_new_runs_limit: set DATABASE_URL or TEST_DATABASE_URL");
+        return;
+    };
+
+    let _lock = CWD_LOCK.lock().expect("lock");
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::env::set_current_dir(dir.path()).expect("chdir");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(3)
+        .connect(&url)
+        .await
+        .expect("connect db");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrate");
+
+    let team_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO public.teams (id, name) VALUES ($1, $2)")
+        .bind(team_id)
+        .bind("metering HTTP test team")
+        .execute(&pool)
+        .await
+        .expect("insert team");
+
+    const RAW_KEY: &str = "metering_on_http_test_secret";
+    std::env::set_var("GOVAI_API_KEYS", RAW_KEY);
+    let api_usage = ApiUsageState::from_env(&pool).expect("api usage");
+    let metering_cfg = MeteringConfig {
+        enabled: true,
+        default_plan: GovaiPlan::Free,
+    };
+    let app = govai_api::audit_router(
+        "audit_log.jsonl",
+        policy_version_for(GovaiEnvironment::Dev),
+        GovaiEnvironment::Dev,
+        ResolvedPolicyConfig::all_defaults().config,
+        api_usage,
+        pool.clone(),
+        metering_cfg,
+    );
+
+    let kh = key_fingerprint(RAW_KEY);
+    sqlx::query("DELETE FROM public.govai_api_key_billing WHERE key_hash = $1")
+        .bind(&kh)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("INSERT INTO public.govai_api_key_billing (key_hash, team_id) VALUES ($1, $2)")
+        .bind(&kh)
+        .bind(team_id)
+        .execute(&pool)
+        .await
+        .expect("key billing");
+
+    let ym = metering::year_month_utc_now();
+    sqlx::query("DELETE FROM public.govai_team_usage_monthly WHERE team_id = $1 AND year_month = $2")
+        .bind(team_id)
+        .bind(ym)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query(
+        r#"
+        INSERT INTO public.govai_team_usage_monthly (team_id, year_month, new_run_ids, evidence_events)
+        VALUES ($1, $2, 25, 0)
+        "#,
+    )
+    .bind(team_id)
+    .bind(ym)
+    .execute(&pool)
+    .await
+    .expect("seed monthly");
+
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let ev_id = uuid::Uuid::new_v4().to_string();
+    let body = serde_json::to_string(&sample_data_registered(&run_id, &ev_id)).unwrap();
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evidence")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {RAW_KEY}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    std::env::remove_var("GOVAI_API_KEYS");
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["error"], "monthly_run_limit_exceeded");
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["code"], "monthly_run_limit_exceeded");
+    assert!(v["message"].as_str().unwrap_or("").trim().len() > 0);
+    assert_eq!(v["metering"], "on");
+    assert_eq!(v["count_kind"], "new_runs_month");
+    assert_eq!(v["team_id"], json!(team_id.to_string()));
+    assert_eq!(v["used"], json!(25));
+    assert_eq!(v["limit"], json!(25));
+    assert_eq!(v["plan"], "free");
 }

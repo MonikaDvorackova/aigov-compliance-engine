@@ -137,26 +137,65 @@ pub async fn require_user(
 
     let token = auth.strip_prefix("Bearer ").unwrap_or("").trim();
     if token.is_empty() {
-        return Err((StatusCode::UNAUTHORIZED, Json(json!({ "error": "MISSING_TOKEN" }))));
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "ok": false,
+                "error": "missing_token",
+                "code": "missing_token",
+                "message": "Missing Authorization bearer token."
+            })),
+        ));
     }
 
     let header = decode_header(token).map_err(|_| {
-        (StatusCode::UNAUTHORIZED, Json(json!({ "error": "INVALID_TOKEN" })))
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "ok": false,
+                "error": "invalid_token",
+                "code": "invalid_token",
+                "message": "Invalid JWT."
+            })),
+        )
     })?;
 
     let kid = header.kid.ok_or_else(|| {
-        (StatusCode::UNAUTHORIZED, Json(json!({ "error": "INVALID_TOKEN" })))
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "ok": false,
+                "error": "invalid_token",
+                "code": "invalid_token",
+                "message": "Invalid JWT."
+            })),
+        )
     })?;
 
     let jwks = get_jwks(cfg).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "JWKS_ERROR", "details": e })),
+            Json(json!({
+                "ok": false,
+                "error": "jwks_error",
+                "code": "jwks_error",
+                "message": "We could not validate the JWT because the JWKS could not be loaded.",
+                "details": e
+            })),
         )
     })?;
 
     let key = pick_decoding_key(&jwks, &kid).map_err(|e| {
-        (StatusCode::UNAUTHORIZED, Json(json!({ "error": "INVALID_TOKEN", "details": e })))
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "ok": false,
+                "error": "invalid_token",
+                "code": "invalid_token",
+                "message": "Invalid JWT.",
+                "details": e
+            })),
+        )
     })?;
 
     let mut validation = Validation::new(Algorithm::RS256);
@@ -165,22 +204,54 @@ pub async fn require_user(
     validation.validate_aud = false;
 
     let data: TokenData<Claims> = decode(token, &key, &validation).map_err(|_| {
-        (StatusCode::UNAUTHORIZED, Json(json!({ "error": "INVALID_TOKEN" })))
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "ok": false,
+                "error": "invalid_token",
+                "code": "invalid_token",
+                "message": "Invalid JWT."
+            })),
+        )
     })?;
 
     // Explicit read to avoid dead_code warning
     let _ = data.claims.exp;
 
     if data.claims.iss != cfg.issuer {
-        return Err((StatusCode::UNAUTHORIZED, Json(json!({ "error": "INVALID_ISSUER" }))));
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "ok": false,
+                "error": "invalid_issuer",
+                "code": "invalid_issuer",
+                "message": "JWT issuer does not match the configured Supabase issuer."
+            })),
+        ));
     }
 
     if !aud_ok(&data.claims, &cfg.audience) {
-        return Err((StatusCode::UNAUTHORIZED, Json(json!({ "error": "INVALID_AUDIENCE" }))));
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "ok": false,
+                "error": "invalid_audience",
+                "code": "invalid_audience",
+                "message": "JWT audience does not match the configured audience."
+            })),
+        ));
     }
 
     let user_id = Uuid::parse_str(&data.claims.sub).map_err(|_| {
-        (StatusCode::UNAUTHORIZED, Json(json!({ "error": "INVALID_SUB" })))
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "ok": false,
+                "error": "invalid_subject",
+                "code": "invalid_subject",
+                "message": "JWT subject (sub) is invalid."
+            })),
+        )
     })?;
 
     Ok(CurrentUser { user_id })

@@ -118,7 +118,12 @@ pub async fn gate_audit_routes(
         if !key_map.contains_key(token) {
             return (
                 StatusCode::UNAUTHORIZED,
-                Json(json!({ "ok": false, "error": "unauthorized" })),
+                Json(json!({
+                    "ok": false,
+                    "error": "unauthorized",
+                    "code": "unauthorized",
+                    "message": "Missing or invalid Authorization bearer token."
+                })),
             )
                 .into_response();
         }
@@ -137,14 +142,32 @@ pub async fn gate_audit_routes(
                 return match e {
                     api_usage::UsageError::QuotaExceeded { limit, current } => (
                         StatusCode::TOO_MANY_REQUESTS,
-                        Json(
-                            json!({ "ok": false, "error": "usage_limit_exceeded", "limit": limit, "current": current }),
-                        ),
+                        Json(json!({
+                            "ok": false,
+                            "error": "usage_limit_exceeded",
+                            "code": "usage_limit_exceeded",
+                            "message": "This API key has exceeded its request limit. Wait for the quota reset or use a key with a higher limit.",
+                            "metering": "n/a",
+                            "count_kind": "api_key_total_requests",
+                            "operation": match ch {
+                                UsageChannel::EvidenceIngest => "post_evidence",
+                                UsageChannel::ComplianceSummaryRead => "get_compliance_summary",
+                            },
+                            "limit": limit,
+                            "used": current,
+                            "current": current,
+                        })),
                     )
                         .into_response(),
                     api_usage::UsageError::Database(d) => (
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "ok": false, "error": "usage_tracking_error", "details": d })),
+                        Json(json!({
+                            "ok": false,
+                            "error": "usage_tracking_error",
+                            "code": "usage_tracking_error",
+                            "message": "We could not track API usage for this key. Please retry; if it persists, contact support.",
+                            "details": d
+                        })),
                     )
                         .into_response(),
                 };
