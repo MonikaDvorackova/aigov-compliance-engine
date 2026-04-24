@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
+use sqlx::Row;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
-use sqlx::Row;
 
 pub type DbPool = PgPool;
 
@@ -21,7 +21,10 @@ pub struct UserTeamRow {
     pub role: String,
 }
 
-pub async fn list_user_teams(pool: &DbPool, user_id: &Uuid) -> Result<Vec<UserTeamRow>, sqlx::Error> {
+pub async fn list_user_teams(
+    pool: &DbPool,
+    user_id: &Uuid,
+) -> Result<Vec<UserTeamRow>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
         select tm.team_id as team_id,
@@ -47,7 +50,11 @@ pub async fn list_user_teams(pool: &DbPool, user_id: &Uuid) -> Result<Vec<UserTe
         .collect())
 }
 
-pub async fn is_team_member(pool: &DbPool, team_id: Uuid, user_id: Uuid) -> Result<bool, sqlx::Error> {
+pub async fn is_team_member(
+    pool: &DbPool,
+    team_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, sqlx::Error> {
     let row = sqlx::query(
         r#"
         select 1
@@ -85,7 +92,10 @@ pub async fn get_team_member_role(
     Ok(row.map(|r| r.get::<String, _>("role")))
 }
 
-pub async fn get_default_team_for_user(pool: &DbPool, user_id: Uuid) -> Result<Option<Uuid>, sqlx::Error> {
+pub async fn get_default_team_for_user(
+    pool: &DbPool,
+    user_id: Uuid,
+) -> Result<Option<Uuid>, sqlx::Error> {
     let row = sqlx::query(
         r#"
         select team_id

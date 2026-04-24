@@ -41,4 +41,3 @@ pub fn resolve_plan(_api_key: &str) -> &'static str {
 pub fn plan_limits_by_name(name: &str) -> Option<PlanLimits> {
     get_plans().into_iter().find(|p| p.name == name)
 }
-

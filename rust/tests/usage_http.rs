@@ -142,12 +142,14 @@ async fn usage_metering_on_includes_normalized_and_legacy_metering_limits() {
         .expect("key billing");
 
     let ym = metering::year_month_utc_now();
-    sqlx::query("DELETE FROM public.govai_team_usage_monthly WHERE team_id = $1 AND year_month = $2")
-        .bind(team_id)
-        .bind(ym)
-        .execute(&pool)
-        .await
-        .ok();
+    sqlx::query(
+        "DELETE FROM public.govai_team_usage_monthly WHERE team_id = $1 AND year_month = $2",
+    )
+    .bind(team_id)
+    .bind(ym)
+    .execute(&pool)
+    .await
+    .ok();
     sqlx::query(
         r#"
         INSERT INTO public.govai_team_usage_monthly (team_id, year_month, new_run_ids, evidence_events)
@@ -184,8 +186,16 @@ async fn usage_metering_on_includes_normalized_and_legacy_metering_limits() {
     assert_eq!(v["limits"]["evidence_events"], 2500);
     assert_eq!(v["limits"]["runs"], 25);
     assert_eq!(v["limits"]["events_per_run"], 1000);
-    assert!(v["legacy_metering_limits"]["max_events_per_month"].is_number() || v["legacy_metering_limits"]["max_events_per_month"].is_null());
-    assert!(v["legacy_metering_limits"]["max_runs_per_month"].is_number() || v["legacy_metering_limits"]["max_runs_per_month"].is_null());
-    assert!(v["legacy_metering_limits"]["max_events_per_run"].is_number() || v["legacy_metering_limits"]["max_events_per_run"].is_null());
+    assert!(
+        v["legacy_metering_limits"]["max_events_per_month"].is_number()
+            || v["legacy_metering_limits"]["max_events_per_month"].is_null()
+    );
+    assert!(
+        v["legacy_metering_limits"]["max_runs_per_month"].is_number()
+            || v["legacy_metering_limits"]["max_runs_per_month"].is_null()
+    );
+    assert!(
+        v["legacy_metering_limits"]["max_events_per_run"].is_number()
+            || v["legacy_metering_limits"]["max_events_per_run"].is_null()
+    );
 }
-

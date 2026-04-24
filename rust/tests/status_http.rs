@@ -12,10 +12,7 @@ use aigov_audit::govai_environment::GovaiEnvironment;
 
 #[tokio::test]
 async fn status_includes_environment_and_policy_version() {
-    let app: Router = govai_api::core_router(
-        "v0.5_test",
-        GovaiEnvironment::Staging,
-    );
+    let app: Router = govai_api::core_router("v0.5_test", GovaiEnvironment::Staging);
 
     let res = app
         .oneshot(
@@ -38,10 +35,7 @@ async fn status_includes_environment_and_policy_version() {
 
 #[tokio::test]
 async fn status_defaults_shape_for_dev() {
-    let app: Router = govai_api::core_router(
-        "v0.5_dev",
-        GovaiEnvironment::Dev,
-    );
+    let app: Router = govai_api::core_router("v0.5_dev", GovaiEnvironment::Dev);
 
     let res = app
         .oneshot(

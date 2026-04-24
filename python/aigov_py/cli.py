@@ -299,6 +299,10 @@ def run_demo(audit_url: str, api_key: str | None) -> int:
     except (GovAIAPIError, GovAIHTTPError, OSError, TypeError, ValueError):
         return cli_exit.EX_ERR
 
+    if isinstance(summary, dict) and summary.get("ok") is False:
+        print(summary.get("message") or summary.get("error") or "error: /compliance-summary failed", file=sys.stderr)
+        return cli_exit.EX_ERR
+
     verdict = summary.get("verdict") if isinstance(summary, dict) else None
     if not isinstance(verdict, str) or not verdict.strip():
         print("error: /compliance-summary missing verdict", file=sys.stderr)
@@ -539,6 +543,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if not isinstance(summary, dict):
             print("error: expected object from /compliance-summary", file=sys.stderr)
+            return cli_exit.EX_ERR
+
+        if summary.get("ok") is False:
+            print(summary.get("message") or summary.get("error") or "error: /compliance-summary failed", file=sys.stderr)
             return cli_exit.EX_ERR
 
         verdict = summary.get("verdict")

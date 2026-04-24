@@ -174,7 +174,14 @@ fn enforce_evaluation_reported(event: &EvidenceEvent) -> Result<(), PolicyViolat
         .map(|s| !s.trim().is_empty())
         .unwrap_or(false);
 
-    if metric_ok && value_ok && threshold_ok && passed_ok && ai_system_id_ok && dataset_id_ok && model_version_id_ok {
+    if metric_ok
+        && value_ok
+        && threshold_ok
+        && passed_ok
+        && ai_system_id_ok
+        && dataset_id_ok
+        && model_version_id_ok
+    {
         Ok(())
     } else {
         Err(PolicyViolation::new(
@@ -927,8 +934,8 @@ fn human_approved_event_ok(
 #[cfg(test)]
 mod allowlist_tests {
     use super::*;
-    use crate::policy_config::PolicyConfig;
     use crate::policy_config::test_sync::APPROVER_ALLOWLIST_ENV_LOCK;
+    use crate::policy_config::PolicyConfig;
 
     fn human_payload(approver: &str) -> serde_json::Value {
         serde_json::json!({

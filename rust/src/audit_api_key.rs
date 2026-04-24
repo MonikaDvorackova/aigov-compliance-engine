@@ -99,7 +99,8 @@ fn bearer_token(authorization: &str) -> &str {
 }
 
 fn is_usage_routed_path(method: &Method, path: &str) -> bool {
-    (path == "/evidence" && method == Method::POST) || (path == "/compliance-summary" && method == Method::GET)
+    (path == "/evidence" && method == Method::POST)
+        || (path == "/compliance-summary" && method == Method::GET)
 }
 
 pub async fn gate_audit_routes(
@@ -128,10 +129,7 @@ pub async fn gate_audit_routes(
                 .into_response();
         }
 
-        let cap = key_map
-            .get(token)
-            .copied()
-            .flatten();
+        let cap = key_map.get(token).copied().flatten();
         if is_usage_routed_path(request.method(), request.uri().path()) {
             let ch = if request.method() == Method::POST && request.uri().path() == "/evidence" {
                 UsageChannel::EvidenceIngest
