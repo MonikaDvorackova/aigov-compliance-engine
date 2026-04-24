@@ -98,14 +98,22 @@ Required evidence missing. Deployment halted.
 
 ## Quickstart
 
-For a minimal onboarding flow with exact commands (API key → first evidence → compliance check → interpretation), use:
+**Customer / CI install (PyPI):**
+
+```bash
+python -m pip install "aigov-py==0.1.0"
+```
+
+Minimal hosted-style flow (install CLI → evidence → `govai check` → export): [customer-quickstart.md](customer-quickstart.md). Use **one** `GOVAI_RUN_ID` for every `POST /evidence`, `govai check`, and `govai export-run`.
+
+For a local audit service and full demo sequence (clone + database), use:
 
 - [quickstart-5min.md](quickstart-5min.md)
 
 Notes:
 
 - The single authoritative decision is `GET /compliance-summary` (verdict `VALID | INVALID | BLOCKED`).
-- `govai run demo` is the fastest way to produce a complete, policy-satisfying evidence sequence.
+- `govai run demo` is the fastest way to produce a complete, policy-satisfying evidence sequence when running against a local audit service.
 
 ---
 
@@ -316,6 +324,8 @@ Example (missing tenant context):
 - `current_state_from_summary`
 
 ### CLI (`govai`)
+
+Install from PyPI: `python -m pip install "aigov-py==0.1.0"`. GitHub Actions: [github-action.md](github-action.md).
 
 | Command | Purpose |
 |---------|---------|
