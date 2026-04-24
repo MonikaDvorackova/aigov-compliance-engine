@@ -195,7 +195,10 @@ fn load_from_filesystem(
                     path: Some(p.display().to_string()),
                 };
                 log_loaded(&p, &env_label, &cfg);
-                ResolvedPolicyConfig { config: cfg, source: src }
+                ResolvedPolicyConfig {
+                    config: cfg,
+                    source: src,
+                }
             }
             ReadOutcome::Missing => {
                 eprintln!(

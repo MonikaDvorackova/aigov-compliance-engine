@@ -1,11 +1,11 @@
 use crate::audit_store::StoredRecord;
 use crate::schema::EvidenceEvent;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use serde::Serialize;
-use std::collections::BTreeMap;
 
 fn canonical_json_bytes<T: Serialize>(value: &T) -> Vec<u8> {
     // serde_json keeps insertion order, but we need canonical ordering
@@ -151,7 +151,10 @@ fn extract_canonical_identifiers(events: &[EvidenceEvent]) -> serde_json::Value 
     // Match projection: only risk lifecycle events contribute to the authoritative risk_id set.
     let mut risk_ids: BTreeMap<String, ()> = BTreeMap::new();
     for e in events.iter() {
-        if e.event_type != "risk_recorded" && e.event_type != "risk_mitigated" && e.event_type != "risk_reviewed" {
+        if e.event_type != "risk_recorded"
+            && e.event_type != "risk_mitigated"
+            && e.event_type != "risk_reviewed"
+        {
             continue;
         }
         if let Some(rid) = payload_get_str(&e.payload, "risk_id") {
@@ -316,8 +319,14 @@ fn extract_promotion_decision(events: &[EvidenceEvent]) -> Option<serde_json::Va
 }
 
 fn extract_model_version(events: &[EvidenceEvent]) -> Option<serde_json::Value> {
-    let trained = events.iter().rev().find(|e| e.event_type == "model_trained");
-    let promoted = events.iter().rev().find(|e| e.event_type == "model_promoted");
+    let trained = events
+        .iter()
+        .rev()
+        .find(|e| e.event_type == "model_trained");
+    let promoted = events
+        .iter()
+        .rev()
+        .find(|e| e.event_type == "model_promoted");
 
     let trained = match trained {
         Some(t) => t,
@@ -350,14 +359,16 @@ fn extract_model_version(events: &[EvidenceEvent]) -> Option<serde_json::Value> 
     if let Some(promoted) = promoted {
         let pp = &promoted.payload;
         let artifact_path = payload_get_str(pp, "artifact_path");
-        out.as_object_mut()
-            .unwrap()
-            .insert("artifact_path".to_string(), serde_json::json!(artifact_path));
+        out.as_object_mut().unwrap().insert(
+            "artifact_path".to_string(),
+            serde_json::json!(artifact_path),
+        );
 
         let promotion_reason = payload_get_str(pp, "promotion_reason");
-        out.as_object_mut()
-            .unwrap()
-            .insert("promotion_reason".to_string(), serde_json::json!(promotion_reason));
+        out.as_object_mut().unwrap().insert(
+            "promotion_reason".to_string(),
+            serde_json::json!(promotion_reason),
+        );
     }
 
     Some(out)
@@ -367,7 +378,10 @@ fn extract_risk_register(events: &[EvidenceEvent]) -> Option<serde_json::Value> 
     // Gather unique risk_ids from risk lifecycle events.
     let mut risk_ids: BTreeMap<String, ()> = BTreeMap::new();
     for e in events.iter() {
-        if e.event_type != "risk_recorded" && e.event_type != "risk_mitigated" && e.event_type != "risk_reviewed" {
+        if e.event_type != "risk_recorded"
+            && e.event_type != "risk_mitigated"
+            && e.event_type != "risk_reviewed"
+        {
             continue;
         }
         if let Some(rid) = payload_get_str(&e.payload, "risk_id") {

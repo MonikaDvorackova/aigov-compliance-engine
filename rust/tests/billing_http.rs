@@ -8,9 +8,9 @@ use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
-use uuid::Uuid;
 use std::sync::Mutex;
 use tower::ServiceExt;
+use uuid::Uuid;
 
 use aigov_audit::api_usage::{key_fingerprint, ApiUsageState};
 use aigov_audit::evidence_usage::FREE_TIER_EVIDENCE_LIMIT;
@@ -384,7 +384,8 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
         .await
         .unwrap();
     assert_eq!(r1.status(), StatusCode::OK);
-    let b1: Value = serde_json::from_slice(&r1.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let b1: Value =
+        serde_json::from_slice(&r1.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(b1["environment"], "staging");
 
     let e2 = uuid::Uuid::new_v4().to_string();
@@ -402,7 +403,8 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
         .await
         .unwrap();
     assert_eq!(r2.status(), StatusCode::BAD_REQUEST);
-    let b2: Value = serde_json::from_slice(&r2.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let b2: Value =
+        serde_json::from_slice(&r2.into_body().collect().await.unwrap().to_bytes()).unwrap();
     let err = b2["error"].as_str().unwrap_or("");
     assert!(
         err.contains("does not match") && err.contains("staging"),
@@ -420,7 +422,8 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
         .await
         .unwrap();
     assert_eq!(r3.status(), StatusCode::OK);
-    let b3: Value = serde_json::from_slice(&r3.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let b3: Value =
+        serde_json::from_slice(&r3.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(b3["deployment_environment"], "staging");
     assert_eq!(b3["ledger_environment"], "staging");
     assert!(b3["ledger_environment_note"].is_null());
@@ -471,7 +474,10 @@ async fn ingest_policy_violation_includes_code_and_message() {
     assert_eq!(v["error"], "policy_violation");
     assert_eq!(v["code"], "missing_data_registered");
     assert!(v["message"].as_str().unwrap_or("").trim().len() > 0);
-    assert!(v["message"].as_str().unwrap_or("").contains("model_trained"));
+    assert!(v["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("model_trained"));
 
     // Decision is persisted into the same audit log (replayable / regulator-readable).
     let log_path = project::resolve_ledger_path("audit_log.jsonl", "default");
@@ -481,7 +487,10 @@ async fn ingest_policy_violation_includes_code_and_message() {
     assert_eq!(last["decision"], "rejected");
     assert_eq!(last["event_type"], "model_trained");
     assert_eq!(last["policy_environment"], "dev");
-    assert_eq!(last["policy_version"], policy_version_for(GovaiEnvironment::Dev));
+    assert_eq!(
+        last["policy_version"],
+        policy_version_for(GovaiEnvironment::Dev)
+    );
     assert_eq!(last["violation"]["code"], v["code"]);
 }
 
@@ -531,7 +540,10 @@ async fn allowed_ingest_emits_policy_decision_record() {
     assert_eq!(last["decision"], "allowed");
     assert_eq!(last["event_type"], "data_registered");
     assert_eq!(last["policy_environment"], "dev");
-    assert_eq!(last["policy_version"], policy_version_for(GovaiEnvironment::Dev));
+    assert_eq!(
+        last["policy_version"],
+        policy_version_for(GovaiEnvironment::Dev)
+    );
     assert!(last["violation"].is_null());
 }
 
@@ -596,12 +608,14 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
         .expect("key billing");
 
     let ym = metering::year_month_utc_now();
-    sqlx::query("DELETE FROM public.govai_team_usage_monthly WHERE team_id = $1 AND year_month = $2")
-        .bind(team_id)
-        .bind(ym)
-        .execute(&pool)
-        .await
-        .ok();
+    sqlx::query(
+        "DELETE FROM public.govai_team_usage_monthly WHERE team_id = $1 AND year_month = $2",
+    )
+    .bind(team_id)
+    .bind(ym)
+    .execute(&pool)
+    .await
+    .ok();
     sqlx::query(
         r#"
         INSERT INTO public.govai_team_usage_monthly (team_id, year_month, new_run_ids, evidence_events)

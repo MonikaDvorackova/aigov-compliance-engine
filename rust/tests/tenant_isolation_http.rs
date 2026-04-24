@@ -145,7 +145,8 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
         .await
         .unwrap();
     assert_eq!(bundle_b.status(), StatusCode::OK);
-    let v: Value = serde_json::from_slice(&bundle_b.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let v: Value =
+        serde_json::from_slice(&bundle_b.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(v["ok"], false);
 
     let summary_b = app
@@ -211,7 +212,8 @@ async fn missing_tenant_context_is_rejected_in_prod() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-    let v: Value = serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let v: Value =
+        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(v["ok"], false);
     assert_eq!(v["error"], "missing_tenant_context");
     assert_eq!(v["code"], "missing_tenant_context");
@@ -264,7 +266,10 @@ async fn bearer_fingerprint_fallback_selects_tenant_ledger_at_route_level() {
 
     let lp = project::resolve_ledger_path("audit_log.jsonl", &tenant);
     let raw = std::fs::read_to_string(&lp).unwrap_or_default();
-    assert!(raw.contains(&run_id), "fingerprint tenant ledger should contain run_id");
+    assert!(
+        raw.contains(&run_id),
+        "fingerprint tenant ledger should contain run_id"
+    );
 }
 
 #[tokio::test]
@@ -309,7 +314,10 @@ async fn dev_defaults_to_default_tenant_ledger_without_headers() {
 
     let lp = project::resolve_ledger_path("audit_log.jsonl", "default");
     let raw = std::fs::read_to_string(&lp).unwrap_or_default();
-    assert!(raw.contains(&run_id), "default tenant ledger should contain run_id");
+    assert!(
+        raw.contains(&run_id),
+        "default tenant ledger should contain run_id"
+    );
 }
 
 #[tokio::test]
@@ -353,4 +361,3 @@ async fn verify_log_missing_tenant_context_is_rejected_in_prod() {
     assert_eq!(v["code"], "missing_tenant_context");
     assert!(v["message"].as_str().unwrap_or("").trim().len() > 0);
 }
-

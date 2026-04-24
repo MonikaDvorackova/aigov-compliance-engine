@@ -28,7 +28,10 @@ struct ChannelUsage {
 #[derive(Debug, Clone)]
 pub enum UsageError {
     /// Configured quota exceeded.
-    QuotaExceeded { limit: u64, current: u64 },
+    QuotaExceeded {
+        limit: u64,
+        current: u64,
+    },
     Database(String),
 }
 
@@ -62,9 +65,7 @@ impl ApiUsageState {
         }
         if mode == "postgres" {
             return Ok(Self {
-                inner: Arc::new(ApiUsageInner::Postgres {
-                    pool: pool.clone(),
-                }),
+                inner: Arc::new(ApiUsageInner::Postgres { pool: pool.clone() }),
             });
         }
         Err(format!(
@@ -143,7 +144,10 @@ async fn try_increment_postgres(
             tx.rollback()
                 .await
                 .map_err(|e| UsageError::Database(e.to_string()))?;
-            return Err(UsageError::QuotaExceeded { limit: lim, current: c });
+            return Err(UsageError::QuotaExceeded {
+                limit: lim,
+                current: c,
+            });
         }
     }
 

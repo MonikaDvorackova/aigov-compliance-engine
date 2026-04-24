@@ -55,11 +55,13 @@ pub async fn check_evidence_quota(
 
     let n = count.unwrap_or(0).max(0) as u64;
     if n >= FREE_TIER_EVIDENCE_LIMIT {
-        return Err(CheckEvidenceQuotaError::Exceeded(LegacyEvidenceQuotaExceeded {
-            used: n,
-            limit: FREE_TIER_EVIDENCE_LIMIT,
-            period_start: period,
-        }));
+        return Err(CheckEvidenceQuotaError::Exceeded(
+            LegacyEvidenceQuotaExceeded {
+                used: n,
+                limit: FREE_TIER_EVIDENCE_LIMIT,
+                period_start: period,
+            },
+        ));
     }
     Ok(())
 }
@@ -84,7 +86,10 @@ pub async fn increment_evidence_usage(pool: &DbPool, tenant_id: &str) -> Result<
     Ok(())
 }
 
-pub async fn get_evidence_usage(pool: &DbPool, tenant_id: &str) -> Result<(i64, NaiveDate), String> {
+pub async fn get_evidence_usage(
+    pool: &DbPool,
+    tenant_id: &str,
+) -> Result<(i64, NaiveDate), String> {
     let period = current_period_start_utc();
     let count: Option<i64> = sqlx::query_scalar(
         r#"
@@ -159,7 +164,9 @@ mod tests {
         .execute(&pool)
         .await
         .expect("seed");
-        let err = check_evidence_quota(&pool, &tid).await.expect_err("at limit");
+        let err = check_evidence_quota(&pool, &tid)
+            .await
+            .expect_err("at limit");
         match err {
             CheckEvidenceQuotaError::Exceeded(e) => {
                 assert_eq!(e.used, FREE_TIER_EVIDENCE_LIMIT);

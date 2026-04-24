@@ -308,30 +308,13 @@ mod tests {
     #[test]
     fn precheck_blocks_per_run() {
         let l = PlanLimits::for_plan(GovaiPlan::Free);
-        let e = precheck_ingest(
-            GovaiPlan::Free,
-            l,
-            0,
-            0,
-            true,
-            "r1",
-            1001,
-        );
+        let e = precheck_ingest(GovaiPlan::Free, l, 0, 0, true, "r1", 1001);
         assert!(e.is_err());
     }
 
     #[test]
     fn precheck_allows_enterprise() {
         let l = PlanLimits::for_plan(GovaiPlan::Enterprise);
-        assert!(precheck_ingest(
-            GovaiPlan::Enterprise,
-            l,
-            0,
-            0,
-            true,
-            "r1",
-            999_999,
-        )
-        .is_ok());
+        assert!(precheck_ingest(GovaiPlan::Enterprise, l, 0, 0, true, "r1", 999_999,).is_ok());
     }
 }
