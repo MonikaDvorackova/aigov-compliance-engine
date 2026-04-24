@@ -1,15 +1,92 @@
-# Technical documentation (v0.1)
+# Technical documentation
 
 **Authoritative layout for the current implementation:** [ARCHITECTURE.md](../ARCHITECTURE.md), [DEMO_FLOW.md](../DEMO_FLOW.md), [OPEN_SOURCE_SCOPE.md](../OPEN_SOURCE_SCOPE.md). **Canonical HTTP v1 contract:** [`api/govai-http-v1.openapi.yaml`](../api/govai-http-v1.openapi.yaml). This file retains a compact technical summary.
 
 ## Scope
 
-Proof-of-concept for:
+Implemented scope:
 
 - Tamper-evident audit logging (hash-chained JSONL records)
 - Policy-as-code enforcement before append (`v0.4_human_approval`)
 - Dataset fingerprint and governance fields in `data_registered`
 - Per-run exportable evidence bundle and Markdown report
+
+---
+
+## Product Scope
+
+GovAI is a CI compliance gate for AI systems with audit evidence export.
+
+It:
+
+- accepts evidence via POST /evidence
+- enforces policy constraints at write time
+- produces deterministic decision via GET /compliance-summary
+- blocks CI if verdict != VALID
+- exports audit data via GET /api/export/:run_id
+
+Guarantees:
+
+- deterministic decision for given evidence + policy_version
+- append-only evidence log
+- hash chaining integrity
+
+Non-guarantees:
+
+- not a legal certification
+- not full compliance coverage
+- does not generate missing evidence
+
+## When to use GovAI
+
+- deploying ML models via CI/CD
+- enforcing approval workflows before release
+- requiring audit evidence for decisions
+
+## Decision states
+
+VALID:  
+All required evidence present. Deployment allowed.
+
+INVALID:  
+Evidence present but fails policy. Deployment rejected.
+
+BLOCKED:  
+Required evidence missing. Deployment halted.
+
+## Pricing
+
+Free:
+
+- limited runs per month
+- limited events per run
+- includes:
+  - compliance summary
+  - CI gate
+  - audit export
+
+Pro:
+
+- higher limits
+- includes everything in Free
+
+Enterprise:
+
+- custom limits
+- includes:
+  - SLA
+  - security review support
+  - custom policy configuration
+
+Note:
+Limits are exposed via GET /usage.
+
+## Auditability and Trust
+
+- append-only logs
+- hash chaining (prev_hash → record_hash)
+- deterministic decision (policy_version)
+- exportable audit JSON
 
 ## Rust evidence service (`rust/`)
 
@@ -51,4 +128,4 @@ See `rust/src/policy.rs` for the exact rules.
 
 ## EU AI Act (mapping only)
 
-Mechanisms above can be **discussed** in terms of Articles 9–13 (risk, data, documentation, logging, transparency) for research and communication. The **implementation** remains a small PoC; mapping does not imply regulatory completeness.
+Mechanisms above can be described in terms of Articles 9–13 (risk, data, documentation, logging, transparency) as a framing for engineering mechanisms. Mapping does not imply regulatory completeness.

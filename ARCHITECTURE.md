@@ -1,6 +1,6 @@
-# Architecture (v0.1)
+# Architecture
 
-This document describes the **implemented** layout: binaries, HTTP surface, on-disk artifacts, and main Python entrypoints. It is **not** a roadmap.
+This document describes the implemented layout: binaries, HTTP surface, on-disk artifacts, and main entrypoints.
 
 ## Core vs enterprise layer
 
@@ -31,6 +31,49 @@ There is **no edge** between the two subgraphs on purpose: enterprise tables and
 | **Core (frozen)** | Append-only `audit_log.jsonl`, `policy.rs` enforcement on `POST /evidence`, bundle/projection/compliance-summary routes that read the log only (`/bundle`, `/bundle-hash`, `/compliance-summary`, `/verify*`). Event schema (`schema.rs`), canonical contracts in [docs/strong-core-contract-note.md](docs/strong-core-contract-note.md). | This is the **portable regulation-agnostic contract**; changes are intentional and versioned. |
 | **Enterprise layer** | Supabase JWT auth and team-scoped **`/api/*`** routes: **`/api/me`**, **`/api/assessments`**, **`/api/compliance-workflow*`** backed by Postgres **`teams`**, **`team_members`**, product **RBAC** (`rust/src/rbac.rs`), **`compliance_workflow`** (migration `0003_compliance_workflow.sql`). Dashboard + Python Supabase helpers target this stack. | **Optional product layer** (same repo): **not** the same stability or portability guarantee as the core ledger API. Detail: [ENTERPRISE_LAYER.md](ENTERPRISE_LAYER.md). |
 
+---
+
+## Product Scope
+
+GovAI is a CI compliance gate for AI systems with audit evidence export.
+
+It:
+
+- accepts evidence via POST /evidence
+- enforces policy constraints at write time
+- produces deterministic decision via GET /compliance-summary
+- blocks CI if verdict != VALID
+- exports audit data via GET /api/export/:run_id
+
+Guarantees:
+
+- deterministic decision for given evidence + policy_version
+- append-only evidence log
+- hash chaining integrity
+
+Non-guarantees:
+
+- not a legal certification
+- not full compliance coverage
+- does not generate missing evidence
+
+## When to use GovAI
+
+- deploying ML models via CI/CD
+- enforcing approval workflows before release
+- requiring audit evidence for decisions
+
+## Decision states
+
+VALID:  
+All required evidence present. Deployment allowed.
+
+INVALID:  
+Evidence present but fails policy. Deployment rejected.
+
+BLOCKED:  
+Required evidence missing. Deployment halted.
+
 **Explicit separation (reuse / integration):**
 
 | If you need only… | Integrate with… | You can ignore… |
@@ -45,7 +88,7 @@ There is **no edge** between the two subgraphs on purpose: enterprise tables and
 
 **Rule of thumb:** anything that **writes** hash-chained evidence or enforces `policy.rs` is core. Anything that **scopes users to a team**, checks **JWT + DB role permissions**, or stores **workflow rows** is enterprise layer and does **not** replace or append to the immutable ledger.
 
-**Process note (v0.1):** the server builds a Postgres pool at startup (`DATABASE_URL`); core routes do not use JWT, while **`/api/*`** requires it. See [ENTERPRISE_LAYER.md](ENTERPRISE_LAYER.md#boundaries-vs-frozen-core).
+**Process note:** the server builds a Postgres pool at startup (`DATABASE_URL`); core routes do not use JWT, while **`/api/*`** requires it. See [ENTERPRISE_LAYER.md](ENTERPRISE_LAYER.md#boundaries-vs-frozen-core).
 
 ## High-level data flow
 
@@ -132,7 +175,7 @@ Auth for `/api/me`, `/api/assessments`, and `/api/compliance-workflow*` requires
 | `verify` | CLI checks local `docs/audit`, `docs/evidence`, `docs/reports` + `GET /verify-log` |
 | `ci_fallback` | Synthetic evidence when fetch fails; **forbidden** when `AIGOV_MODE=prod` |
 | `ingest_run` | Upserts run metadata to Supabase `runs` (+ storage hooks if configured) |
-| `prototype_domain` | Shared demo IDs / governance payloads for the iris PoC |
+| `prototype_domain` | Shared IDs / governance payloads for the reference Iris flow |
 
 Other Makefile-backed helpers (same package): `report_init`, `report_fill`, `audit_close`, `evidence_pack` — see root `Makefile` targets.
 
@@ -155,7 +198,7 @@ Next.js (App Router): `/login`, `/runs` (list), `/runs/[id]` (detail). Run rows 
 
 ## EU AI Act (mapping only)
 
-Mechanisms in this repo can be **described** in terms of EU AI Act articles for research and communication. The **implementation** remains a small PoC; mapping does not imply regulatory completeness. See [OPEN_SOURCE_SCOPE.md](OPEN_SOURCE_SCOPE.md).
+Mechanisms in this repo can be described in terms of EU AI Act articles as a framing for engineering mechanisms; mapping does not imply regulatory completeness. See [OPEN_SOURCE_SCOPE.md](OPEN_SOURCE_SCOPE.md).
 
 ## Known limitation (documented in contract note)
 

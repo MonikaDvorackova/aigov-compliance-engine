@@ -1,6 +1,47 @@
 # GovAI
 
-GovAI turns ML deployment into a verifiable decision system.
+GovAI is a CI compliance gate for AI systems with audit evidence export.
+
+## Product Scope
+
+GovAI is a CI compliance gate for AI systems with audit evidence export.
+
+It:
+
+- accepts evidence via POST /evidence
+- enforces policy constraints at write time
+- produces deterministic decision via GET /compliance-summary
+- blocks CI if verdict != VALID
+- exports audit data via GET /api/export/:run_id
+
+Guarantees:
+
+- deterministic decision for given evidence + policy_version
+- append-only evidence log
+- hash chaining integrity
+
+Non-guarantees:
+
+- not a legal certification
+- not full compliance coverage
+- does not generate missing evidence
+
+## When to use GovAI
+
+- deploying ML models via CI/CD
+- enforcing approval workflows before release
+- requiring audit evidence for decisions
+
+## Decision states
+
+VALID:  
+All required evidence present. Deployment allowed.
+
+INVALID:  
+Evidence present but fails policy. Deployment rejected.
+
+BLOCKED:  
+Required evidence missing. Deployment halted.
 
 ## Install
 
@@ -216,3 +257,37 @@ GovAI can be used as a CI compliance gate. See `docs/github-action.md`.
 
 - Core: the append-only audit log, policy enforcement at POST /evidence, and the single authoritative projection GET /compliance-summary (decision + state).
 - Non-Core: workflow tables/queues and helper tooling/CLI wrappers. They may display or transport evidence, but they do not decide.
+
+## Pricing
+
+Free:
+
+- limited runs per month
+- limited events per run
+- includes:
+  - compliance summary
+  - CI gate
+  - audit export
+
+Pro:
+
+- higher limits
+- includes everything in Free
+
+Enterprise:
+
+- custom limits
+- includes:
+  - SLA
+  - security review support
+  - custom policy configuration
+
+Note:
+Limits are exposed via GET /usage.
+
+## Auditability and Trust
+
+- append-only logs
+- hash chaining (prev_hash → record_hash)
+- deterministic decision (policy_version)
+- exportable audit JSON

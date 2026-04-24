@@ -18,9 +18,9 @@ const LANDING_SHELL_BACKGROUND = [
 ].join(", ");
 
 const PROOF_ITEMS = [
-  { label: "Compliance Summary", detail: "Derived projection · regulation mapping" },
+  { label: "Compliance Summary", detail: "Deterministic verdict from evidence" },
   { label: "Replayable state", detail: "Deterministic replay from ledger" },
-  { label: "Audit-ready exports", detail: "Reproducible outputs for review" },
+  { label: "Audit export", detail: "Verifiable JSON output" },
 ] as const;
 
 export default function Page() {
@@ -44,7 +44,7 @@ export default function Page() {
             color: "var(--govai-text)",
           }}
         >
-          GovAI turns compliance evidence into a production decision.
+          Ship AI only when it passes a compliance gate
         </h1>
 
         <p
@@ -56,7 +56,7 @@ export default function Page() {
             color: "var(--govai-text-secondary)",
           }}
         >
-          Each run resolves to VALID, INVALID, or BLOCKED — based on evaluation, approval, and promotion rules.
+          GovAI blocks your CI unless the run has valid evidence and approval
         </p>
 
         <div
@@ -86,7 +86,7 @@ export default function Page() {
             />
           </div>
           <div style={{ marginTop: 10, fontSize: 11.5, lineHeight: 1.4, color: "var(--govai-text-tertiary)" }}>
-            Full lifecycle. Verifiable. Deterministic.
+            CI gate · evidence log · audit export
           </div>
         </div>
 
@@ -101,10 +101,10 @@ export default function Page() {
           }}
         >
           <Link className="govai_btn govai_btnPrimary" href="/runs">
-            Open runs
+            Get started
           </Link>
           <Link className="govai_btn govai_btnGhost" href="/login">
-            Sign in
+            Request demo
           </Link>
         </div>
       </div>
@@ -125,24 +125,16 @@ export default function Page() {
         }}
       >
         <p style={{ margin: "0 0 10px", fontSize: 13, lineHeight: 1.55, color: "var(--govai-text)" }}>
-          Most AI systems produce compliance data.
-          <br />
-          Few tell you what to do next.
+          Hard CI gate: pipeline fails unless verdict = VALID
         </p>
         <p style={{ margin: "0 0 14px", fontSize: 13, lineHeight: 1.5, color: "var(--govai-text-secondary)" }}>
-          GovAI does.
+          Evidence-first: append-only structured logs
         </p>
         <p style={{ margin: "0 0 10px", fontSize: 13, lineHeight: 1.55, color: "var(--govai-text-secondary)" }}>
-          Every run is evaluated into a clear outcome:
-          <br />
-          VALID, INVALID, or BLOCKED.
+          Audit export: verifiable JSON output
         </p>
         <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6, color: "var(--govai-text-tertiary)" }}>
-          No ambiguity.
-          <br />
-          No hidden states.
-          <br />
-          No false positives.
+          Verdicts: VALID / INVALID / BLOCKED
         </p>
       </div>
 
@@ -171,20 +163,20 @@ export default function Page() {
         >
           {[
             {
-              title: "Decision-first interface",
-              detail: "Know in seconds whether a model can be deployed.",
+              title: "When to use",
+              detail: "Deploying ML models; enforcing approval workflows; preparing for audits.",
             },
             {
-              title: "Strict rule engine",
-              detail: "Evaluation → approval → promotion. No shortcuts.",
+              title: "Decision states",
+              detail: "VALID: allowed. INVALID: rejected. BLOCKED: missing evidence.",
             },
             {
-              title: "Consistent state model",
-              detail: "No contradictions between signals and decisions.",
+              title: "Gate behavior",
+              detail: "CI fails unless verdict = VALID.",
             },
             {
-              title: "Separation of concerns",
-              detail: "Decision surface on top, technical audit below.",
+              title: "Audit export",
+              detail: "Exportable JSON for external verification.",
             },
           ].map((item) => (
             <li
@@ -238,7 +230,7 @@ export default function Page() {
           </span>
         </div>
         <p style={{ ...primaryCardDescription(), margin: "0 0 8px", fontSize: 11.5, lineHeight: 1.4 }}>
-          Ingest → verify → export.
+          Evidence → decision → export.
         </p>
         <div role="presentation" aria-hidden="true" className="govai_walkthrough_shell" />
       </Panel>
@@ -293,7 +285,7 @@ export default function Page() {
           color: "var(--govai-text-tertiary)",
         }}
       >
-        Hash-backed ledger · policy-bound transitions · exportable audit trail
+        Append-only evidence · deterministic verdict · exportable audit JSON
       </p>
 
       <style>{`
