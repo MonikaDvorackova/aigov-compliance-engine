@@ -129,6 +129,8 @@ Result: VALID / INVALID / BLOCKED
 
 ## API surface (Python + CLI)
 
+**Canonical v1 contract:** [`api/govai-http-v1.openapi.yaml`](../api/govai-http-v1.openapi.yaml) (implicit v1 paths; breaking-change and deprecation rules are defined in `info.description`). **`GET /` is internal** (ops banner only); documented SDK/CLI flows use **stable** paths only.
+
 ### HTTP (Rust audit service)
 
 **Auth:** `POST /evidence`, `GET /usage`, `GET /verify`, `GET /bundle`, `GET /compliance-summary`, and `GET /api/export/:run_id` require a Bearer token when audit API keys are enforced. `GET /bundle-hash` and `GET /verify-log` are intentionally unauthenticated.

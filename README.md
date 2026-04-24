@@ -12,7 +12,11 @@ GovAI turns ML deployment into a verifiable decision system.
 
 ## Quickstart
 
-Start the audit service, emit one expense-model run, and read the authoritative decision from GET /compliance-summary.
+Start the audit service, emit evidence, and read the authoritative decision from `GET /compliance-summary`.
+
+Minimal onboarding (API key → first evidence → compliance check → interpretation):
+
+- `docs/quickstart-5min.md`
 
     export DATABASE_URL='postgresql://USER:PASSWORD@127.0.0.1:5432/DBNAME'
     make audit_bg
@@ -193,6 +197,10 @@ Use govai check to gate deployments. It does not compute compliance locally — 
 
     export RUN_ID='<your run id>'
     govai check "$RUN_ID"
+
+## GitHub Actions integration
+
+GovAI can be used as a CI compliance gate. See `docs/github-action.md`.
 
 ## Core vs Non-Core
 

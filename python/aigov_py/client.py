@@ -11,6 +11,8 @@ from aigov_py.types import AssessmentCreate, AssessmentOut, GovaiError
 
 
 class GovaiClient:
+    """Enterprise HTTP helpers (e.g. ``POST /api/assessments``). Shapes: ``api/govai-http-v1.openapi.yaml``."""
+
     def __init__(self, base_url: str, api_key: Optional[str] = None, timeout_sec: float = 30.0):
         self.base_url = base_url.rstrip("/") + "/"
         self.api_key = api_key
