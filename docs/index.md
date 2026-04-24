@@ -36,44 +36,24 @@ Operationally, the stack answers: **can this run be promoted?** A run maps to a 
 
 ## Why GovAI
 
-Without GovAI:
+GovAI provides:
 
-- logs are scattered across systems
-- no verifiable audit trail
-- compliance decisions are manual and non-reproducible
-
-With GovAI:
-
-- every step is recorded as structured evidence
-- decisions are derived, not guessed
-- full audit chain is verifiable end-to-end
+- an append-only evidence ledger (`POST /evidence`)
+- policy enforcement at write time (out-of-order or missing prerequisites are rejected)
+- a single authoritative decision for a run (`GET /compliance-summary` → `VALID | INVALID | BLOCKED`)
 
 ---
 
 ## Quickstart
 
-```bash
-cd python
-pip install -e ".[dev]"
+For a minimal onboarding flow with exact commands (API key → first evidence → compliance check → interpretation), use:
 
-govai run demo
-```
+- [quickstart-5min.md](quickstart-5min.md)
 
-Requires a running audit service.
+Notes:
 
-Expected output:
-
-```
-VALID
-```
-
-Prerequisites: Rust, Python ≥ 3.10, PostgreSQL (`DATABASE_URL`).
-
-**Deployment tier** (`dev` / `staging` / `prod`): variable precedence, defaults, and migrations — [env-resolution.md](env-resolution.md).
-
-Start the audit service (default `http://127.0.0.1:8088`; see README for `make audit_bg`).
-
-Other flows: `make run` → approve → promote, or `make flow_full`.
+- The single authoritative decision is `GET /compliance-summary` (verdict `VALID | INVALID | BLOCKED`).
+- `govai run demo` is the fastest way to produce a complete, policy-satisfying evidence sequence.
 
 ---
 
@@ -139,7 +119,30 @@ Result: VALID / INVALID / BLOCKED
 
 - **Canonical tenant source**: `X-GovAI-Project: <project>`
 - **Safe fallback (when header is absent)**: API key fingerprint (derived from Bearer token), when present
-- **Non-dev enforcement**: in `staging` / `prod`, any route that touches the audit ledger will return `400` with `{"ok":false,"error":"missing_tenant_context"}` if neither `X-GovAI-Project` nor a Bearer token is present.
+- **Non-dev enforcement**: in `staging` / `prod`, any route that touches the audit ledger will return `400` with a normalized error body when neither `X-GovAI-Project` nor a Bearer token is present.
+
+#### Normalized error format (all endpoints)
+
+All error responses include:
+
+- `ok: false`
+- `error`: machine-readable code/category
+- `code`: machine-readable discriminator (usually equals `error`; for `policy_violation` it is the specific policy rule code)
+- `message`: human-friendly explanation
+
+Optional fields like `details`, `policy_version`, `metering`, `used`, `limit`, etc. may appear depending on the endpoint.
+
+Example (missing tenant context):
+
+```json
+{
+  "ok": false,
+  "error": "missing_tenant_context",
+  "code": "missing_tenant_context",
+  "message": "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
+  "policy_version": "v0.5_prod"
+}
+```
 
 **`GET /usage` contract (minimal monetization surface):**
 
@@ -184,7 +187,7 @@ Result: VALID / INVALID / BLOCKED
 }
 ```
 
-- **Failure behavior**: may return `401` (`{"ok":false,"error":"unauthorized"}`) or `403` (`team_not_configured_for_api_key`) depending on server mode and configuration.
+- **Failure behavior**: may return `401` (`unauthorized`) or `403` (`team_not_configured_for_api_key`) depending on server mode and configuration (always with `code` + `message`).
 
 #### Endpoint: `GET /api/export/:run_id`
 
@@ -201,8 +204,24 @@ Result: VALID / INVALID / BLOCKED
   "environment": "dev",
   "exported_at_utc": "2026-04-23T12:34:56Z",
   "run": { "run_id": "..." },
-  "evidence_hashes": { "bundle_sha256": "...", "chain_head_record_sha256": "..." },
-  "decision": { "evaluation_passed": true },
+  "evidence_hashes": {
+    "bundle_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "chain_head_record_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "log_chain": [
+      {
+        "event_id": "…",
+        "ts_utc": "…",
+        "event_type": "…",
+        "prev_hash": null,
+        "record_hash": "…"
+      }
+    ]
+  },
+  "decision": {
+    "human_approval": null,
+    "promotion": null,
+    "evaluation_passed": true
+  },
   "timestamps": { "first_event_ts_utc": "...", "last_event_ts_utc": "..." }
 }
 ```
@@ -221,7 +240,7 @@ Result: VALID / INVALID / BLOCKED
 { "ok": true, "policy_version": "v0.4_human_approval" }
 ```
 
-- **Failure behavior**: HTTP `200` with `{"ok":false,"error":"...", "policy_version":"..."}` when the chain is invalid.
+- **Failure behavior**: HTTP `200` with normalized error fields (`ok:false`, `error`, `code`, `message`, `policy_version`) when the chain is invalid.
 
 | Method | Path | Role |
 |--------|------|------|

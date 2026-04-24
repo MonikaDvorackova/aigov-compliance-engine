@@ -198,6 +198,16 @@ Use govai check to gate deployments. It does not compute compliance locally — 
     export RUN_ID='<your run id>'
     govai check "$RUN_ID"
 
+## Audit export (machine-readable)
+
+To export a run into a **stable JSON** document that includes the **decision** fields and **hashes** (bundle SHA-256 + append-only chain hashes), use:
+
+    govai export-run --run-id "$RUN_ID"
+
+HTTP equivalent:
+
+    curl -sS "http://127.0.0.1:8088/api/export/$RUN_ID"
+
 ## GitHub Actions integration
 
 GovAI can be used as a CI compliance gate. See `docs/github-action.md`.
@@ -205,4 +215,4 @@ GovAI can be used as a CI compliance gate. See `docs/github-action.md`.
 ## Core vs Non-Core
 
 - Core: the append-only audit log, policy enforcement at POST /evidence, and the single authoritative projection GET /compliance-summary (decision + state).
-- Non-Core: workflow tables/queues, UI/dashboard, and helper tooling/CLI wrappers. They may display or transport evidence, but they do not decide.
+- Non-Core: workflow tables/queues and helper tooling/CLI wrappers. They may display or transport evidence, but they do not decide.
