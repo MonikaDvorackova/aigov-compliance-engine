@@ -32,6 +32,16 @@ Non-guarantees:
 - enforcing approval workflows before release
 - requiring audit evidence for decisions
 
+## Private pilot and pricing
+
+**Private pilot:** Email [hello@govbase.dev](mailto:hello@govbase.dev?subject=GovAI%20private%20pilot%20request) with subject `GovAI private pilot request` to scope a pilot (one AI system or CI pipeline, hosted or self-hosted audit endpoint, feedback during the pilot). This is not a productized signup flow.
+
+**Indicative tiers** (no self-service checkout or automated billing on this site):
+
+- **Free — €0:** local testing and evaluation, limited runs, PyPI CLI (`aigov-py==0.1.0`), audit evidence export.
+- **Pro — €199/month:** production CI, higher run/event limits, GitHub Action, hosted audit endpoint, standard support.
+- **Enterprise — Custom:** regulated or larger teams, custom limits, self-hosted or dedicated deployment, SSO/access control where supported, audit and procurement support.
+
 ## Decision states
 
 VALID:  
