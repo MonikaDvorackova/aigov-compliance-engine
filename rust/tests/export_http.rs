@@ -67,6 +67,9 @@ async fn export_run_includes_decision_and_hashes() {
     let run_id = uuid::Uuid::new_v4().to_string();
     let event_id = uuid::Uuid::new_v4().to_string();
 
+    let audit_log_path = format!("audit_log__{tenant}.jsonl");
+    std::fs::write(&audit_log_path, "").expect("create tenant audit log");
+
     let evidence = json!({
         "event_id": event_id,
         "event_type": "data_registered",
@@ -103,10 +106,12 @@ async fn export_run_includes_decision_and_hashes() {
         )
         .await
         .unwrap();
-    assert_eq!(ingest_res.status(), StatusCode::OK);
-    let ingest_v: Value =
-        serde_json::from_slice(&ingest_res.into_body().collect().await.unwrap().to_bytes())
-            .unwrap();
+    let ingest_status = ingest_res.status();
+    let ingest_body = ingest_res.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(ingest_status, StatusCode::OK);
+
+    let ingest_v: Value = serde_json::from_slice(&ingest_body).unwrap();
     let record_hash = ingest_v["record_hash"]
         .as_str()
         .expect("record_hash")
@@ -124,11 +129,12 @@ async fn export_run_includes_decision_and_hashes() {
         )
         .await
         .unwrap();
-    assert_eq!(export_res.status(), StatusCode::OK);
+    let export_status = export_res.status();
+    let export_body = export_res.into_body().collect().await.unwrap().to_bytes();
 
-    let export_v: Value =
-        serde_json::from_slice(&export_res.into_body().collect().await.unwrap().to_bytes())
-            .unwrap();
+    assert_eq!(export_status, StatusCode::OK);
+
+    let export_v: Value = serde_json::from_slice(&export_body).unwrap();
 
     assert_eq!(export_v["ok"], true);
     assert_eq!(export_v["schema_version"], "aigov.audit_export.v1");
