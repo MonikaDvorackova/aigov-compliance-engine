@@ -72,7 +72,7 @@ def _resolve_run_id(ns: argparse.Namespace) -> str | None:
     rid = (getattr(ns, "run_id", None) or "").strip()
     if rid:
         return rid
-    env = (os.environ.get("RUN_ID") or "").strip()
+    env = (os.environ.get("GOVAI_RUN_ID") or os.environ.get("RUN_ID") or "").strip()
     if env:
         return env
     return None
@@ -375,33 +375,33 @@ def build_parser() -> argparse.ArgumentParser:
     s_run_sub.add_parser("demo", help="Full evidence sequence for one run; prints VALID or BLOCKED.")
 
     s_verify = sub.add_parser("verify", help="Verify local docs/* artifacts and governance hash chain.")
-    s_verify.add_argument("--run-id", default=None, help="Run UUID (fallback: env RUN_ID).")
+    s_verify.add_argument("--run-id", default=None, help="Run UUID (fallback: env GOVAI_RUN_ID or RUN_ID).")
     s_verify.add_argument("--json", action="store_true", help="Machine-readable output on stdout.")
 
     s_fetch = sub.add_parser("fetch-bundle", help="GET /bundle + /bundle-hash → docs/evidence/<run_id>.json")
-    s_fetch.add_argument("--run-id", default=None, help="Run UUID (fallback: env RUN_ID).")
+    s_fetch.add_argument("--run-id", default=None, help="Run UUID (fallback: env GOVAI_RUN_ID or RUN_ID).")
 
     s_sum = sub.add_parser("compliance-summary", help="GET /compliance-summary for a run_id.")
-    s_sum.add_argument("--run-id", default=None, help="Run UUID (fallback: env RUN_ID).")
+    s_sum.add_argument("--run-id", default=None, help="Run UUID (fallback: env GOVAI_RUN_ID or RUN_ID).")
 
     s_check = sub.add_parser(
         "check",
         help="Check compliance decision (VALID / INVALID / BLOCKED). Exit 0 only if VALID.",
     )
-    s_check.add_argument("--run-id", dest="check_run_id", default=None, help="Run UUID (overrides positional / RUN_ID).")
-    s_check.add_argument("run_id", nargs="?", default=None, help="Run UUID (fallback: env RUN_ID).")
+    s_check.add_argument("--run-id", dest="check_run_id", default=None, help="Run UUID (overrides positional / GOVAI_RUN_ID / RUN_ID).")
+    s_check.add_argument("run_id", nargs="?", default=None, help="Run UUID (fallback: env GOVAI_RUN_ID or RUN_ID).")
 
     s_report = sub.add_parser("report", help="Render docs/reports/<run_id>.md from evidence JSON.")
-    s_report.add_argument("--run-id", default=None, help="Run UUID (fallback: env RUN_ID).")
+    s_report.add_argument("--run-id", default=None, help="Run UUID (fallback: env GOVAI_RUN_ID or RUN_ID).")
 
     s_export = sub.add_parser("export-bundle", help="Write docs/audit + docs/packs zip for a run.")
-    s_export.add_argument("--run-id", default=None, help="Run UUID (fallback: env RUN_ID).")
+    s_export.add_argument("--run-id", default=None, help="Run UUID (fallback: env GOVAI_RUN_ID or RUN_ID).")
 
     s_export_run = sub.add_parser(
         "export-run",
         help="GET /api/export/:run_id (machine-readable JSON).",
     )
-    s_export_run.add_argument("--run-id", default=None, help="Run UUID (fallback: env RUN_ID).")
+    s_export_run.add_argument("--run-id", default=None, help="Run UUID (fallback: env GOVAI_RUN_ID or RUN_ID).")
     s_export_run.add_argument(
         "--project",
         default=os.environ.get("GOVAI_PROJECT"),
@@ -463,7 +463,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.cmd == "verify":
         run_id = _resolve_run_id(args)
         if not run_id:
-            print("run id required: pass --run-id or set RUN_ID", file=sys.stderr)
+            print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
             return cli_exit.EX_INVALID
         prev_audit = os.environ.get("AIGOV_AUDIT_URL")
         prev_end = os.environ.get("AIGOV_AUDIT_ENDPOINT")
@@ -484,7 +484,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.cmd == "fetch-bundle":
         run_id = _resolve_run_id(args)
         if not run_id:
-            print("run id required: pass --run-id or set RUN_ID", file=sys.stderr)
+            print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
             return cli_exit.EX_INVALID
         prev_audit = os.environ.get("AIGOV_AUDIT_URL")
         prev_end = os.environ.get("AIGOV_AUDIT_ENDPOINT")
@@ -511,7 +511,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.cmd == "compliance-summary":
         run_id = _resolve_run_id(args)
         if not run_id:
-            print("run id required: pass --run-id or set RUN_ID", file=sys.stderr)
+            print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
             return cli_exit.EX_INVALID
         try:
             client = GovAIClient(audit_url, api_key=api_key)
@@ -561,7 +561,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.cmd == "report":
         run_id = _resolve_run_id(args)
         if not run_id:
-            print("run id required: pass --run-id or set RUN_ID", file=sys.stderr)
+            print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
             return cli_exit.EX_INVALID
         prev = os.environ.get("RUN_ID")
         try:
@@ -582,7 +582,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.cmd == "export-bundle":
         run_id = _resolve_run_id(args)
         if not run_id:
-            print("run id required: pass --run-id or set RUN_ID", file=sys.stderr)
+            print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
             return cli_exit.EX_INVALID
         try:
             export_bundle_mod.main(["govai", run_id])
@@ -596,7 +596,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.cmd == "export-run":
         run_id = _resolve_run_id(args)
         if not run_id:
-            print("run id required: pass --run-id or set RUN_ID", file=sys.stderr)
+            print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
             return cli_exit.EX_INVALID
         try:
             client = GovAIClient(audit_url, api_key=api_key)

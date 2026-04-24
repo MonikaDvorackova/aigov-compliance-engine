@@ -1,42 +1,50 @@
 # GitHub Actions: GovAI compliance gate
 
-This repository includes a reusable **composite GitHub Action** that runs `govai check` as a CI gate.
+This repository includes a reusable **composite GitHub Action** that installs the GovAI CLI from **PyPI** (`aigov-py==0.1.0`) and runs `govai check` as a CI gate.
 
-`govai check` calls the GovAI audit service `GET /compliance-summary` for a `run_id` and:
+`govai check` calls the GovAI audit service `GET /compliance-summary` for a run id and:
 
 - prints the compliance verdict (`VALID`, `INVALID`, or `BLOCKED`)
 - exits **0 only when the verdict is `VALID`**
 
 That means your workflow **fails CI unless the verdict is `VALID`**.
 
-This should be used as a **required check** before merging to `main`.
+Configure branch protection so this job is a **required check** before merging to `main`.
 
 ## What the action does
 
 - Sets up **Python 3.11**
-- Installs the GovAI CLI from this action repository (`python/`, which provides `govai`)
-- Runs `govai check <run_id>`
-- Fails the job automatically if the verdict is not `VALID` (non-zero exit code)
+- Installs **`aigov-py==0.1.0`** from PyPI (provides the `govai` CLI)
+- Runs `govai check --run-id <run_id>` with your GovAI audit base URL and optional API key
+- Fails the job if the verdict is not `VALID` (non-zero exit code)
+
+## Official action reference
+
+Use this composite action from the GovAI repository (pin a semver tag such as `@v1`):
+
+`MonikaDvorackova/aigov-compliance-engine/.github/actions/govai-check@v1`
 
 ## Action inputs
 
-Action: `.github/actions/govai-check`
+- **`run_id`** (required): **GovAI evidence run id** — the same string you use as `run_id` when posting events to `POST /evidence`, in `govai check`, and in `govai export-run`. This is **not** GitHub’s numeric `github.run_id`; store your UUID (or other server-accepted id) in a repository variable such as `GOVAI_RUN_ID` and pass it here.
+- **`base_url`** (required): GovAI audit service base URL (e.g. `https://govai.example.com`). Maps to env `GOVAI_AUDIT_BASE_URL` for the CLI.
+- **`api_key`** (optional): GovAI API key (Bearer token). Maps to env `GOVAI_API_KEY` for the CLI.
 
-- **`run_id`** (required): GovAI run ID to check
-- **`base_url`** (required): GovAI audit service base URL (e.g. `https://govai.example.com`)
-- **`api_key`** (optional): GovAI API key (Bearer token)
+## Required repository variables / secrets
 
-## Required repository Variable / Secret
+Configure in **Settings → Secrets and variables → Actions**:
 
-In customer CI, you typically configure these as GitHub repository settings:
+| Name | Type | Required | Purpose |
+|------|------|----------|---------|
+| `GOVAI_AUDIT_BASE_URL` | Variable | Yes | Base URL of the GovAI audit API |
+| `GOVAI_RUN_ID` | Variable | Yes* | Evidence run id shared across evidence submission, `govai check`, and export |
+| `GOVAI_API_KEY` | Secret | If your API enforces auth | Bearer token for the audit API |
 
-- **Variable** `GOVAI_RUN_ID`: run identifier produced by your pipeline
-- **Variable** `GOVAI_AUDIT_BASE_URL`: GovAI audit service base URL
-- **Secret** `GOVAI_API_KEY` (optional): API key, if your GovAI audit service requires auth
+\*Or supply `run_id` from another step/job output instead of `vars.GOVAI_RUN_ID`.
 
-## Minimal copy-paste workflow (customer usage)
+Use **one** `GOVAI_RUN_ID` value for the whole release pipeline: every `POST /evidence` for that deployment, the `govai check` step, and `govai export-run` must refer to the **same** id.
 
-When this action is published (example name below), use:
+## Minimal copy-paste workflow
 
 ```yaml
 name: GovAI compliance gate
@@ -54,21 +62,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: GovAI compliance check
-        uses: govai/check-action@v1
+        uses: MonikaDvorackova/aigov-compliance-engine/.github/actions/govai-check@v1
         with:
           run_id: ${{ vars.GOVAI_RUN_ID }}
           base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}
           api_key: ${{ secrets.GOVAI_API_KEY }}
-
-# Configure branch protection so this job is a required check
-# before merging to main.
 ```
 
-Important: this repository does **not** currently publish `aigov-py` to PyPI, so the action must install the CLI from the action repository contents. External usage therefore requires pinning to a Git ref (`@v1`, commit SHA, etc.) that includes the `python/` package directory.
+## Local usage in this repository
 
-## Local usage in this repo (before publishing)
-
-Until the action is published, reference it from this repo directly:
+Reference the action from the same repo (omit `actions/checkout` only if you do not need your application sources):
 
 ```yaml
 - name: GovAI compliance check
@@ -78,3 +81,13 @@ Until the action is published, reference it from this repo directly:
     base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}
     api_key: ${{ secrets.GOVAI_API_KEY }}
 ```
+
+## CLI install (without the composite action)
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install "aigov-py==0.1.0"
+govai check --run-id "$GOVAI_RUN_ID"
+```
+
+See also: [customer-quickstart.md](customer-quickstart.md).
