@@ -10,6 +10,7 @@ import {
 import { Panel } from "./_ui/console/primitives";
 import { primaryCardDescription } from "./_ui/console/surfaces";
 import InfraShell from "./_ui/InfraShell";
+import { LandingCopyBlock } from "./components/LandingCopyBlock";
 
 /** Muted shell — no chromatic gradients; optional neutral lift only */
 const LANDING_SHELL_BACKGROUND = [
@@ -18,9 +19,9 @@ const LANDING_SHELL_BACKGROUND = [
 ].join(", ");
 
 const PROOF_ITEMS = [
-  { label: "Compliance Summary", detail: "Derived projection · regulation mapping" },
+  { label: "Compliance Summary", detail: "Deterministic verdict from evidence" },
   { label: "Replayable state", detail: "Deterministic replay from ledger" },
-  { label: "Audit-ready exports", detail: "Reproducible outputs for review" },
+  { label: "Audit export", detail: "Verifiable JSON output" },
 ] as const;
 
 export default function Page() {
@@ -44,7 +45,7 @@ export default function Page() {
             color: "var(--govai-text)",
           }}
         >
-          GovAI turns compliance evidence into a production decision.
+          Ship AI only when it passes a compliance gate
         </h1>
 
         <p
@@ -56,7 +57,7 @@ export default function Page() {
             color: "var(--govai-text-secondary)",
           }}
         >
-          Each run resolves to VALID, INVALID, or BLOCKED — based on evaluation, approval, and promotion rules.
+          GovAI blocks your CI unless the run has valid evidence and approval
         </p>
 
         <div
@@ -86,7 +87,7 @@ export default function Page() {
             />
           </div>
           <div style={{ marginTop: 10, fontSize: 11.5, lineHeight: 1.4, color: "var(--govai-text-tertiary)" }}>
-            Full lifecycle. Verifiable. Deterministic.
+            CI gate · evidence log · audit export
           </div>
         </div>
 
@@ -101,10 +102,10 @@ export default function Page() {
           }}
         >
           <Link className="govai_btn govai_btnPrimary" href="/runs">
-            Open runs
+            Get started
           </Link>
           <Link className="govai_btn govai_btnGhost" href="/login">
-            Sign in
+            Request demo
           </Link>
         </div>
       </div>
@@ -125,25 +126,92 @@ export default function Page() {
         }}
       >
         <p style={{ margin: "0 0 10px", fontSize: 13, lineHeight: 1.55, color: "var(--govai-text)" }}>
-          Most AI systems produce compliance data.
-          <br />
-          Few tell you what to do next.
+          Hard CI gate: pipeline fails unless verdict = VALID
         </p>
         <p style={{ margin: "0 0 14px", fontSize: 13, lineHeight: 1.5, color: "var(--govai-text-secondary)" }}>
-          GovAI does.
+          Evidence-first: append-only structured logs
         </p>
         <p style={{ margin: "0 0 10px", fontSize: 13, lineHeight: 1.55, color: "var(--govai-text-secondary)" }}>
-          Every run is evaluated into a clear outcome:
-          <br />
-          VALID, INVALID, or BLOCKED.
+          Audit export: verifiable JSON output
         </p>
         <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.6, color: "var(--govai-text-tertiary)" }}>
-          No ambiguity.
-          <br />
-          No hidden states.
-          <br />
-          No false positives.
+          Verdicts: VALID / INVALID / BLOCKED
         </p>
+      </div>
+
+      <div style={{ marginTop: 26, maxWidth: 560, marginLeft: "auto", marginRight: "auto" }}>
+        <div
+          style={{
+            fontSize: 9.5,
+            fontWeight: 600,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: "var(--govai-text-label)",
+            marginBottom: 10,
+            textAlign: "center",
+          }}
+        >
+          GovAI CLI / PyPI
+        </div>
+        <div
+          style={{
+            padding: "14px 14px 12px",
+            borderRadius: 10,
+            border: "1px solid var(--govai-border-faint)",
+            background: "var(--govai-bg-elevated)",
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 650, letterSpacing: "-0.02em", color: "var(--govai-text)" }}>
+            Run AI compliance checks in CI
+          </div>
+          <div style={{ marginTop: 4, fontSize: 12.5, lineHeight: 1.45, color: "var(--govai-text-secondary)" }}>
+            Deterministic verdicts. No heuristics. No ambiguity.
+          </div>
+
+          <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+            <LandingCopyBlock label="Install" code={"pip install aigov-py==0.1.0"} />
+            <LandingCopyBlock
+              label="Quick usage"
+              code={[
+                "export GOVAI_AUDIT_BASE_URL=...",
+                "export RUN_ID=...",
+                "",
+                "govai check",
+              ].join("\n")}
+            />
+            <div className="govai_landing_cli_grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <LandingCopyBlock label="Output (VALID)" code={"VALID"} tone="ok" />
+              <LandingCopyBlock
+                label="Output (failure)"
+                code={"GovAI compliance gate failed: verdict=INVALID"}
+                tone="error"
+              />
+            </div>
+            <LandingCopyBlock
+              label="CI usage (GitHub Action)"
+              code={[
+                "- uses: MonikaDvorackova/aigov-compliance-engine/.github/actions/govai-check@v1",
+                "  with:",
+                "    run_id: ${{ github.run_id }}",
+                "    base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}",
+              ].join("\n")}
+            />
+          </div>
+
+          <ul
+            style={{
+              margin: "12px 0 0",
+              paddingLeft: 16,
+              color: "var(--govai-text-secondary)",
+              fontSize: 12.5,
+              lineHeight: 1.45,
+            }}
+          >
+            <li>Deterministic compliance verdict (VALID / INVALID / BLOCKED)</li>
+            <li>Fails CI on non-compliant runs</li>
+            <li>Fully auditable decision path</li>
+          </ul>
+        </div>
       </div>
 
       <div style={{ marginTop: 26, maxWidth: 560, marginLeft: "auto", marginRight: "auto" }}>
@@ -171,20 +239,20 @@ export default function Page() {
         >
           {[
             {
-              title: "Decision-first interface",
-              detail: "Know in seconds whether a model can be deployed.",
+              title: "When to use",
+              detail: "Deploying ML models; enforcing approval workflows; preparing for audits.",
             },
             {
-              title: "Strict rule engine",
-              detail: "Evaluation → approval → promotion. No shortcuts.",
+              title: "Decision states",
+              detail: "VALID: allowed. INVALID: rejected. BLOCKED: missing evidence.",
             },
             {
-              title: "Consistent state model",
-              detail: "No contradictions between signals and decisions.",
+              title: "Gate behavior",
+              detail: "CI fails unless verdict = VALID.",
             },
             {
-              title: "Separation of concerns",
-              detail: "Decision surface on top, technical audit below.",
+              title: "Audit export",
+              detail: "Exportable JSON for external verification.",
             },
           ].map((item) => (
             <li
@@ -238,7 +306,7 @@ export default function Page() {
           </span>
         </div>
         <p style={{ ...primaryCardDescription(), margin: "0 0 8px", fontSize: 11.5, lineHeight: 1.4 }}>
-          Ingest → verify → export.
+          Evidence → decision → export.
         </p>
         <div role="presentation" aria-hidden="true" className="govai_walkthrough_shell" />
       </Panel>
@@ -293,10 +361,63 @@ export default function Page() {
           color: "var(--govai-text-tertiary)",
         }}
       >
-        Hash-backed ledger · policy-bound transitions · exportable audit trail
+        Append-only evidence · deterministic verdict · exportable audit JSON
       </p>
 
       <style>{`
+        .govai_code_card {
+          border-radius: 10px;
+          background: var(--govai-bg-panel);
+          box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset;
+          overflow: hidden;
+        }
+        .govai_code_card__top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 10px 10px 8px;
+          border-bottom: 1px solid var(--govai-border-faint);
+          background: color-mix(in srgb, var(--govai-bg-elevated) 60%, transparent);
+        }
+        .govai_code_card__label {
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
+          color: var(--govai-text-label);
+        }
+        .govai_code_copy {
+          height: 26px;
+          padding: 0 10px;
+          border-radius: 8px;
+          border: 1px solid var(--govai-border);
+          background: transparent;
+          color: var(--govai-text-secondary);
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+        }
+        .govai_code_copy:hover {
+          background: var(--govai-bg-elevated);
+          border-color: var(--govai-border);
+          color: var(--govai-text);
+        }
+        .govai_code_copy:focus-visible {
+          outline: 2px solid var(--govai-border-focus);
+          outline-offset: 2px;
+        }
+        .govai_code_pre {
+          margin: 0;
+          padding: 10px 10px 12px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: 11px;
+          line-height: 1.55;
+          color: var(--govai-text-secondary);
+          white-space: pre;
+          overflow-x: auto;
+        }
         .govai_btn {
           display: inline-flex;
           align-items: center;
@@ -574,6 +695,16 @@ export default function Page() {
         }
         @media (max-width: 560px) {
           .govai_secondary_pair {
+            grid-template-columns: 1fr;
+          }
+        }
+        @media (max-width: 560px) {
+          .govai_code_pre {
+            font-size: 10.5px;
+          }
+        }
+        @media (max-width: 560px) {
+          .govai_landing_cli_grid {
             grid-template-columns: 1fr;
           }
         }

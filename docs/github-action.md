@@ -7,12 +7,14 @@ This repository includes a reusable **composite GitHub Action** that runs `govai
 - prints the compliance verdict (`VALID`, `INVALID`, or `BLOCKED`)
 - exits **0 only when the verdict is `VALID`**
 
-That means your workflow **passes only when the verdict is `VALID`**.
+That means your workflow **fails CI unless the verdict is `VALID`**.
+
+This should be used as a **required check** before merging to `main`.
 
 ## What the action does
 
 - Sets up **Python 3.11**
-- Installs the GovAI CLI (`aigov-py`, which provides `govai`)
+- Installs the GovAI CLI from this action repository (`python/`, which provides `govai`)
 - Runs `govai check <run_id>`
 - Fails the job automatically if the verdict is not `VALID` (non-zero exit code)
 
@@ -57,7 +59,12 @@ jobs:
           run_id: ${{ vars.GOVAI_RUN_ID }}
           base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}
           api_key: ${{ secrets.GOVAI_API_KEY }}
+
+# Configure branch protection so this job is a required check
+# before merging to main.
 ```
+
+Important: this repository does **not** currently publish `aigov-py` to PyPI, so the action must install the CLI from the action repository contents. External usage therefore requires pinning to a Git ref (`@v1`, commit SHA, etc.) that includes the `python/` package directory.
 
 ## Local usage in this repo (before publishing)
 

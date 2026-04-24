@@ -13,7 +13,7 @@ GovAI is a CI gate that returns a compliance verdict for a given `RUN_ID`. Your 
 ### Step 1: Install CLI
 
 ```bash
-pip install aigov-py
+pip install -e ./python
 govai --version
 ```
 
@@ -132,7 +132,7 @@ Output: one JSON file with the run decision and hashes.
 ## Troubleshooting
 
 - **`govai: command not found`**
-  - Install again with `pip install aigov-py` and ensure your Python user bin directory is on `PATH` (or run via the same venv you installed into).
+  - Install again with `pip install -e ./python` and ensure your Python user bin directory is on `PATH` (or run via the same venv you installed into).
 
 - **Network errors (timeout / connection refused / DNS failure)**
   - Verify `GOVAI_AUDIT_BASE_URL` is correct and reachable from CI.

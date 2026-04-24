@@ -25,7 +25,13 @@ runs:
       run: |
         set -euo pipefail
         python -m pip install --upgrade pip
-        pip install aigov-py
+        # NOTE: `aigov-py` is not published on PyPI. Install from this action's repository contents.
+        REPO_ROOT="$(cd "${GITHUB_ACTION_PATH}/../../.." && pwd)"
+        if [ ! -d "${REPO_ROOT}/python" ]; then
+          echo "::error::GovAI action is missing python/ package directory. This action cannot install the CLI without vendored sources."
+          exit 1
+        fi
+        python -m pip install -e "${REPO_ROOT}/python"
         govai --version
 
     - name: Run GovAI compliance check
@@ -46,4 +52,9 @@ runs:
           exit 1
         fi
 
-        govai check "${{ inputs.run_id }}"
+        verdict="$(govai check --run-id "${{ inputs.run_id }}")"
+        verdict="$(printf '%s' "${verdict}" | tr -d '\r\n' | xargs)"
+        if [ "${verdict}" != "VALID" ]; then
+          echo "::error::GovAI compliance gate failed: verdict=${verdict}"
+          exit 1
+        fi

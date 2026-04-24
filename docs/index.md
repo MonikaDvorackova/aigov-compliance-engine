@@ -1,6 +1,6 @@
 # GovAI documentation
 
-Short entry point for the **GovAI Compliance Engine** — append-only evidence, policy-gated lifecycle events, and derived compliance reads. For full setup and demos, see the [root README](../README.md) and [ARCHITECTURE.md](../ARCHITECTURE.md).
+GovAI documentation for a CI compliance gate with audit evidence export.
 
 ---
 
@@ -26,21 +26,73 @@ Short entry point for the **GovAI Compliance Engine** — append-only evidence, 
 
 ## Overview
 
-GovAI is a system for governance of ML runs: training and lifecycle steps are recorded as events in an append-only log; policy decides which events may be appended next. **Bundles** and **compliance summaries** are **derived** from that log — they are not separate sources of truth.
+GovAI is a **CI compliance gate for AI systems with audit evidence export**.
 
-Operationally, the stack answers: **can this run be promoted?** A run maps to a **compliance state** (e.g. VALID / INVALID / BLOCKED) following a fixed order: **evaluation → approval → promotion**.
+It records lifecycle events (training, evaluation, approval, promotion) as structured evidence and enforces a policy that determines whether a run can be promoted.
 
-**Disclaimer:** This is a **research prototype**. It does not provide legal compliance or certification. Identifiers and contracts are regulation-agnostic unless you add a separate presentation layer.
+Each run produces a single decision for a given run_id:
+
+- VALID
+- INVALID
+- BLOCKED
+
+## Problem
+
+AI deployments often lack a deterministic release gate.
+
+Evidence is fragmented across pipelines, tools, and manual approvals, and there is no single system that answers:
+
+"Is this run allowed to be deployed?"
+
+GovAI provides a single decision endpoint and enforces that decision in CI.
+
+## Product Scope
+
+It:
+
+- accepts evidence via `POST /evidence`
+- enforces policy constraints at write time
+- produces deterministic decision via `GET /compliance-summary`
+- blocks CI if verdict != `VALID`
+- exports audit data via `GET /api/export/:run_id`
+
+Guarantees:
+
+- deterministic decision for given evidence + `policy_version`
+- append-only evidence log
+- hash chaining integrity
+
+Non-guarantees:
+
+- not a legal certification
+- not full compliance coverage
+- does not generate missing evidence
+
+## When to use GovAI
+
+- deploying ML models via CI/CD
+- enforcing approval workflows before release
+- requiring audit evidence for decisions
+
+## Decision states
+
+**VALID**:  
+All required evidence present. Deployment allowed.
+
+**INVALID**:  
+Evidence present but fails policy. Deployment rejected.
+
+**BLOCKED**:  
+Required evidence missing. Deployment halted.
 
 ---
 
 ## Why GovAI
 
-GovAI provides:
-
-- an append-only evidence ledger (`POST /evidence`)
-- policy enforcement at write time (out-of-order or missing prerequisites are rejected)
-- a single authoritative decision for a run (`GET /compliance-summary` → `VALID | INVALID | BLOCKED`)
+- single decision endpoint: GET /compliance-summary
+- policy-enforced evidence writes: POST /evidence
+- CI gate: fail unless verdict = VALID
+- audit export: GET /api/export/:run_id
 
 ---
 
@@ -274,3 +326,36 @@ Example (missing tenant context):
 | `govai export-run` | Fetch machine-readable audit export JSON |
 
 Deeper detail: [ARCHITECTURE.md](../ARCHITECTURE.md)
+
+
+---
+
+## Pricing
+
+Free:
+- limited runs per month
+- limited events per run
+- includes:
+  - compliance summary
+  - CI gate
+  - audit export
+
+Pro:
+- higher limits
+- includes everything in Free
+
+Enterprise:
+- custom limits
+- includes:
+  - SLA
+  - security review support
+  - custom policy configuration
+
+Usage limits are enforced at runtime and reflected in GET /usage.
+
+## Auditability and Trust
+
+- append-only logs
+- hash chaining (prev_hash → record_hash)
+- deterministic decision (policy_version)
+- exportable audit JSON (GET /api/export/:run_id)

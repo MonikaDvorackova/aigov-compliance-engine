@@ -211,6 +211,28 @@ jobs:
           pip install -U pip
           pip install -e .
 
+      - name: Apply audit DB migrations (sqlx)
+        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
+        run: |
+          set -euo pipefail
+          test -n "${DATABASE_URL:-}" || { echo "DATABASE_URL is missing"; exit 1; }
+
+          cargo install sqlx-cli --locked --no-default-features --features postgres,rustls
+
+          rm -rf "${GITHUB_WORKSPACE}/.aigov_ci_migrations"
+          mkdir -p "${GITHUB_WORKSPACE}/.aigov_ci_migrations"
+
+          cp rust/migrations/0001_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
+          cp rust/migrations/0002_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
+          cp rust/migrations/0003_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
+          cp rust/migrations/0004_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
+          cp rust/migrations/0005_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
+          cp rust/migrations/0006_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
+          cp rust/migrations/0007_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
+          cp rust/migrations/0008_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
+
+          sqlx migrate run --source "${GITHUB_WORKSPACE}/.aigov_ci_migrations" --database-url "${DATABASE_URL}"
+
       - name: Start audit service
         if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
         run: |
@@ -269,8 +291,11 @@ jobs:
 
             cd python
             . .venv/bin/activate
-            python aigov_py/ci_fallback.py "${RUN_ID}"
             cd "${GITHUB_WORKSPACE}"
+
+            make run RUN_ID="${RUN_ID}"
+            make approve RUN_ID="${RUN_ID}"
+            make promote RUN_ID="${RUN_ID}"
 
             make report_prepare RUN_ID="${RUN_ID}"
             make evidence_pack RUN_ID="${RUN_ID}"
