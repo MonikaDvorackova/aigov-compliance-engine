@@ -52,4 +52,3 @@ async fn pricing_endpoint_returns_plans_and_units() {
     let tpr = team["events_per_run"].as_u64().unwrap();
     assert!(tpr > ppr && ppr > fpr);
 }
-

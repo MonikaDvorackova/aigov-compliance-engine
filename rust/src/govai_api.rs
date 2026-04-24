@@ -1,18 +1,18 @@
-use crate::api_usage::ApiUsageState;
 use crate::api_usage::key_fingerprint;
+use crate::api_usage::ApiUsageState;
 use crate::audit_api_key;
 use crate::auth::{AuthConfig, CurrentUser};
 use crate::bundle;
 use crate::db::{self, DbPool};
 use crate::evidence_usage;
-use crate::metering::{self, MeteringConfig, MeteringReject, GovaiPlan};
-use crate::pricing;
-use crate::project;
 use crate::govai_environment::GovaiEnvironment;
+use crate::metering::{self, GovaiPlan, MeteringConfig, MeteringReject};
 use crate::policy;
 use crate::policy_config::PolicyConfig;
-use crate::rbac;
+use crate::pricing;
+use crate::project;
 use crate::projection;
+use crate::rbac;
 use crate::schema::EvidenceEvent;
 use crate::verify_chain;
 
@@ -36,14 +36,20 @@ fn json_error(
 ) -> (StatusCode, Json<serde_json::Value>) {
     let mut m = serde_json::Map::new();
     m.insert("ok".to_string(), serde_json::Value::Bool(false));
-    m.insert("error".to_string(), serde_json::Value::String(error.to_string()));
+    m.insert(
+        "error".to_string(),
+        serde_json::Value::String(error.to_string()),
+    );
     m.insert(
         "message".to_string(),
         serde_json::Value::String(message.to_string()),
     );
     // `code` is a stable, machine-readable discriminator.
     // For most errors `code == error`; policy violations override with a more specific code.
-    m.insert("code".to_string(), serde_json::Value::String(error.to_string()));
+    m.insert(
+        "code".to_string(),
+        serde_json::Value::String(error.to_string()),
+    );
     if let Some(pv) = policy_version {
         m.insert(
             "policy_version".to_string(),
@@ -103,7 +109,10 @@ pub async fn health() -> (StatusCode, Json<serde_json::Value>) {
     (StatusCode::OK, Json(json!({ "ok": true })))
 }
 
-pub async fn status(policy_version: &'static str, deployment_env: GovaiEnvironment) -> Json<serde_json::Value> {
+pub async fn status(
+    policy_version: &'static str,
+    deployment_env: GovaiEnvironment,
+) -> Json<serde_json::Value> {
     Json(json!({
         "ok": true,
         "policy_version": policy_version,
@@ -168,9 +177,8 @@ fn prepare_event_for_ingest(
 ) -> Result<(), String> {
     let canon = deployment.as_str();
     if let Some(ref claimed) = event.environment {
-        let norm = normalize_env_label(claimed).ok_or_else(|| {
-            format!("policy_violation: invalid event.environment={claimed:?}")
-        })?;
+        let norm = normalize_env_label(claimed)
+            .ok_or_else(|| format!("policy_violation: invalid event.environment={claimed:?}"))?;
         if norm != canon {
             return Err(format!(
                 "policy_violation: event.environment={claimed:?} does not match server deployment {canon}"
@@ -285,11 +293,7 @@ async fn ingest(
         );
     }
 
-    if let Err(e) = policy::enforce(
-        &event,
-        &log_path,
-        &audit.policy,
-    ) {
+    if let Err(e) = policy::enforce(&event, &log_path, &audit.policy) {
         return json_error(
             StatusCode::BAD_REQUEST,
             "policy_violation",
@@ -364,7 +368,9 @@ async fn ingest(
         let plan = audit.metering.default_plan;
         let limits = metering::PlanLimits::for_plan(plan);
         let ym = metering::year_month_utc_now();
-        let (new_run_ids, evidence_events) = match metering::load_monthly(&audit.pool, team_id, ym).await {
+        let (new_run_ids, evidence_events) = match metering::load_monthly(&audit.pool, team_id, ym)
+            .await
+        {
             Ok(x) => x,
             Err(e) => {
                 return json_error(
@@ -422,7 +428,11 @@ async fn ingest(
                         "policy_version": audit.policy_version
                     })),
                 ),
-                MeteringReject::PerRunEventLimit { run_id, would_be, limit } => (
+                MeteringReject::PerRunEventLimit {
+                    run_id,
+                    would_be,
+                    limit,
+                } => (
                     StatusCode::TOO_MANY_REQUESTS,
                     Json(json!({
                         "ok": false,
@@ -605,7 +615,8 @@ async fn usage_route(
                 None,
             );
         };
-        let plan_name = pricing::resolve_plan(audit_api_key::raw_bearer_token(&headers).unwrap_or(""));
+        let plan_name =
+            pricing::resolve_plan(audit_api_key::raw_bearer_token(&headers).unwrap_or(""));
         let plan_limits = pricing::plan_limits_by_name(plan_name).unwrap_or(pricing::PlanLimits {
             name: "free",
             evidence_events_per_month: 2_500,
@@ -613,7 +624,9 @@ async fn usage_route(
             events_per_run: 1_000,
         });
         let ym = metering::year_month_utc_now();
-        let (new_run_ids, evidence_events) = match metering::load_monthly(&audit.pool, team_id, ym).await {
+        let (new_run_ids, evidence_events) = match metering::load_monthly(&audit.pool, team_id, ym)
+            .await
+        {
             Ok(x) => x,
             Err(e) => {
                 return json_error(
@@ -843,7 +856,8 @@ async fn export_run_route(
 
     let events = canonicalize_events(events);
     let log_path_report = format!("rust/{}", log_path);
-    let bundle_doc = bundle::bundle_document_value(&run_id, audit.policy_version, &log_path_report, &events);
+    let bundle_doc =
+        bundle::bundle_document_value(&run_id, audit.policy_version, &log_path_report, &events);
     let artifact_path = bundle::find_model_artifact_path(&events);
     let bundle_sha256 = bundle::bundle_sha256(
         &run_id,
@@ -853,7 +867,8 @@ async fn export_run_route(
         &events,
     );
 
-    let chain_records = match crate::audit_store::collect_stored_records_for_run(&log_path, &run_id) {
+    let chain_records = match crate::audit_store::collect_stored_records_for_run(&log_path, &run_id)
+    {
         Ok(r) => r,
         Err(e) => {
             return json_error(
@@ -885,13 +900,22 @@ async fn export_run_route(
     let first_ts = events.first().map(|e| e.ts_utc.clone());
     let last_ts = events.last().map(|e| e.ts_utc.clone());
 
-    let human = bundle_doc.get("human_approval").cloned().unwrap_or(serde_json::Value::Null);
+    let human = bundle_doc
+        .get("human_approval")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let human_ts = human
         .get("ts_utc")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let promo = bundle_doc.get("promotion").cloned().unwrap_or(serde_json::Value::Null);
-    let promo_ts = promo.get("ts_utc").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let promo = bundle_doc
+        .get("promotion")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let promo_ts = promo
+        .get("ts_utc")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
     let eval_passed = bundle_doc
         .get("evaluation")
@@ -963,12 +987,15 @@ async fn bundle_hash_route(
                 &events,
             );
 
-            (StatusCode::OK, Json(json!({
-                "ok": true,
-                "run_id": q.run_id,
-                "policy_version": audit.policy_version,
-                "bundle_sha256": digest
-            })))
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "ok": true,
+                    "run_id": q.run_id,
+                    "policy_version": audit.policy_version,
+                    "bundle_sha256": digest
+                })),
+            )
         }
         Err(e) => (
             StatusCode::OK,
@@ -984,10 +1011,7 @@ async fn bundle_hash_route(
     }
 }
 
-async fn verify_log(
-    State(audit): State<AuditState>,
-    headers: HeaderMap,
-) -> (StatusCode, String) {
+async fn verify_log(State(audit): State<AuditState>, headers: HeaderMap) -> (StatusCode, String) {
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
@@ -1104,14 +1128,17 @@ async fn compliance_summary_route(
                 None,
             );
             let verdict = compliance_verdict_from_state(&derived);
-            (StatusCode::OK, Json(json!({
-                "ok": true,
-                "schema_version": "aigov.compliance_summary.v2",
-                "policy_version": audit.policy_version,
-                "run_id": q.run_id,
-                "verdict": verdict,
-                "current_state": derived,
-            })))
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "ok": true,
+                    "schema_version": "aigov.compliance_summary.v2",
+                    "policy_version": audit.policy_version,
+                    "run_id": q.run_id,
+                    "verdict": verdict,
+                    "current_state": derived,
+                })),
+            )
         }
         Err(e) => (
             StatusCode::OK,
@@ -1141,7 +1168,8 @@ fn compliance_verdict_from_state(state: &projection::ComplianceCurrentState) -> 
     let eval_ok = state.model.evaluation_passed == Some(true);
     let risk_ok = state.approval.risk_review_decision.as_deref() == Some("approve");
     let approval_ok = state.approval.human_approval_decision.as_deref() == Some("approve");
-    let promoted = state.model.promotion.model_promoted_present && state.model.promotion.state == "promoted";
+    let promoted =
+        state.model.promotion.model_promoted_present && state.model.promotion.state == "promoted";
 
     if eval_ok && risk_ok && approval_ok && promoted {
         "VALID"
@@ -1812,20 +1840,21 @@ async fn post_review_decision(
         }
     };
 
-    let rec = match db::transition_workflow_review(&state.pool, team_id, &rid, user.user_id, approve)
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "db_error",
-                "We could not persist the review decision. Please retry.",
-                None,
-                Some(json!({ "details": e.to_string() })),
-            )
-        }
-    };
+    let rec =
+        match db::transition_workflow_review(&state.pool, team_id, &rid, user.user_id, approve)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                return json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "db_error",
+                    "We could not persist the review decision. Please retry.",
+                    None,
+                    Some(json!({ "details": e.to_string() })),
+                )
+            }
+        };
 
     match rec {
         Some(r) => (StatusCode::OK, Json(json_ok_workflow(workflow_to_out(r)))),
@@ -1913,26 +1942,21 @@ async fn post_promotion_decision(
         }
     };
 
-    let rec = match db::transition_workflow_promotion(
-        &state.pool,
-        team_id,
-        &rid,
-        user.user_id,
-        allow,
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "db_error",
-                "We could not persist the promotion decision. Please retry.",
-                None,
-                Some(json!({ "details": e.to_string() })),
-            )
-        }
-    };
+    let rec =
+        match db::transition_workflow_promotion(&state.pool, team_id, &rid, user.user_id, allow)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                return json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "db_error",
+                    "We could not persist the promotion decision. Please retry.",
+                    None,
+                    Some(json!({ "details": e.to_string() })),
+                )
+            }
+        };
 
     match rec {
         Some(r) => (
@@ -1955,7 +1979,10 @@ pub fn compliance_workflow_router(pool: DbPool) -> Router {
     let state = AppState { pool };
 
     Router::new()
-        .route("/api/compliance-workflow", get(list_compliance_workflow).post(register_compliance_workflow))
+        .route(
+            "/api/compliance-workflow",
+            get(list_compliance_workflow).post(register_compliance_workflow),
+        )
         .route(
             "/api/compliance-workflow/:run_id",
             get(get_compliance_workflow_one),
