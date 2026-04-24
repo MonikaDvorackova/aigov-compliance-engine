@@ -1,18 +1,63 @@
-# Export migration and test stability
+# Audit report for run `export-migration-and-test-stability`
+
+run_id=export-migration-and-test-stability
+bundle_sha256=4bdfdc0a94adbd4a5550136eb95f761c2384e67c1a1fffc8a864339ede5384fb
+policy_version=v0.5_dev
 
 ## Summary
 
-Fixes migration ordering and stabilizes audit export test coverage.
+### Canonical identifiers (bundle)
+
+- `ai_system_id`: `govai`
+- `dataset_id`: `export-migration-test`
+
+- System: `govai-ci`
+- Actor: `ci-report`
+- Policy version: `v0.5_dev`
+- Evidence bundle: `docs/evidence/export-migration-and-test-stability.json`
+- Evidence bundle SHA256: `4bdfdc0a94adbd4a5550136eb95f761c2384e67c1a1fffc8a864339ede5384fb`
+- Model artifact (reported): `None`
+
+## Traceability
+
+| Item | Value |
+|---|---|
+| Dataset | `migration-test` |
+| Dataset fingerprint | `fp` |
+| Dataset version | `v1` |
+| Dataset governance commitment | `c` |
+| Governance status | `gs` |
+| Rows | `` |
+| Features | `` |
+
+## Risk review register
+
+| Risk ID | Risk class | Severity | Likelihood | Status | Owner | Mitigation | Review decision | Reviewer | Justification |
+|---|---|---:|---:|---|---|---|---|---|---|
+| `` | `` | `` | `` | `` | `` | `` | `` | `` | `` |
 
 ## Evaluation gate
 
-Verified that `GET /api/export/{run_id}` returns HTTP 200 and includes `decision`, `evidence_hashes`, and `chain_head_record_sha256`.
+| Metric | Value | Threshold | Passed |
+|---|---:|---:|---|
+| `` | `` | `` | `` |
 
 ## Human approval gate
 
-No production export behavior was changed. Scope is limited to migration numbering and test setup.
+| Scope | Decision | Approver | Justification |
+|---|---|---|---|
+| `` | `` | `` | `` |
 
-## Verification
+## Promotion
 
-- `cargo test --manifest-path rust/Cargo.toml --test export_http`
-- `python -m pytest python/tests/test_cli_terminal_sdk.py`
+- Promotion reason: ``
+
+## Event timeline
+
+| Time (UTC) | Event | Event id |
+|---|---|---|
+| `2026-04-24T14:40:00Z` | `data_registered` | `47920b56-024f-4428-b156-c3c41da09434` |
+
+## Audit log reference
+
+- Log path (reported by server): `rust/audit_log__default.jsonl`
