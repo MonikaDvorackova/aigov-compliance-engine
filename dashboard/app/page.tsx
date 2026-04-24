@@ -61,6 +61,37 @@ export default function Page() {
 
         <div
           style={{
+            marginTop: 36,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 960,
+              borderRadius: 10,
+              border: "1px solid var(--govai-border-faint)",
+              background: "var(--govai-bg-elevated)",
+              overflow: "hidden",
+            }}
+          >
+            <video
+              src="/videos/govai-demo.mp4"
+              controls
+              muted
+              playsInline
+              style={{ width: "100%", height: "auto", display: "block" }}
+            />
+          </div>
+          <div style={{ marginTop: 10, fontSize: 11.5, lineHeight: 1.4, color: "var(--govai-text-tertiary)" }}>
+            Full lifecycle. Verifiable. Deterministic.
+          </div>
+        </div>
+
+        <div
+          style={{
             display: "flex",
             gap: 8,
             justifyContent: "center",
