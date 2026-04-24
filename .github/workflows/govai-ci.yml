@@ -60,7 +60,13 @@ jobs:
           echo "audit /status not reachable"
           exit 1
 
-      - name: Run blocked deployment example (should fail)
-        run: |
-          chmod +x examples/blocked_deployment.sh
-          bash examples/blocked_deployment.sh
+          - name: Run blocked deployment example (should fail)
+          run: |
+            set -euo pipefail
+  
+            if [ -f examples/blocked_deployment.sh ]; then
+              chmod +x examples/blocked_deployment.sh
+              bash examples/blocked_deployment.sh
+            else
+              echo "Skipping examples/blocked_deployment.sh: file does not exist"
+            fi

@@ -1,0 +1,49 @@
+name: "GovAI Compliance Check"
+description: "Fails CI unless the GovAI compliance verdict is VALID"
+
+inputs:
+  run_id:
+    description: "GovAI run ID to check"
+    required: true
+  base_url:
+    description: "GovAI audit service base URL"
+    required: true
+  api_key:
+    description: "GovAI API key"
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install GovAI CLI
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -m pip install --upgrade pip
+        pip install aigov-py
+        govai --version
+
+    - name: Run GovAI compliance check
+      shell: bash
+      env:
+        GOVAI_AUDIT_BASE_URL: ${{ inputs.base_url }}
+        GOVAI_API_KEY: ${{ inputs.api_key }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${{ inputs.run_id }}" ]; then
+          echo "::error::Missing required input: run_id"
+          exit 1
+        fi
+
+        if [ -z "${GOVAI_AUDIT_BASE_URL:-}" ]; then
+          echo "::error::Missing required input: base_url"
+          exit 1
+        fi
+
+        govai check "${{ inputs.run_id }}"
