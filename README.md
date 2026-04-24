@@ -45,11 +45,22 @@ Required evidence missing. Deployment halted.
 
 ## Install
 
-    cd python
-    python3 -m venv .venv
-    source .venv/bin/activate
-    pip install -e ".[dev]"
-    cd ..
+**GovAI CLI (PyPI — official):**
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install "aigov-py==0.1.0"
+```
+
+**Repository contributors** (editable install from a clone of this repo):
+
+```bash
+cd python
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+cd ..
+```
 
 ## Quickstart
 
@@ -151,8 +162,8 @@ Expected (representative):
     print(run_id)
     PY
 
-    export RUN_ID='<paste run_id>'
-    curl -sS "http://127.0.0.1:8088/compliance-summary?run_id=$RUN_ID"
+    export GOVAI_RUN_ID='<paste run_id>'
+    curl -sS "http://127.0.0.1:8088/compliance-summary?run_id=$GOVAI_RUN_ID"
 
 Expected (representative):
 
@@ -212,7 +223,7 @@ Minimal event flow (in order):
 
 The result is never inferred locally. The decision is read from:
 
-    curl -sS "http://127.0.0.1:8088/compliance-summary?run_id=$RUN_ID"
+    curl -sS "http://127.0.0.1:8088/compliance-summary?run_id=$GOVAI_RUN_ID"
 
 and interpreted only by its returned fields (verdict, current_state, and the policy metadata).
 
@@ -234,24 +245,25 @@ Non-happy paths:
 
 ## CI Integration
 
-Use govai check to gate deployments. It does not compute compliance locally — it calls GET /compliance-summary and exits non-zero unless the server verdict is VALID.
+Use `govai check` to gate deployments. It does not compute compliance locally — it calls `GET /compliance-summary` and exits non-zero unless the server verdict is `VALID`.
 
-    export RUN_ID='<your run id>'
-    govai check "$RUN_ID"
+Use **one** GovAI evidence run id (`GOVAI_RUN_ID`) for every evidence submission, the gate, and export.
+
+    export GOVAI_AUDIT_BASE_URL='https://your-audit-service'
+    export GOVAI_RUN_ID='<your evidence run uuid>'
+    govai check --run-id "$GOVAI_RUN_ID"
+
+See `docs/github-action.md` for the composite GitHub Action (installs `aigov-py==0.1.0` from PyPI).
 
 ## Audit export (machine-readable)
 
 To export a run into a **stable JSON** document that includes the **decision** fields and **hashes** (bundle SHA-256 + append-only chain hashes), use:
 
-    govai export-run --run-id "$RUN_ID"
+    govai export-run --run-id "$GOVAI_RUN_ID"
 
 HTTP equivalent:
 
-    curl -sS "http://127.0.0.1:8088/api/export/$RUN_ID"
-
-## GitHub Actions integration
-
-GovAI can be used as a CI compliance gate. See `docs/github-action.md`.
+    curl -sS "http://127.0.0.1:8088/api/export/$GOVAI_RUN_ID"
 
 ## Core vs Non-Core
 

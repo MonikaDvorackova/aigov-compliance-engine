@@ -174,16 +174,16 @@ export default function Page() {
               label="Quick usage"
               code={[
                 "export GOVAI_AUDIT_BASE_URL=...",
-                "export RUN_ID=...",
+                "export GOVAI_RUN_ID=...   # same id for evidence, check, export",
                 "",
-                "govai check",
+                "govai check --run-id \"$GOVAI_RUN_ID\"",
               ].join("\n")}
             />
             <div className="govai_landing_cli_grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <LandingCopyBlock label="Output (VALID)" code={"VALID"} tone="ok" />
               <LandingCopyBlock
-                label="Output (failure)"
-                code={"GovAI compliance gate failed: verdict=INVALID"}
+                label="Output (non-VALID)"
+                code={"INVALID"}
                 tone="error"
               />
             </div>
@@ -192,8 +192,9 @@ export default function Page() {
               code={[
                 "- uses: MonikaDvorackova/aigov-compliance-engine/.github/actions/govai-check@v1",
                 "  with:",
-                "    run_id: ${{ github.run_id }}",
+                "    run_id: ${{ vars.GOVAI_RUN_ID }}",
                 "    base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}",
+                "    api_key: ${{ secrets.GOVAI_API_KEY }}",
               ].join("\n")}
             />
           </div>
