@@ -59,7 +59,7 @@ jobs:
           done
           echo "audit /status not reachable"
           exit 1
-
+          
       - name: Run blocked deployment example (should fail)
         run: |
           set -euo pipefail
