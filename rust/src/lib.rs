@@ -28,7 +28,8 @@ const LOG_PATH: &str = "audit_log.jsonl";
 
 fn bind_addr_from_env() -> SocketAddr {
     let s = std::env::var("AIGOV_BIND").unwrap_or_else(|_| "127.0.0.1:8088".to_string());
-    s.parse().unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 8088)))
+    s.parse()
+        .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 8088)))
 }
 
 /// Run the HTTP server (same as the `aigov_audit` binary).
@@ -75,10 +76,7 @@ pub async fn run() -> Result<(), String> {
     };
 
     let app: Router = Router::new()
-        .merge(govai_api::core_router(
-            policy_version,
-            deployment_env,
-        ))
+        .merge(govai_api::core_router(policy_version, deployment_env))
         .merge(govai_api::audit_router(
             LOG_PATH,
             policy_version,

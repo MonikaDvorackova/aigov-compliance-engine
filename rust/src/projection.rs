@@ -36,10 +36,9 @@ fn find_last_event_by_scope<'a>(
     event_type: &str,
     scope: &str,
 ) -> Option<&'a EvidenceEvent> {
-    events
-        .iter()
-        .rev()
-        .find(|e| e.event_type == event_type && payload_get_str(&e.payload, "scope").as_deref() == Some(scope))
+    events.iter().rev().find(|e| {
+        e.event_type == event_type && payload_get_str(&e.payload, "scope").as_deref() == Some(scope)
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -207,7 +206,10 @@ pub fn derive_current_state_from_events_with_context(
     // Risk aggregation: for each risk_id, take latest risk_reviewed if present, else latest record/mitigation.
     let mut risk_ids: BTreeMap<String, ()> = BTreeMap::new();
     for e in events.iter() {
-        if !matches!(e.event_type.as_str(), "risk_recorded" | "risk_mitigated" | "risk_reviewed") {
+        if !matches!(
+            e.event_type.as_str(),
+            "risk_recorded" | "risk_mitigated" | "risk_reviewed"
+        ) {
             continue;
         }
         if let Some(rid) = payload_get_str(&e.payload, "risk_id") {
@@ -221,12 +223,23 @@ pub fn derive_current_state_from_events_with_context(
     let canonical_risk_ids: Vec<String> = risk_ids.keys().cloned().collect();
 
     for rid in risk_ids.keys() {
-        let recorded = events.iter().rev().find(|e| e.event_type == "risk_recorded" && payload_get_str(&e.payload, "risk_id").as_deref() == Some(rid.as_str()));
-        let mitigated = events.iter().rev().find(|e| e.event_type == "risk_mitigated" && payload_get_str(&e.payload, "risk_id").as_deref() == Some(rid.as_str()));
-        let reviewed = events.iter().rev().find(|e| e.event_type == "risk_reviewed" && payload_get_str(&e.payload, "risk_id").as_deref() == Some(rid.as_str()));
+        let recorded = events.iter().rev().find(|e| {
+            e.event_type == "risk_recorded"
+                && payload_get_str(&e.payload, "risk_id").as_deref() == Some(rid.as_str())
+        });
+        let mitigated = events.iter().rev().find(|e| {
+            e.event_type == "risk_mitigated"
+                && payload_get_str(&e.payload, "risk_id").as_deref() == Some(rid.as_str())
+        });
+        let reviewed = events.iter().rev().find(|e| {
+            e.event_type == "risk_reviewed"
+                && payload_get_str(&e.payload, "risk_id").as_deref() == Some(rid.as_str())
+        });
 
         // Use recorded payload as the base for classification/severity/likelihood, because mitigations may omit it.
-        let base_payload = recorded.map(|e| &e.payload).or(mitigated.map(|e| &e.payload));
+        let base_payload = recorded
+            .map(|e| &e.payload)
+            .or(mitigated.map(|e| &e.payload));
         let status_event_payload = mitigated.or(recorded).or(reviewed);
 
         let risk_class = base_payload.and_then(|p| payload_get_str(p, "risk_class"));
@@ -242,7 +255,9 @@ pub fn derive_current_state_from_events_with_context(
             risk_review_event_id: Some(e.event_id.clone()),
         });
 
-        let status_payload = status_event_payload.map(|e| &e.payload).unwrap_or(&Value::Null);
+        let status_payload = status_event_payload
+            .map(|e| &e.payload)
+            .unwrap_or(&Value::Null);
         let status = payload_get_str(status_payload, "status");
         let mitigation = payload_get_str(status_payload, "mitigation");
         let owner = payload_get_str(status_payload, "owner");
@@ -286,7 +301,8 @@ pub fn derive_current_state_from_events_with_context(
 
     // Promotion state (derived purely from event existence and payload linkage).
     let human_approval = find_last_event_by_scope(events, "human_approved", "model_promoted");
-    let human_approval_decision = human_approval.and_then(|e| payload_get_str(&e.payload, "decision"));
+    let human_approval_decision =
+        human_approval.and_then(|e| payload_get_str(&e.payload, "decision"));
     let approved_human_event_id = human_approval.map(|e| e.event_id.clone());
     let approval_scope = human_approval.and_then(|e| payload_get_str(&e.payload, "scope"));
     let approver = human_approval.and_then(|e| payload_get_str(&e.payload, "approver"));
@@ -296,7 +312,9 @@ pub fn derive_current_state_from_events_with_context(
         e.event_type == "risk_reviewed"
             && payload_get_str(&e.payload, "decision").as_deref() == Some("approve")
     });
-    let risk_review_decision = risk_review_approved.map(|e| payload_get_str(&e.payload, "decision")).flatten();
+    let risk_review_decision = risk_review_approved
+        .map(|e| payload_get_str(&e.payload, "decision"))
+        .flatten();
 
     let model_promoted_present = find_last_event(events, "model_promoted").is_some();
 
@@ -381,4 +399,3 @@ pub fn derive_current_state_from_bundle_doc(bundle_doc: &Value) -> Option<Compli
     let events: Vec<EvidenceEvent> = serde_json::from_value(events_val).ok()?;
     Some(derive_current_state_from_events(&run_id, &events))
 }
-

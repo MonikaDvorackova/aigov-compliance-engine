@@ -89,7 +89,10 @@ async fn get_jwks(cfg: &AuthConfig) -> Result<Jwks, String> {
         return Err(format!("JWKS fetch status: {}", resp.status()));
     }
 
-    let jwks: Jwks = resp.json().await.map_err(|e| format!("JWKS parse failed: {}", e))?;
+    let jwks: Jwks = resp
+        .json()
+        .await
+        .map_err(|e| format!("JWKS parse failed: {}", e))?;
 
     let mut write = lock.write().await;
     *write = Some(CachedJwks {

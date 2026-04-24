@@ -104,15 +104,9 @@ async fn export_run_includes_decision_and_hashes() {
         .await
         .unwrap();
     assert_eq!(ingest_res.status(), StatusCode::OK);
-    let ingest_v: Value = serde_json::from_slice(
-        &ingest_res
-            .into_body()
-            .collect()
-            .await
-            .unwrap()
-            .to_bytes(),
-    )
-    .unwrap();
+    let ingest_v: Value =
+        serde_json::from_slice(&ingest_res.into_body().collect().await.unwrap().to_bytes())
+            .unwrap();
     let record_hash = ingest_v["record_hash"]
         .as_str()
         .expect("record_hash")
@@ -132,15 +126,9 @@ async fn export_run_includes_decision_and_hashes() {
         .unwrap();
     assert_eq!(export_res.status(), StatusCode::OK);
 
-    let export_v: Value = serde_json::from_slice(
-        &export_res
-            .into_body()
-            .collect()
-            .await
-            .unwrap()
-            .to_bytes(),
-    )
-    .unwrap();
+    let export_v: Value =
+        serde_json::from_slice(&export_res.into_body().collect().await.unwrap().to_bytes())
+            .unwrap();
 
     assert_eq!(export_v["ok"], true);
     assert_eq!(export_v["schema_version"], "aigov.audit_export.v1");
@@ -156,7 +144,12 @@ async fn export_run_includes_decision_and_hashes() {
         .expect("chain_head_record_sha256");
     assert_eq!(head, record_hash);
 
-    assert!(export_v["decision"].is_object(), "decision object must exist");
-    assert!(export_v["timestamps"].is_object(), "timestamps object must exist");
+    assert!(
+        export_v["decision"].is_object(),
+        "decision object must exist"
+    );
+    assert!(
+        export_v["timestamps"].is_object(),
+        "timestamps object must exist"
+    );
 }
-

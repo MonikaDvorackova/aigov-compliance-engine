@@ -99,20 +99,14 @@ mod tests {
     #[test]
     fn billing_tenant_prefers_x_govai_project() {
         let mut h = HeaderMap::new();
-        h.insert(
-            "x-govai-project",
-            HeaderValue::from_static("team-alpha"),
-        );
+        h.insert("x-govai-project", HeaderValue::from_static("team-alpha"));
         assert_eq!(billing_tenant_id(&h), "team-alpha");
     }
 
     #[test]
     fn billing_tenant_falls_back_to_key_fingerprint() {
         let mut h = HeaderMap::new();
-        h.insert(
-            "Authorization",
-            HeaderValue::from_static("Bearer mysecret"),
-        );
+        h.insert("Authorization", HeaderValue::from_static("Bearer mysecret"));
         let tid = billing_tenant_id(&h);
         assert_ne!(tid, "default");
         assert_eq!(tid, crate::api_usage::key_fingerprint("mysecret"));

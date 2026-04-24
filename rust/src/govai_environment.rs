@@ -84,7 +84,9 @@ pub fn policy_version_for(env: GovaiEnvironment) -> &'static str {
 
 /// Consensus environment tag from the ledger, or `None` if all events omit it (legacy).
 /// Returns `Err` if two distinct valid tags appear (corrupt / mixed ledger).
-pub fn ledger_environment_consensus(events: &[EvidenceEvent]) -> Result<Option<GovaiEnvironment>, String> {
+pub fn ledger_environment_consensus(
+    events: &[EvidenceEvent],
+) -> Result<Option<GovaiEnvironment>, String> {
     let mut acc: Option<GovaiEnvironment> = None;
     for e in events {
         if let Some(ref s) = e.environment {
@@ -92,12 +94,8 @@ pub fn ledger_environment_consensus(events: &[EvidenceEvent]) -> Result<Option<G
             if t.is_empty() {
                 continue;
             }
-            let v = parse_environment_value(t).map_err(|msg| {
-                format!(
-                    "ledger parse error on event_id={}: {msg}",
-                    e.event_id
-                )
-            })?;
+            let v = parse_environment_value(t)
+                .map_err(|msg| format!("ledger parse error on event_id={}: {msg}", e.event_id))?;
             match acc {
                 None => acc = Some(v),
                 Some(known) if known == v => {}
@@ -168,7 +166,10 @@ mod tests {
     #[test]
     fn parse_empty_is_dev() {
         assert_eq!(parse_environment_value("").unwrap(), GovaiEnvironment::Dev);
-        assert_eq!(parse_environment_value("   ").unwrap(), GovaiEnvironment::Dev);
+        assert_eq!(
+            parse_environment_value("   ").unwrap(),
+            GovaiEnvironment::Dev
+        );
     }
 
     #[test]
@@ -231,7 +232,8 @@ mod tests {
             environment: Some("prod".into()),
             payload: serde_json::json!({}),
         };
-        let err = stamp_event_environment_for_ingest(&mut ev, GovaiEnvironment::Dev, &[]).unwrap_err();
+        let err =
+            stamp_event_environment_for_ingest(&mut ev, GovaiEnvironment::Dev, &[]).unwrap_err();
         assert!(err.contains("does not match"));
     }
 
@@ -257,8 +259,8 @@ mod tests {
             environment: None,
             payload: serde_json::json!({}),
         };
-        let err =
-            stamp_event_environment_for_ingest(&mut ev, GovaiEnvironment::Dev, &existing).unwrap_err();
+        let err = stamp_event_environment_for_ingest(&mut ev, GovaiEnvironment::Dev, &existing)
+            .unwrap_err();
         assert!(err.contains("already tagged"));
     }
 

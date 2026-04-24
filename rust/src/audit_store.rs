@@ -125,7 +125,10 @@ pub fn verify_chain(log_path: &str) -> Result<(), String> {
 }
 
 /// All append-only log records for a `run_id`, in file order (chain order).
-pub fn collect_stored_records_for_run(log_path: &str, run_id: &str) -> Result<Vec<StoredRecord>, String> {
+pub fn collect_stored_records_for_run(
+    log_path: &str,
+    run_id: &str,
+) -> Result<Vec<StoredRecord>, String> {
     let f = File::open(log_path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             format!("log not found: {}", log_path)
