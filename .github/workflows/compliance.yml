@@ -211,6 +211,14 @@ jobs:
           pip install -U pip
           pip install -e .
 
+      - name: Apply DB migrations (sqlx)
+        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
+        run: |
+          set -euo pipefail
+          test -n "${DATABASE_URL:-}" || { echo "DATABASE_URL is missing"; exit 1; }
+          cargo install sqlx-cli --locked --no-default-features --features postgres,rustls
+          sqlx migrate run --source rust/migrations --database-url "${DATABASE_URL}"
+
       - name: Start audit service
         if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
         run: |
