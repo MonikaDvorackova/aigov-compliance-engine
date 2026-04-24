@@ -10,6 +10,7 @@ GovAI documentation for a CI compliance gate with audit evidence export.
   - [Table of contents](#table-of-contents)
   - [Overview](#overview)
   - [Why GovAI](#why-govai)
+  - [Private pilot and pricing](#private-pilot-and-pricing)
   - [Quickstart](#quickstart)
   - [Concepts](#concepts)
     - [Event](#event)
@@ -93,6 +94,18 @@ Required evidence missing. Deployment halted.
 - policy-enforced evidence writes: POST /evidence
 - CI gate: fail unless verdict = VALID
 - audit export: GET /api/export/:run_id
+
+---
+
+## Private pilot and pricing
+
+**Private pilot:** Email [hello@govbase.dev](mailto:hello@govbase.dev?subject=GovAI%20private%20pilot%20request) with subject `GovAI private pilot request` to align on scope (one AI system or CI pipeline, hosted or self-hosted audit endpoint, feedback during the pilot). There is no self-service checkout.
+
+**Indicative public pricing** (agreed directly; not automated billing):
+
+- **Free — €0:** local evaluation, limited runs, PyPI CLI (`aigov-py==0.1.0`), audit evidence export.
+- **Pro — €199/month:** production CI, higher limits, [GitHub Action](github-action.md), hosted audit endpoint, standard support.
+- **Enterprise — Custom:** custom limits, self-hosted or dedicated deployment, SSO/access control where supported, audit and procurement support.
 
 ---
 
