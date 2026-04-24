@@ -214,6 +214,8 @@ async fn missing_tenant_context_is_rejected_in_prod() {
     let v: Value = serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(v["ok"], false);
     assert_eq!(v["error"], "missing_tenant_context");
+    assert_eq!(v["code"], "missing_tenant_context");
+    assert!(v["message"].as_str().unwrap_or("").trim().len() > 0);
 }
 
 #[tokio::test]
@@ -348,5 +350,7 @@ async fn verify_log_missing_tenant_context_is_rejected_in_prod() {
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["ok"], false);
     assert_eq!(v["error"], "missing_tenant_context");
+    assert_eq!(v["code"], "missing_tenant_context");
+    assert!(v["message"].as_str().unwrap_or("").trim().len() > 0);
 }
 

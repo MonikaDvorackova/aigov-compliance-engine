@@ -1,5 +1,17 @@
-//! Team-scoped metering: runs (monthly new run_ids) and evidence events (per month + per run).
-//! Enabled via `GOVAI_METERING=on`. Plan limits are code constants; default plan from `GOVAI_DEFAULT_PLAN`.
+//! Team-scoped metering when `GOVAI_METERING=on`. Plan limits are code constants; default plan from `GOVAI_DEFAULT_PLAN`.
+//!
+//! **What is counted (billable / limit-relevant):**
+//! - **Evidence events:** each successful `POST /evidence` append for the API key’s team increments
+//!   monthly `evidence_events` and updates per-run `event_count` (same team as `GET /usage` with that key).
+//! - **New runs (monthly):** the first successful append for a given `run_id` in the tenant ledger
+//!   increments `new_run_ids` for the current UTC `year_month` bucket.
+//! - **Per-run cap:** the event count for that `run_id` in the ledger **after** this append would be
+//!   `next_count`; limits compare against that value.
+//!
+//! **Concurrency:** precheck reads aggregates then append writes the log; two concurrent requests can
+//! in theory both pass precheck and append; DB counters in `record_successful_ingest` remain consistent
+//! but could briefly exceed soft caps until the next request. Treat limits as **best-effort** without
+//! cross-transaction ledger locking.
 
 use crate::db::DbPool;
 use chrono::{Datelike, Utc};
@@ -151,8 +163,8 @@ pub async fn load_monthly(
     }
 }
 
-/// Plan-limit guard used in unit tests only. **Ingest enforcement** uses `govai_usage_counters`
-/// ([`crate::evidence_usage`]); team tables here are updated **after** append for telemetry.
+/// Plan-limit guard before append when `GOVAI_METERING=on`. Reads [`load_monthly`] + ledger-derived
+/// `next_count` / `is_new_run`; counters are persisted in [`record_successful_ingest`] after append.
 pub fn precheck_ingest(
     plan: GovaiPlan,
     limits: PlanLimits,

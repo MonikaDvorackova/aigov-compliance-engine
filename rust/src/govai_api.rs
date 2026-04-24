@@ -6,6 +6,7 @@ use crate::bundle;
 use crate::db::{self, DbPool};
 use crate::evidence_usage;
 use crate::metering::{self, MeteringConfig, MeteringReject, GovaiPlan};
+use crate::pricing;
 use crate::project;
 use crate::govai_environment::GovaiEnvironment;
 use crate::policy;
@@ -26,10 +27,57 @@ use serde_json::json;
 use std::collections::HashSet;
 use uuid::Uuid;
 
+fn json_error(
+    status: StatusCode,
+    error: &str,
+    message: &str,
+    policy_version: Option<&str>,
+    extra: Option<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let mut m = serde_json::Map::new();
+    m.insert("ok".to_string(), serde_json::Value::Bool(false));
+    m.insert("error".to_string(), serde_json::Value::String(error.to_string()));
+    m.insert(
+        "message".to_string(),
+        serde_json::Value::String(message.to_string()),
+    );
+    // `code` is a stable, machine-readable discriminator.
+    // For most errors `code == error`; policy violations override with a more specific code.
+    m.insert("code".to_string(), serde_json::Value::String(error.to_string()));
+    if let Some(pv) = policy_version {
+        m.insert(
+            "policy_version".to_string(),
+            serde_json::Value::String(pv.to_string()),
+        );
+    }
+    if let Some(ex) = extra {
+        if let serde_json::Value::Object(obj) = ex {
+            for (k, v) in obj {
+                m.insert(k, v);
+            }
+        }
+    }
+    (status, Json(serde_json::Value::Object(m)))
+}
+
+fn clean_policy_prefix(s: &str) -> &str {
+    s.trim()
+        .strip_prefix("policy_violation:")
+        .map(|x| x.trim())
+        .unwrap_or_else(|| s.trim())
+}
+
 pub fn core_router(policy_version: &'static str, deployment_env: GovaiEnvironment) -> Router {
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
+        .route(
+            "/pricing",
+            get({
+                let pv = policy_version;
+                move || async move { pricing(pv).await }
+            }),
+        )
         .route(
             "/status",
             get({
@@ -61,6 +109,36 @@ pub async fn status(policy_version: &'static str, deployment_env: GovaiEnvironme
         "policy_version": policy_version,
         "environment": deployment_env.as_str(),
     }))
+}
+
+pub async fn pricing(policy_version: &'static str) -> (StatusCode, Json<serde_json::Value>) {
+    let _ = policy_version;
+    let plans = pricing::get_plans()
+        .into_iter()
+        .map(|p| {
+            json!({
+                "name": p.name,
+                "evidence_events_per_month": p.evidence_events_per_month,
+                "runs_per_month": p.runs_per_month,
+                "events_per_run": p.events_per_run
+            })
+        })
+        .collect::<Vec<_>>();
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "units": {
+                "primary": "evidence_event",
+                "secondary": "run"
+            },
+            "definitions": {
+                "evidence_event": "successful POST /evidence append",
+                "run": "unique run_id with at least one event per month"
+            },
+            "plans": plans
+        })),
+    )
 }
 
 #[derive(Deserialize)]
@@ -187,17 +265,23 @@ async fn ingest(
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
-            return (
+            return json_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
-            )
+                &e,
+                "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
+                Some(audit.policy_version),
+                None,
+            );
         }
     };
 
     if let Err(e) = prepare_event_for_ingest(&mut event, audit.deployment_env, &log_path) {
-        return (
+        return json_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+            "policy_violation",
+            clean_policy_prefix(&e),
+            Some(audit.policy_version),
+            Some(json!({ "details": e, "code": "environment_policy" })),
         );
     }
 
@@ -206,18 +290,24 @@ async fn ingest(
         &log_path,
         &audit.policy,
     ) {
-        return (
+        return json_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+            "policy_violation",
+            clean_policy_prefix(&e.message),
+            Some(audit.policy_version),
+            Some(json!({ "details": e.message, "code": e.code })),
         );
     }
 
     let existing = match collect_existing_and_reject_duplicate(&log_path, &event) {
         Ok(e) => e,
         Err(e) => {
-            return (
+            return json_error(
                 StatusCode::CONFLICT,
-                Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+                "duplicate_event",
+                "This event_id already exists for this run_id. Use a new event_id or retry with idempotency handling.",
+                Some(audit.policy_version),
+                Some(json!({ "details": e })),
             );
         }
     };
@@ -237,9 +327,12 @@ async fn ingest(
     let metering_team = if audit.metering.enabled {
         let key_hash = match audit_api_key::raw_bearer_token(&headers) {
             None => {
-                return (
+                return json_error(
                     StatusCode::UNAUTHORIZED,
-                    Json(json!({ "ok": false, "error": "unauthorized" })),
+                    "unauthorized",
+                    "Missing or invalid Authorization bearer token.",
+                    None,
+                    None,
                 );
             }
             Some(t) => key_fingerprint(t),
@@ -247,21 +340,23 @@ async fn ingest(
         let team_id = match metering::team_id_for_key_hash(&audit.pool, &key_hash).await {
             Ok(t) => t,
             Err(e) => {
-                return (
+                return json_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "ok": false, "error": "metering_error", "details": e.to_string(), "policy_version": audit.policy_version })),
+                    "metering_error",
+                    "We could not load metering information for this API key. Please retry; if it persists, contact support.",
+                    Some(audit.policy_version),
+                    Some(json!({ "details": e.to_string() })),
                 );
             }
         };
         let team_id = match team_id {
             None => {
-                return (
+                return json_error(
                     StatusCode::FORBIDDEN,
-                    Json(json!({
-                        "ok": false,
-                        "error": "team_not_configured_for_api_key",
-                        "policy_version": audit.policy_version
-                    })),
+                    "team_not_configured_for_api_key",
+                    "This API key is valid, but it is not linked to a billing team. Ask an admin to configure billing for this key.",
+                    Some(audit.policy_version),
+                    None,
                 );
             }
             Some(t) => t,
@@ -272,9 +367,12 @@ async fn ingest(
         let (new_run_ids, evidence_events) = match metering::load_monthly(&audit.pool, team_id, ym).await {
             Ok(x) => x,
             Err(e) => {
-                return (
+                return json_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "ok": false, "error": "metering_error", "details": e.to_string(), "policy_version": audit.policy_version })),
+                    "metering_error",
+                    "We could not load metering counters. Please retry; if it persists, contact support.",
+                    Some(audit.policy_version),
+                    Some(json!({ "details": e.to_string() })),
                 );
             }
         };
@@ -287,12 +385,20 @@ async fn ingest(
             &run_id,
             next_count,
         ) {
+            let team_s = team_id.to_string();
+            let plan_s = plan_id_str(plan);
             return match r {
                 MeteringReject::MonthlyRunLimit { used, limit } => (
                     StatusCode::TOO_MANY_REQUESTS,
                     Json(json!({
                         "ok": false,
                         "error": "monthly_run_limit_exceeded",
+                        "code": "monthly_run_limit_exceeded",
+                        "message": "Monthly run limit exceeded for this team. Start a new month or upgrade your plan.",
+                        "metering": "on",
+                        "count_kind": "new_runs_month",
+                        "team_id": team_s,
+                        "plan": plan_s,
                         "used": used,
                         "limit": limit,
                         "year_month": ym,
@@ -304,6 +410,12 @@ async fn ingest(
                     Json(json!({
                         "ok": false,
                         "error": "monthly_event_limit_exceeded",
+                        "code": "monthly_event_limit_exceeded",
+                        "message": "Monthly evidence event limit exceeded for this team. Start a new month or upgrade your plan.",
+                        "metering": "on",
+                        "count_kind": "evidence_events_month",
+                        "team_id": team_s,
+                        "plan": plan_s,
                         "used": used,
                         "limit": limit,
                         "year_month": ym,
@@ -315,9 +427,17 @@ async fn ingest(
                     Json(json!({
                         "ok": false,
                         "error": "per_run_event_limit_exceeded",
+                        "code": "per_run_event_limit_exceeded",
+                        "message": "This run has reached its per-run evidence event limit. Use a new run_id or upgrade your plan.",
+                        "metering": "on",
+                        "count_kind": "evidence_events_per_run",
+                        "team_id": team_s,
+                        "plan": plan_s,
                         "run_id": run_id,
+                        "used": pre_count,
                         "event_count": would_be,
                         "limit": limit,
+                        "year_month": ym,
                         "policy_version": audit.policy_version
                     })),
                 ),
@@ -331,24 +451,31 @@ async fn ingest(
     if let Some(ref tid) = tenant_id_legacy {
         match evidence_usage::check_evidence_quota(&audit.pool, tid).await {
             Ok(()) => {}
-            Err(e) if e == "evidence_quota_exceeded" => {
+            Err(evidence_usage::CheckEvidenceQuotaError::Exceeded(q)) => {
                 return (
                     StatusCode::TOO_MANY_REQUESTS,
                     Json(json!({
                         "ok": false,
                         "error": "evidence_quota_exceeded",
-                        "limit": evidence_usage::FREE_TIER_EVIDENCE_LIMIT,
+                        "code": "evidence_quota_exceeded",
+                        "message": "Monthly evidence event limit exceeded for this tenant. Wait until the next billing period or enable metering / upgrade your plan.",
+                        "metering": "off",
+                        "count_kind": "evidence_events",
+                        "tenant_id": tid,
+                        "used": q.used,
+                        "limit": q.limit,
+                        "period_start": q.period_start.format("%Y-%m-%d").to_string(),
+                        "policy_version": audit.policy_version,
                     })),
                 );
             }
-            Err(e) => {
-                return (
+            Err(evidence_usage::CheckEvidenceQuotaError::Database(e)) => {
+                return json_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({
-                        "ok": false,
-                        "error": e,
-                        "policy_version": audit.policy_version,
-                    })),
+                    "db_error",
+                    "We could not read usage counters. Please retry; if it persists, contact support.",
+                    Some(audit.policy_version),
+                    Some(json!({ "details": e })),
                 );
             }
         }
@@ -367,13 +494,12 @@ async fn ingest(
                 )
                 .await
                 {
-                    return (
+                    return json_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({
-                            "ok": false,
-                            "error": e,
-                            "policy_version": audit.policy_version,
-                        })),
+                        "metering_persist_error",
+                        "The event was appended, but metering counters could not be updated. Please retry; if it persists, contact support.",
+                        Some(audit.policy_version),
+                        Some(json!({ "details": e })),
                     );
                 }
                 let nr1 = new_run_ids + if is_new_run { 1 } else { 0 };
@@ -403,13 +529,12 @@ async fn ingest(
                     .as_ref()
                     .expect("legacy billing tenant when metering is off");
                 if let Err(e) = evidence_usage::increment_evidence_usage(&audit.pool, tid).await {
-                    return (
+                    return json_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({
-                            "ok": false,
-                            "error": e,
-                            "policy_version": audit.policy_version,
-                        })),
+                        "usage_persist_error",
+                        "The event was appended, but usage counters could not be updated. Please retry; if it persists, contact support.",
+                        Some(audit.policy_version),
+                        Some(json!({ "details": e })),
                     );
                 }
                 (
@@ -423,9 +548,12 @@ async fn ingest(
                 )
             }
         }
-        Err(e) => (
+        Err(e) => json_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+            "append_error",
+            "We could not append this evidence event. Please retry; if it persists, contact support.",
+            Some(audit.policy_version),
+            Some(json!({ "details": e })),
         ),
     }
 }
@@ -446,9 +574,12 @@ async fn usage_route(
     if audit.metering.enabled {
         let key_hash = match audit_api_key::raw_bearer_token(&headers) {
             None => {
-                return (
+                return json_error(
                     StatusCode::UNAUTHORIZED,
-                    Json(json!({ "ok": false, "error": "unauthorized" })),
+                    "unauthorized",
+                    "Missing or invalid Authorization bearer token.",
+                    None,
+                    None,
                 );
             }
             Some(t) => key_fingerprint(t),
@@ -456,43 +587,78 @@ async fn usage_route(
         let team_id = match metering::team_id_for_key_hash(&audit.pool, &key_hash).await {
             Ok(t) => t,
             Err(e) => {
-                return (
+                return json_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "ok": false, "error": e.to_string() })),
+                    "metering_error",
+                    "We could not load metering information for this API key. Please retry; if it persists, contact support.",
+                    Some(audit.policy_version),
+                    Some(json!({ "details": e.to_string() })),
                 );
             }
         };
         let Some(team_id) = team_id else {
-            return (
+            return json_error(
                 StatusCode::FORBIDDEN,
-                Json(json!({ "ok": false, "error": "team_not_configured_for_api_key" })),
+                "team_not_configured_for_api_key",
+                "This API key is valid, but it is not linked to a billing team. Ask an admin to configure billing for this key.",
+                Some(audit.policy_version),
+                None,
             );
         };
-        let plan = audit.metering.default_plan;
-        let limits = metering::PlanLimits::for_plan(plan);
+        let plan_name = pricing::resolve_plan(audit_api_key::raw_bearer_token(&headers).unwrap_or(""));
+        let plan_limits = pricing::plan_limits_by_name(plan_name).unwrap_or(pricing::PlanLimits {
+            name: "free",
+            evidence_events_per_month: 2_500,
+            runs_per_month: 25,
+            events_per_run: 1_000,
+        });
         let ym = metering::year_month_utc_now();
         let (new_run_ids, evidence_events) = match metering::load_monthly(&audit.pool, team_id, ym).await {
             Ok(x) => x,
             Err(e) => {
-                return (
+                return json_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "ok": false, "error": e.to_string() })),
+                    "metering_error",
+                    "We could not load metering counters. Please retry; if it persists, contact support.",
+                    Some(audit.policy_version),
+                    Some(json!({ "details": e.to_string() })),
                 );
             }
         };
+        let used_runs_u64 = new_run_ids.max(0) as u64;
+        let used_events_u64 = evidence_events.max(0) as u64;
+        let rem_runs = plan_limits.runs_per_month.saturating_sub(used_runs_u64);
+        let rem_events = plan_limits
+            .evidence_events_per_month
+            .saturating_sub(used_events_u64);
+        let metering_limits = metering::PlanLimits::for_plan(audit.metering.default_plan);
         return (
             StatusCode::OK,
             Json(json!({
                 "metering": "on",
                 "team_id": team_id.to_string(),
                 "year_month": ym,
-                "plan": plan_id_str(plan),
+                "plan": plan_name,
                 "new_run_ids": new_run_ids,
                 "evidence_events": evidence_events,
+                // Additive normalized usage surface (do not remove existing fields).
+                "usage": {
+                    "evidence_events": used_events_u64,
+                    "runs": used_runs_u64
+                },
                 "limits": {
-                    "max_runs_per_month": limits.max_runs_per_month,
-                    "max_events_per_month": limits.max_events_per_month,
-                    "max_events_per_run": limits.max_events_per_run
+                    "evidence_events": plan_limits.evidence_events_per_month,
+                    "runs": plan_limits.runs_per_month,
+                    "events_per_run": plan_limits.events_per_run
+                },
+                "remaining": {
+                    "evidence_events": rem_events,
+                    "runs": rem_runs
+                },
+                "legacy_metering_limits": {
+                    "max_runs_per_month": metering_limits.max_runs_per_month,
+                    "max_events_per_month": metering_limits.max_events_per_month,
+                    "max_events_per_run": metering_limits.max_events_per_run
                 }
             })),
         );
@@ -500,19 +666,51 @@ async fn usage_route(
 
     let tenant_id = project::billing_tenant_id(&headers);
     match evidence_usage::get_evidence_usage(&audit.pool, &tenant_id).await {
-        Ok((count, period)) => (
-            StatusCode::OK,
-            Json(json!({
+        Ok((count, period)) => {
+            let used_events_u64 = count.max(0) as u64;
+            let plan_name = "free";
+            let plan_limits = pricing::plan_limits_by_name(plan_name).unwrap_or(pricing::PlanLimits {
+                name: "free",
+                evidence_events_per_month: 2_500,
+                runs_per_month: 25,
+                events_per_run: 1_000,
+            });
+            let rem_events = plan_limits
+                .evidence_events_per_month
+                .saturating_sub(used_events_u64);
+            let rem_runs = plan_limits.runs_per_month;
+            (
+                StatusCode::OK,
+                Json(json!({
                 "metering": "off",
                 "tenant_id": tenant_id,
                 "period_start": period.format("%Y-%m-%d").to_string(),
                 "evidence_events_count": count,
                 "limit": evidence_usage::FREE_TIER_EVIDENCE_LIMIT,
+                // Additive normalized usage surface.
+                "plan": plan_name,
+                "usage": {
+                    "evidence_events": used_events_u64,
+                    "runs": 0
+                },
+                "limits": {
+                    "evidence_events": plan_limits.evidence_events_per_month,
+                    "runs": plan_limits.runs_per_month,
+                    "events_per_run": plan_limits.events_per_run
+                },
+                "remaining": {
+                    "evidence_events": rem_events,
+                    "runs": rem_runs
+                }
             })),
-        ),
-        Err(e) => (
+            )
+        }
+        Err(e) => json_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "ok": false, "error": e })),
+            "db_error",
+            "We could not load usage for this tenant. Please retry; if it persists, contact support.",
+            Some(audit.policy_version),
+            Some(json!({ "details": e })),
         ),
     }
 }
@@ -524,10 +722,13 @@ async fn verify(
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
-            return (
+            return json_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
-            )
+                &e,
+                "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
+                Some(audit.policy_version),
+                None,
+            );
         }
     };
     match crate::audit_store::verify_chain(&log_path) {
@@ -537,7 +738,14 @@ async fn verify(
         ),
         Err(e) => (
             StatusCode::OK,
-            Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
+            Json(json!({
+                "ok": false,
+                "error": "chain_invalid",
+                "code": "chain_invalid",
+                "message": "The append-only chain failed verification. The ledger may have been corrupted.",
+                "details": e,
+                "policy_version": audit.policy_version
+            })),
         ),
     }
 }
@@ -549,7 +757,15 @@ async fn bundle_route(
 ) -> (StatusCode, Json<serde_json::Value>) {
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
-        Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version }))),
+        Err(e) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                &e,
+                "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
+                Some(audit.policy_version),
+                None,
+            )
+        }
     };
     match bundle::collect_events_for_run(&log_path, &q.run_id) {
         Ok(events) => {
@@ -558,7 +774,17 @@ async fn bundle_route(
             let doc = bundle::bundle_document_value(&q.run_id, audit.policy_version, &lp, &events);
             (StatusCode::OK, Json(doc))
         }
-        Err(e) => (StatusCode::OK, Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version }))),
+        Err(e) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": false,
+                "error": "run_not_found",
+                "code": "run_not_found",
+                "message": "No events were found for this run_id in the current tenant ledger.",
+                "details": e,
+                "policy_version": audit.policy_version
+            })),
+        ),
     }
 }
 
@@ -571,35 +797,47 @@ async fn export_run_route(
 ) -> (StatusCode, Json<serde_json::Value>) {
     let run_id = run_id.trim().to_string();
     if run_id.is_empty() {
-        return (
+        return json_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({ "ok": false, "error": "run_id_required", "policy_version": audit.policy_version })),
+            "run_id_required",
+            "Missing required path parameter run_id.",
+            Some(audit.policy_version),
+            None,
         );
     }
 
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
-            return (
+            return json_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version })),
-            )
+                &e,
+                "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
+                Some(audit.policy_version),
+                None,
+            );
         }
     };
 
     let events = match bundle::collect_events_for_run(&log_path, &run_id) {
         Ok(e) => e,
         Err(e) => {
-            return (
+            return json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version, "run_id": run_id })),
+                "bundle_read_error",
+                "We could not read events for this run_id. Please retry; if it persists, contact support.",
+                Some(audit.policy_version),
+                Some(json!({ "run_id": run_id, "details": e })),
             );
         }
     };
     if events.is_empty() {
-        return (
+        return json_error(
             StatusCode::NOT_FOUND,
-            Json(json!({ "ok": false, "error": "run_not_found", "policy_version": audit.policy_version, "run_id": run_id })),
+            "run_not_found",
+            "No events were found for this run_id in the current tenant ledger.",
+            Some(audit.policy_version),
+            Some(json!({ "run_id": run_id })),
         );
     }
 
@@ -618,9 +856,12 @@ async fn export_run_route(
     let chain_records = match crate::audit_store::collect_stored_records_for_run(&log_path, &run_id) {
         Ok(r) => r,
         Err(e) => {
-            return (
+            return json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version, "run_id": run_id })),
+                "chain_read_error",
+                "We could not load chain records for this run_id. Please retry; if it persists, contact support.",
+                Some(audit.policy_version),
+                Some(json!({ "run_id": run_id, "details": e })),
             );
         }
     };
@@ -698,7 +939,15 @@ async fn bundle_hash_route(
 ) -> (StatusCode, Json<serde_json::Value>) {
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
-        Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version }))),
+        Err(e) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                &e,
+                "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
+                Some(audit.policy_version),
+                None,
+            )
+        }
     };
     match bundle::collect_events_for_run(&log_path, &q.run_id) {
         Ok(events) => {
@@ -721,7 +970,17 @@ async fn bundle_hash_route(
                 "bundle_sha256": digest
             })))
         }
-        Err(e) => (StatusCode::OK, Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version }))),
+        Err(e) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": false,
+                "error": "run_not_found",
+                "code": "run_not_found",
+                "message": "No events were found for this run_id in the current tenant ledger.",
+                "details": e,
+                "policy_version": audit.policy_version
+            })),
+        ),
     }
 }
 
@@ -734,10 +993,14 @@ async fn verify_log(
         Err(e) => {
             return (
                 StatusCode::BAD_REQUEST,
-                format!(
-                    "{{\"ok\":false,\"error\":{}}}",
-                    serde_json::to_string(&e).unwrap_or_else(|_| "\"serialization_error\"".to_string())
-                ),
+                json!({
+                    "ok": false,
+                    "error": e,
+                    "code": e,
+                    "message": "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
+                    "policy_version": audit.policy_version
+                })
+                .to_string(),
             )
         }
     };
@@ -745,10 +1008,14 @@ async fn verify_log(
         Ok(_) => (StatusCode::OK, "{\"ok\":true}".to_string()),
         Err(e) => (
             StatusCode::BAD_REQUEST,
-            format!(
-                "{{\"ok\":false,\"error\":{}}}",
-                serde_json::to_string(&e).unwrap_or_else(|_| "\"serialization_error\"".to_string())
-            ),
+            json!({
+                "ok": false,
+                "error": "chain_invalid",
+                "code": "chain_invalid",
+                "message": "The append-only chain failed verification. The ledger may have been corrupted.",
+                "details": e
+            })
+            .to_string(),
         ),
     }
 }
@@ -808,7 +1075,15 @@ async fn compliance_summary_route(
 ) -> (StatusCode, Json<serde_json::Value>) {
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
-        Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({ "ok": false, "error": e, "policy_version": audit.policy_version, "run_id": q.run_id }))),
+        Err(e) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                &e,
+                "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
+                Some(audit.policy_version),
+                Some(json!({ "run_id": q.run_id })),
+            )
+        }
     };
     match bundle::collect_events_for_run(&log_path, &q.run_id) {
         Ok(events) => {
@@ -838,13 +1113,19 @@ async fn compliance_summary_route(
                 "current_state": derived,
             })))
         }
-        Err(e) => (StatusCode::OK, Json(json!({
-            "ok": false,
-            "schema_version": "aigov.compliance_summary.v2",
-            "error": e,
-            "policy_version": audit.policy_version,
-            "run_id": q.run_id,
-        }))),
+        Err(e) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": false,
+                "schema_version": "aigov.compliance_summary.v2",
+                "error": "run_not_found",
+                "code": "run_not_found",
+                "message": "No events were found for this run_id in the current tenant ledger.",
+                "details": e,
+                "policy_version": audit.policy_version,
+                "run_id": q.run_id,
+            })),
+        ),
     }
 }
 
@@ -916,7 +1197,15 @@ async fn me(
 ) -> (StatusCode, Json<serde_json::Value>) {
     let cfg = match AuthConfig::from_env() {
         Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+        Err(e) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "config_error",
+                "Server authentication is not configured correctly.",
+                None,
+                Some(json!({ "details": e })),
+            )
+        }
     };
 
     let user = match crate::auth::require_user(&cfg, &headers).await {
@@ -927,9 +1216,12 @@ async fn me(
     let teams = match db::list_user_teams(&state.pool, &user.user_id).await {
         Ok(t) => t,
         Err(e) => {
-            return (
+            return json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+                "db_error",
+                "We could not load your teams. Please retry.",
+                None,
+                Some(json!({ "details": e.to_string() })),
             )
         }
     };
@@ -970,7 +1262,12 @@ async fn resolve_team_id(
             Err(_) => {
                 return Err((
                     StatusCode::BAD_REQUEST,
-                    Json(json!({ "error": "INVALID_TEAM_ID" })),
+                    Json(json!({
+                        "ok": false,
+                        "error": "invalid_team_id",
+                        "code": "invalid_team_id",
+                        "message": "`x-govai-team-id` must be a valid UUID."
+                    })),
                 ))
             }
         };
@@ -980,13 +1277,27 @@ async fn resolve_team_id(
             Err(e) => {
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+                    Json(json!({
+                        "ok": false,
+                        "error": "db_error",
+                        "code": "db_error",
+                        "message": "We could not verify team membership. Please retry.",
+                        "details": e.to_string()
+                    })),
                 ))
             }
         };
 
         if !ok {
-            return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "NOT_TEAM_MEMBER" }))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "ok": false,
+                    "error": "not_team_member",
+                    "code": "not_team_member",
+                    "message": "You are not a member of the selected team."
+                })),
+            ));
         }
 
         return Ok(team_id);
@@ -998,12 +1309,24 @@ async fn resolve_team_id(
             Ok(team_id) => Ok(team_id),
             Err(e) => Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+                Json(json!({
+                    "ok": false,
+                    "error": "db_error",
+                    "code": "db_error",
+                    "message": "We could not create a default team for this user.",
+                    "details": e.to_string()
+                })),
             )),
         },
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+            Json(json!({
+                "ok": false,
+                "error": "db_error",
+                "code": "db_error",
+                "message": "We could not load your default team.",
+                "details": e.to_string()
+            })),
         )),
     }
 }
@@ -1018,13 +1341,24 @@ async fn team_product_permissions(
         Ok(None) => {
             return Err((
                 StatusCode::FORBIDDEN,
-                Json(json!({ "error": "NOT_TEAM_MEMBER" })),
+                Json(json!({
+                    "ok": false,
+                    "error": "not_team_member",
+                    "code": "not_team_member",
+                    "message": "You are not a member of the selected team."
+                })),
             ))
         }
         Err(e) => {
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+                Json(json!({
+                    "ok": false,
+                    "error": "db_error",
+                    "code": "db_error",
+                    "message": "We could not load your permissions. Please retry.",
+                    "details": e.to_string()
+                })),
             ))
         }
     };
@@ -1038,7 +1372,15 @@ async fn create_assessment(
 ) -> (StatusCode, Json<serde_json::Value>) {
     let cfg = match AuthConfig::from_env() {
         Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+        Err(e) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "config_error",
+                "Server authentication is not configured correctly.",
+                None,
+                Some(json!({ "details": e })),
+            )
+        }
     };
 
     let user = match crate::auth::require_user(&cfg, &headers).await {
@@ -1059,7 +1401,10 @@ async fn create_assessment(
         return (
             StatusCode::FORBIDDEN,
             Json(json!({
-                "error": "FORBIDDEN",
+                "ok": false,
+                "error": "forbidden",
+                "code": "insufficient_role",
+                "message": "You do not have permission to perform this action.",
                 "reason": "INSUFFICIENT_ROLE",
                 "required_permission": "decision_submit"
             })),
@@ -1078,9 +1423,12 @@ async fn create_assessment(
     {
         Ok(r) => r,
         Err(e) => {
-            return (
+            return json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+                "db_error",
+                "We could not create the assessment. Please retry.",
+                None,
+                Some(json!({ "details": e.to_string() })),
             )
         }
     };
@@ -1181,7 +1529,15 @@ async fn list_compliance_workflow(
 ) -> (StatusCode, Json<serde_json::Value>) {
     let cfg = match AuthConfig::from_env() {
         Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+        Err(e) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "config_error",
+                "Server authentication is not configured correctly.",
+                None,
+                Some(json!({ "details": e })),
+            )
+        }
     };
 
     let user = match crate::auth::require_user(&cfg, &headers).await {
@@ -1202,7 +1558,10 @@ async fn list_compliance_workflow(
         return (
             StatusCode::FORBIDDEN,
             Json(json!({
-                "error": "FORBIDDEN",
+                "ok": false,
+                "error": "forbidden",
+                "code": "insufficient_role",
+                "message": "You do not have permission to perform this action.",
                 "reason": "INSUFFICIENT_ROLE",
                 "required_permission": "review_queue_view"
             })),
@@ -1213,9 +1572,12 @@ async fn list_compliance_workflow(
     let rows = match db::list_compliance_workflow(&state.pool, team_id, filter).await {
         Ok(r) => r,
         Err(e) => {
-            return (
+            return json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+                "db_error",
+                "We could not load workflow items. Please retry.",
+                None,
+                Some(json!({ "details": e.to_string() })),
             )
         }
     };
@@ -1238,7 +1600,15 @@ async fn register_compliance_workflow(
 ) -> (StatusCode, Json<serde_json::Value>) {
     let cfg = match AuthConfig::from_env() {
         Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+        Err(e) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "config_error",
+                "Server authentication is not configured correctly.",
+                None,
+                Some(json!({ "details": e })),
+            )
+        }
     };
 
     let user = match crate::auth::require_user(&cfg, &headers).await {
@@ -1259,7 +1629,10 @@ async fn register_compliance_workflow(
         return (
             StatusCode::FORBIDDEN,
             Json(json!({
-                "error": "FORBIDDEN",
+                "ok": false,
+                "error": "forbidden",
+                "code": "insufficient_role",
+                "message": "You do not have permission to perform this action.",
                 "reason": "INSUFFICIENT_ROLE",
                 "required_permission": "decision_submit"
             })),
@@ -1268,18 +1641,24 @@ async fn register_compliance_workflow(
 
     let run_id = body.run_id.trim().to_string();
     if run_id.is_empty() {
-        return (
+        return json_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "RUN_ID_REQUIRED" })),
+            "run_id_required",
+            "Missing required field `run_id`.",
+            None,
+            None,
         );
     }
 
     let rec = match db::upsert_workflow_pending(&state.pool, team_id, &run_id, user.user_id).await {
         Ok(r) => r,
         Err(e) => {
-            return (
+            return json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+                "db_error",
+                "We could not register this run in the workflow. Please retry.",
+                None,
+                Some(json!({ "details": e.to_string() })),
             )
         }
     };
@@ -1294,7 +1673,15 @@ async fn get_compliance_workflow_one(
 ) -> (StatusCode, Json<serde_json::Value>) {
     let cfg = match AuthConfig::from_env() {
         Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+        Err(e) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "config_error",
+                "Server authentication is not configured correctly.",
+                None,
+                Some(json!({ "details": e })),
+            )
+        }
     };
 
     let user = match crate::auth::require_user(&cfg, &headers).await {
@@ -1315,7 +1702,10 @@ async fn get_compliance_workflow_one(
         return (
             StatusCode::FORBIDDEN,
             Json(json!({
-                "error": "FORBIDDEN",
+                "ok": false,
+                "error": "forbidden",
+                "code": "insufficient_role",
+                "message": "You do not have permission to perform this action.",
                 "reason": "INSUFFICIENT_ROLE",
                 "required_permission": "review_queue_view"
             })),
@@ -1326,9 +1716,12 @@ async fn get_compliance_workflow_one(
     let rec = match db::get_compliance_workflow(&state.pool, team_id, rid).await {
         Ok(r) => r,
         Err(e) => {
-            return (
+            return json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+                "db_error",
+                "We could not load this workflow item. Please retry.",
+                None,
+                Some(json!({ "details": e.to_string() })),
             )
         }
     };
@@ -1337,7 +1730,12 @@ async fn get_compliance_workflow_one(
         Some(r) => (StatusCode::OK, Json(json_ok_workflow(workflow_to_out(r)))),
         None => (
             StatusCode::NOT_FOUND,
-            Json(json!({ "error": "NOT_FOUND" })),
+            Json(json!({
+                "ok": false,
+                "error": "not_found",
+                "code": "not_found",
+                "message": "Workflow item not found for this run_id."
+            })),
         ),
     }
 }
@@ -1350,7 +1748,15 @@ async fn post_review_decision(
 ) -> (StatusCode, Json<serde_json::Value>) {
     let cfg = match AuthConfig::from_env() {
         Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+        Err(e) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "config_error",
+                "Server authentication is not configured correctly.",
+                None,
+                Some(json!({ "details": e })),
+            )
+        }
     };
 
     let user = match crate::auth::require_user(&cfg, &headers).await {
@@ -1371,7 +1777,10 @@ async fn post_review_decision(
         return (
             StatusCode::FORBIDDEN,
             Json(json!({
-                "error": "FORBIDDEN",
+                "ok": false,
+                "error": "forbidden",
+                "code": "insufficient_role",
+                "message": "You do not have permission to perform this action.",
                 "reason": "INSUFFICIENT_ROLE",
                 "required_permission": "decision_submit"
             })),
@@ -1380,9 +1789,12 @@ async fn post_review_decision(
 
     let rid = run_id.trim().to_string();
     if rid.is_empty() {
-        return (
+        return json_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "RUN_ID_REQUIRED" })),
+            "run_id_required",
+            "Missing required path parameter run_id.",
+            None,
+            None,
         );
     }
 
@@ -1390,9 +1802,12 @@ async fn post_review_decision(
         "approve" => true,
         "reject" => false,
         _ => {
-            return (
+            return json_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": "INVALID_DECISION", "expected": ["approve", "reject"] })),
+                "invalid_decision",
+                "Invalid decision. Expected `approve` or `reject`.",
+                None,
+                Some(json!({ "expected": ["approve", "reject"] })),
             )
         }
     };
@@ -1402,9 +1817,12 @@ async fn post_review_decision(
     {
         Ok(r) => r,
         Err(e) => {
-            return (
+            return json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+                "db_error",
+                "We could not persist the review decision. Please retry.",
+                None,
+                Some(json!({ "details": e.to_string() })),
             )
         }
     };
@@ -1414,8 +1832,10 @@ async fn post_review_decision(
         None => (
             StatusCode::CONFLICT,
             Json(json!({
-                "error": "INVALID_STATE",
-                "message": "expected pending_review for review decision"
+                "ok": false,
+                "error": "invalid_state",
+                "code": "invalid_state",
+                "message": "Invalid workflow state: expected pending_review for review decision."
             })),
         ),
     }
@@ -1429,7 +1849,15 @@ async fn post_promotion_decision(
 ) -> (StatusCode, Json<serde_json::Value>) {
     let cfg = match AuthConfig::from_env() {
         Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))),
+        Err(e) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "config_error",
+                "Server authentication is not configured correctly.",
+                None,
+                Some(json!({ "details": e })),
+            )
+        }
     };
 
     let user = match crate::auth::require_user(&cfg, &headers).await {
@@ -1450,7 +1878,10 @@ async fn post_promotion_decision(
         return (
             StatusCode::FORBIDDEN,
             Json(json!({
-                "error": "FORBIDDEN",
+                "ok": false,
+                "error": "forbidden",
+                "code": "insufficient_role",
+                "message": "You do not have permission to perform this action.",
                 "reason": "INSUFFICIENT_ROLE",
                 "required_permission": "promotion_action"
             })),
@@ -1459,9 +1890,12 @@ async fn post_promotion_decision(
 
     let rid = run_id.trim().to_string();
     if rid.is_empty() {
-        return (
+        return json_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "RUN_ID_REQUIRED" })),
+            "run_id_required",
+            "Missing required path parameter run_id.",
+            None,
+            None,
         );
     }
 
@@ -1469,9 +1903,12 @@ async fn post_promotion_decision(
         "allow" => true,
         "block" => false,
         _ => {
-            return (
+            return json_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": "INVALID_DECISION", "expected": ["allow", "block"] })),
+                "invalid_decision",
+                "Invalid decision. Expected `allow` or `block`.",
+                None,
+                Some(json!({ "expected": ["allow", "block"] })),
             )
         }
     };
@@ -1487,9 +1924,12 @@ async fn post_promotion_decision(
     {
         Ok(r) => r,
         Err(e) => {
-            return (
+            return json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "DB_ERROR", "details": e.to_string() })),
+                "db_error",
+                "We could not persist the promotion decision. Please retry.",
+                None,
+                Some(json!({ "details": e.to_string() })),
             )
         }
     };
@@ -1502,8 +1942,10 @@ async fn post_promotion_decision(
         None => (
             StatusCode::CONFLICT,
             Json(json!({
-                "error": "INVALID_STATE",
-                "message": "expected approved for promotion decision"
+                "ok": false,
+                "error": "invalid_state",
+                "code": "invalid_state",
+                "message": "Invalid workflow state: expected approved for promotion decision."
             })),
         ),
     }

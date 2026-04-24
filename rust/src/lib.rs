@@ -17,6 +17,7 @@ pub mod db;
 pub mod evidence_usage;
 pub mod govai_api;
 pub mod metering;
+pub mod pricing;
 pub mod project;
 pub mod rbac;
 
