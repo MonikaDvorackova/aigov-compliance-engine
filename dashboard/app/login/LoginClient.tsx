@@ -3,9 +3,11 @@
 import React, { useMemo, useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import AigovMark from "../components/brand/AigovMark";
+import Logo from "../components/Logo";
 import InfraShell, { InfraPanel } from "../_ui/InfraShell";
+import { LANDING_SHELL_BACKGROUND } from "../_ui/landingShellBackground";
 
 function createSupabaseBrowserClient(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -17,38 +19,38 @@ function createSupabaseBrowserClient(): SupabaseClient {
   return createBrowserClient(url, anon);
 }
 
-function IconGoogle({ size = 18, color = "#1D4ED8" }: { size?: number; color?: string }) {
+function IconGoogle({ size = 18 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" style={{ display: "block" }}>
       <path
         d="M21.6 12.27c0-.74-.07-1.45-.2-2.13H12v4.03h5.38c-.23 1.23-.93 2.27-1.98 2.98v2.47h3.2c1.87-1.72 2.99-4.25 2.99-7.35Z"
-        fill={color}
-        opacity="0.9"
+        fill="currentColor"
+        opacity={0.9}
       />
       <path
         d="M12 22c2.7 0 4.97-.9 6.63-2.43l-3.2-2.47c-.9.6-2.05.96-3.43.96-2.64 0-4.88-1.78-5.68-4.17H3.02v2.56C4.66 19.78 8.06 22 12 22Z"
-        fill={color}
-        opacity="0.72"
+        fill="currentColor"
+        opacity={0.72}
       />
       <path
         d="M6.32 13.89c-.2-.6-.32-1.24-.32-1.89s.12-1.29.32-1.89V7.55H3.02C2.37 8.85 2 10.32 2 12s.37 3.15 1.02 4.45l3.3-2.56Z"
-        fill={color}
-        opacity="0.6"
+        fill="currentColor"
+        opacity={0.6}
       />
       <path
         d="M12 5.94c1.47 0 2.8.5 3.84 1.5l2.88-2.88C16.96 2.9 14.7 2 12 2 8.06 0 4.66 4.22 3.02 7.55l3.3 2.56c.8-2.39 3.04-4.17 5.68-4.17Z"
-        fill={color}
-        opacity="0.82"
+        fill="currentColor"
+        opacity={0.82}
       />
     </svg>
   );
 }
 
-function IconGitHub({ size = 18, color = "#1D4ED8" }: { size?: number; color?: string }) {
+function IconGitHub({ size = 18 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" style={{ display: "block" }}>
       <path
-        fill={color}
+        fill="currentColor"
         d="M12 2c-5.52 0-10 4.58-10 10.23 0 4.52 2.87 8.35 6.84 9.71.5.1.68-.22.68-.48 0-.24-.01-.86-.01-1.68-2.78.62-3.37-1.1-3.37-1.1-.45-1.19-1.1-1.5-1.1-1.5-.9-.64.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.89 1.58 2.34 1.12 2.91.86.09-.67.35-1.12.64-1.37-2.22-.26-4.55-1.14-4.55-5.08 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.72 0 0 .84-.27 2.75 1.05.8-.23 1.66-.34 2.52-.34.86 0 1.72.11 2.52.34 1.91-1.32 2.75-1.05 2.75-1.05.55 1.42.2 2.46.1 2.72.64.72 1.03 1.63 1.03 2.75 0 3.95-2.34 4.82-4.57 5.08.36.32.68.95.68 1.92 0 1.39-.01 2.51-.01 2.85 0 .26.18.58.69.48 3.96-1.36 6.83-5.19 6.83-9.71C22 6.58 17.52 2 12 2Z"
       />
     </svg>
@@ -95,6 +97,14 @@ function userFriendlyMessage(raw: string | null): string | null {
   return s;
 }
 
+const linkStyle: React.CSSProperties = {
+  color: "var(--govai-text-secondary)",
+  textDecoration: "underline",
+  textUnderlineOffset: 3,
+  textDecorationColor: "var(--govai-link-decoration)",
+  fontSize: 12,
+};
+
 export default function LoginClient() {
   const router = useRouter();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -105,9 +115,6 @@ export default function LoginClient() {
 
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(initialMessage);
-
-  const blue = "#1D4ED8";
-  const iconGlow = "drop-shadow(0 0 10px rgba(59,130,246,0.18))";
 
   async function signInEmailPassword(e: React.FormEvent) {
     e.preventDefault();
@@ -133,183 +140,141 @@ export default function LoginClient() {
     }
   }
 
-  const inputStyle: React.CSSProperties = {
-    width: "100%",
-    height: 44,
-    borderRadius: 16,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.03)",
-    color: "white",
-    fontSize: 14,
-    padding: "0 12px",
-    outline: "none",
-    textAlign: "center",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
-    backdropFilter: "blur(10px)",
-    WebkitBackdropFilter: "blur(10px)",
-  };
-
-  const buttonStyle: React.CSSProperties = {
-    width: "100%",
-    height: 46,
-    borderRadius: 16,
-    border: "1px solid rgba(255,255,255,0.16)",
-    background: "rgba(255,255,255,0.05)",
-    color: "white",
-    fontSize: 15,
-    cursor: busy ? "not-allowed" : "pointer",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 14px 30px rgba(0,0,0,0.28)",
-    transition: "transform 120ms ease, background 120ms ease, border-color 120ms ease",
-    backdropFilter: "blur(10px)",
-    WebkitBackdropFilter: "blur(10px)",
-  };
-
-  const buttonSoftStyle: React.CSSProperties = {
-    ...buttonStyle,
-    background: "rgba(255,255,255,0.04)",
-  };
-
-  const linkStyle: React.CSSProperties = {
-    color: "rgba(255,255,255,0.78)",
-    textDecoration: "underline",
-    textUnderlineOffset: 4,
-    textDecorationColor: "rgba(29,78,216,0.55)",
-    fontSize: 12,
+  const oauthBlockStyle: React.CSSProperties = {
+    pointerEvents: busy ? "none" : "auto",
+    opacity: busy ? 0.55 : 1,
   };
 
   return (
-    <InfraShell maxWidth={520} align="center" padding={18}>
-      <style>{`
-        button[data-btn="1"]:hover { transform: translateY(-1px); background: rgba(255,255,255,0.065); border-color: rgba(255,255,255,0.20); }
-        button[data-btn="1"]:active { transform: translateY(0px); background: rgba(255,255,255,0.05); }
-        input:focus { border-color: rgba(59,130,246,0.55); box-shadow: 0 0 0 3px rgba(59,130,246,0.14); }
-        a:hover { color: rgba(255,255,255,0.90); text-decoration-color: rgba(59,130,246,0.80); }
-      `}</style>
-
-      <div style={{ width: "100%", textAlign: "center" }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            marginBottom: 12,
-            minHeight: 128,
-            alignItems: "center",
-          }}
-        >
-          <AigovMark size={112} glow neon neonStrength="strong" tone="blue" />
+    <InfraShell maxWidth={520} align="center" padding={20} background={LANDING_SHELL_BACKGROUND}>
+      <div
+        style={{
+          width: "100%",
+          minHeight: "min(72vh, 560px)",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          textAlign: "center",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+          <Link href="/" prefetch={false} aria-label="GovAI home" style={{ display: "inline-flex", lineHeight: 0 }}>
+            <Logo />
+          </Link>
         </div>
 
-        <div style={{ opacity: 0.68, fontSize: 11, letterSpacing: "0.24em", marginBottom: 8 }}>GOVAI</div>
+        <div style={{ letterSpacing: "0.2em", fontSize: 10, opacity: 0.62, marginBottom: 8, color: "var(--govai-text)" }}>
+          GOVAI
+        </div>
 
         <h1
           style={{
             margin: 0,
-            letterSpacing: "-0.02em",
+            letterSpacing: "-0.03em",
             fontWeight: 600,
             lineHeight: 1.12,
-            fontSize: "clamp(26px, 5.0vw, 34px)",
+            fontSize: "clamp(22px, 3.6vw, 30px)",
+            color: "var(--govai-text)",
             textWrap: "balance",
           }}
         >
-          Dashboard Login
+          Dashboard login
         </h1>
 
         <p
           style={{
-            margin: "10px auto 14px",
-            maxWidth: "44ch",
-            opacity: 0.76,
+            margin: "8px auto 0",
+            maxWidth: "48ch",
             fontSize: 13,
-            lineHeight: 1.5,
+            lineHeight: 1.45,
+            color: "var(--govai-text-secondary)",
             textWrap: "balance",
           }}
         >
           Sign in to load runs from the database.
         </p>
 
-        <InfraPanel>
+        <InfraPanel marginTop={18} padding={18} borderRadius={10}>
           {message ? (
             <div
               style={{
                 marginBottom: 12,
                 padding: "10px 12px",
-                borderRadius: 16,
-                border: "1px solid rgba(255,255,255,0.14)",
-                background: "rgba(255,255,255,0.045)",
+                borderRadius: 8,
+                border: "1px solid var(--govai-border-faint)",
+                background: "var(--govai-bg-panel)",
                 fontSize: 12,
-                opacity: 0.95,
+                lineHeight: 1.45,
+                color: "var(--govai-text-secondary)",
                 textAlign: "left",
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
               }}
             >
               {message}
             </div>
           ) : null}
 
-          <div style={{ display: "grid", gap: 10 }}>
-            <a href="/auth/login/google?next=/runs" style={{ textDecoration: "none" }} aria-disabled={busy}>
-              <button type="button" data-btn="1" disabled={busy} style={buttonSoftStyle}>
-                <span style={{ display: "inline-flex", filter: iconGlow }}>
-                  <IconGoogle color={blue} size={18} />
-                </span>
-                Continue with Google
-              </button>
+          <div style={{ display: "grid", gap: 8 }}>
+            <a
+              href="/auth/login/google?next=/runs"
+              className="govai_btn govai_btnGhost govai_btnBlock"
+              style={{ ...oauthBlockStyle, gap: 10 }}
+              aria-disabled={busy}
+            >
+              <span style={{ display: "inline-flex", color: "var(--govai-text-secondary)" }}>
+                <IconGoogle size={18} />
+              </span>
+              Continue with Google
             </a>
 
-            <a href="/auth/login/github?next=/runs" style={{ textDecoration: "none" }} aria-disabled={busy}>
-              <button type="button" data-btn="1" disabled={busy} style={buttonSoftStyle}>
-                <span style={{ display: "inline-flex", filter: iconGlow }}>
-                  <IconGitHub color={blue} size={18} />
-                </span>
-                Continue with GitHub
-              </button>
+            <a
+              href="/auth/login/github?next=/runs"
+              className="govai_btn govai_btnGhost govai_btnBlock"
+              style={{ ...oauthBlockStyle, gap: 10 }}
+              aria-disabled={busy}
+            >
+              <span style={{ display: "inline-flex", color: "var(--govai-text-secondary)" }}>
+                <IconGitHub size={18} />
+              </span>
+              Continue with GitHub
             </a>
           </div>
 
-          <div style={{ marginTop: 14, opacity: 0.62, fontSize: 12, textAlign: "center" }}>
+          <div style={{ marginTop: 12, fontSize: 12, color: "var(--govai-text-tertiary)", textAlign: "center" }}>
             Or email and password
           </div>
 
-          <form onSubmit={signInEmailPassword} style={{ marginTop: 10, display: "grid", gap: 10 }}>
+          <form onSubmit={signInEmailPassword} style={{ marginTop: 10, display: "grid", gap: 8 }}>
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="email"
+              placeholder="Email"
               inputMode="email"
               autoComplete="email"
               disabled={busy}
-              style={inputStyle}
+              className="govai_login_field"
             />
 
             <input
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="password"
+              placeholder="Password"
               type="password"
               autoComplete="current-password"
               disabled={busy}
-              style={inputStyle}
+              className="govai_login_field"
             />
 
-            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -4 }}>
-              <a href="/forgot-password" style={{ ...linkStyle, fontSize: 12 }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -2 }}>
+              <Link href="/forgot-password" prefetch={false} style={linkStyle}>
                 Forgot password?
-              </a>
+              </Link>
             </div>
 
             <button
               type="submit"
-              data-btn="1"
+              className="govai_btn govai_btnPrimary govai_btnBlock"
               disabled={busy || !email.trim() || !password}
-              style={{
-                ...buttonStyle,
-                background:
-                  busy || !email.trim() || !password ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.055)",
-              }}
             >
               Sign in
             </button>
@@ -319,21 +284,21 @@ export default function LoginClient() {
                 display: "flex",
                 justifyContent: "space-between",
                 gap: 12,
-                marginTop: 2,
-                opacity: 0.8,
+                marginTop: 4,
+                flexWrap: "wrap",
               }}
             >
-              <a href="/" style={linkStyle}>
+              <Link href="/" prefetch={false} style={linkStyle}>
                 Back to home
-              </a>
+              </Link>
 
-              <a href="/runs" style={linkStyle}>
+              <Link href="/runs" prefetch={false} style={linkStyle}>
                 Open runs
-              </a>
+              </Link>
             </div>
           </form>
 
-          <div style={{ marginTop: 10, opacity: 0.52, fontSize: 11, textAlign: "center" }}>
+          <div style={{ marginTop: 10, fontSize: 11, lineHeight: 1.45, color: "var(--govai-text-tertiary)", textAlign: "center" }}>
             Secure sign in via Google or GitHub.
           </div>
         </InfraPanel>
