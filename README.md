@@ -34,7 +34,7 @@ Non-guarantees:
 
 ## Private pilot and pricing
 
-**Private pilot:** Email [hello@govbase.dev](mailto:hello@govbase.dev?subject=GovAI%20private%20pilot%20request) with subject `GovAI private pilot request` to scope a pilot (one AI system or CI pipeline, hosted or self-hosted audit endpoint, feedback during the pilot). This is not a productized signup flow.
+**Private pilot:** Email [hello@govbase.dev](mailto:hello@govbase.dev?subject=GovAI%20private%20pilot%20request) with subject `GovAI private pilot request` to scope a pilot (one AI system or CI pipeline, hosted or self-hosted audit endpoint, feedback during the pilot). This is not a productized signup flow. Onboarding checklist: [docs/pilot-onboarding.md](docs/pilot-onboarding.md).
 
 **Indicative tiers** (no self-service checkout or automated billing on this site):
 

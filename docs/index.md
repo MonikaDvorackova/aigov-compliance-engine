@@ -99,7 +99,7 @@ Required evidence missing. Deployment halted.
 
 ## Private pilot and pricing
 
-**Private pilot:** Email [hello@govbase.dev](mailto:hello@govbase.dev?subject=GovAI%20private%20pilot%20request) with subject `GovAI private pilot request` to align on scope (one AI system or CI pipeline, hosted or self-hosted audit endpoint, feedback during the pilot). There is no self-service checkout.
+**Private pilot:** Email [hello@govbase.dev](mailto:hello@govbase.dev?subject=GovAI%20private%20pilot%20request) with subject `GovAI private pilot request` to align on scope (one AI system or CI pipeline, hosted or self-hosted audit endpoint, feedback during the pilot). There is no self-service checkout. External onboarding: [pilot-onboarding.md](pilot-onboarding.md).
 
 **Indicative public pricing** (agreed directly; not automated billing):
 
