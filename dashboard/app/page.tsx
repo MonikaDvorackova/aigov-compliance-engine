@@ -1,6 +1,6 @@
 import React from "react";
 import Link from "next/link";
-import AigovMark from "./components/brand/AigovMark";
+import Header from "./components/Header";
 import {
   CapabilityProofStrip,
   EvidenceBundlesSecondary,
@@ -10,6 +10,7 @@ import {
 import { Panel } from "./_ui/console/primitives";
 import { primaryCardDescription } from "./_ui/console/surfaces";
 import InfraShell from "./_ui/InfraShell";
+import { LANDING_SHELL_BACKGROUND } from "./_ui/landingShellBackground";
 import { LandingCopyBlock } from "./components/LandingCopyBlock";
 
 const PRIVATE_PILOT_MAILTO =
@@ -20,12 +21,6 @@ const DOCS_CUSTOMER_QUICKSTART =
 const DOCS_GITHUB_ACTION =
   "https://github.com/MonikaDvorackova/aigov-compliance-engine/blob/main/docs/github-action.md";
 
-/** Muted shell — no chromatic gradients; optional neutral lift only */
-const LANDING_SHELL_BACKGROUND = [
-  "radial-gradient(900px 480px at 50% -8%, rgba(255,255,255,0.035) 0%, transparent 58%)",
-  "var(--govai-bg-app)",
-].join(", ");
-
 const PROOF_ITEMS = [
   { label: "Compliance Summary", detail: "Deterministic verdict from evidence" },
   { label: "Replayable state", detail: "Deterministic replay from ledger" },
@@ -35,12 +30,8 @@ const PROOF_ITEMS = [
 export default function Page() {
   return (
     <InfraShell maxWidth={720} align="start" padding={20} background={LANDING_SHELL_BACKGROUND}>
+      <Header />
       <div className="govai_landing_hero" style={{ textAlign: "center", paddingTop: 2 }}>
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-          <span style={{ display: "inline-flex", lineHeight: 0 }}>
-            <AigovMark size={30} glow={false} neon={false} neonStrength="off" tone="steel" isRunning={false} />
-          </span>
-        </div>
         <div style={{ letterSpacing: "0.2em", fontSize: 10, opacity: 0.62, marginBottom: 8 }}>GOVAI</div>
 
         <h1
@@ -651,42 +642,6 @@ export default function Page() {
           white-space: pre;
           overflow-x: auto;
         }
-        .govai_btn {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          height: 34px;
-          padding: 0 14px;
-          border-radius: 8px;
-          text-decoration: none;
-          font-size: 13px;
-          font-weight: 600;
-          transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
-        }
-        .govai_btn:focus-visible {
-          outline: 2px solid var(--govai-border-focus);
-          outline-offset: 2px;
-        }
-        .govai_btnPrimary {
-          border: 1px solid color-mix(in srgb, var(--govai-accent) 55%, transparent);
-          background: color-mix(in srgb, var(--govai-accent) 18%, var(--govai-bg-elevated));
-          color: var(--govai-text);
-        }
-        .govai_btnPrimary:hover {
-          background: color-mix(in srgb, var(--govai-accent) 28%, var(--govai-bg-elevated));
-          border-color: color-mix(in srgb, var(--govai-accent) 70%, transparent);
-        }
-        .govai_btnGhost {
-          border: 1px solid var(--govai-border);
-          background: transparent;
-          color: var(--govai-text-secondary);
-        }
-        .govai_btnGhost:hover {
-          background: var(--govai-bg-panel);
-          border-color: var(--govai-border);
-          color: var(--govai-text);
-        }
-
         .govai_walkthrough_shell {
           position: relative;
           height: 44px;
