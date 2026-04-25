@@ -993,6 +993,88 @@ tbody tr.govai-run-row {
   max-width: min(100%, 22rem);
 }
 
+/* Marketing / landing — shared with homepage and login */
+.govai_btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+  box-sizing: border-box;
+}
+
+button.govai_btn {
+  font: inherit;
+  cursor: pointer;
+  appearance: none;
+}
+
+.govai_btn:focus-visible {
+  outline: 2px solid var(--govai-border-focus);
+  outline-offset: 2px;
+}
+
+.govai_btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.govai_btnPrimary {
+  border: 1px solid color-mix(in srgb, var(--govai-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--govai-accent) 18%, var(--govai-bg-elevated));
+  color: var(--govai-text);
+}
+
+.govai_btnPrimary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--govai-accent) 28%, var(--govai-bg-elevated));
+  border-color: color-mix(in srgb, var(--govai-accent) 70%, transparent);
+}
+
+.govai_btnGhost {
+  border: 1px solid var(--govai-border);
+  background: transparent;
+  color: var(--govai-text-secondary);
+}
+
+.govai_btnGhost:hover:not(:disabled) {
+  background: var(--govai-bg-panel);
+  border-color: var(--govai-border);
+  color: var(--govai-text);
+}
+
+.govai_btnBlock {
+  width: 100%;
+}
+
+.govai_login_field {
+  width: 100%;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--govai-border-faint);
+  background: var(--govai-bg-elevated);
+  color: var(--govai-text);
+  font-size: 13px;
+  padding: 0 12px;
+  outline: none;
+  box-sizing: border-box;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.govai_login_field:focus {
+  border-color: var(--govai-border-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--govai-border-focus) 28%, transparent);
+}
+
+.govai_login_field:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* AI Discovery — printable report modal */
 @media print {
   .ai-discovery-report-modal__backdrop {
