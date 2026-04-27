@@ -4,8 +4,6 @@ GovAI is a CI compliance gate for AI systems with audit evidence export.
 
 ## Product Scope
 
-GovAI is a CI compliance gate for AI systems with audit evidence export.
-
 It:
 
 - accepts evidence via POST /evidence
@@ -34,7 +32,9 @@ Non-guarantees:
 
 ## Private pilot and pricing
 
-**Private pilot:** Email [hello@govbase.dev](mailto:hello@govbase.dev?subject=GovAI%20private%20pilot%20request) with subject `GovAI private pilot request` to scope a pilot (one AI system or CI pipeline, hosted or self-hosted audit endpoint, feedback during the pilot). This is not a productized signup flow. Onboarding checklist: [docs/pilot-onboarding.md](docs/pilot-onboarding.md).
+**Private pilot:** Email [hello@govbase.dev](mailto:hello@govbase.dev?subject=GovAI%20private%20pilot%20request) with subject `GovAI private pilot request` to scope a pilot (one AI system or CI pipeline, hosted or self-hosted audit endpoint, feedback during the pilot). This is not a productized signup flow.
+
+See docs/pilot-onboarding.md for private pilot setup.
 
 **Indicative tiers** (no self-service checkout or automated billing on this site):
 
@@ -76,126 +76,11 @@ cd ..
 
 Start the audit service, emit evidence, and read the authoritative decision from `GET /compliance-summary`.
 
-Minimal onboarding (API key → first evidence → compliance check → interpretation):
+Quickstarts:
 
-- `docs/quickstart-5min.md`
-
-    export DATABASE_URL='postgresql://USER:PASSWORD@127.0.0.1:5432/DBNAME'
-    make audit_bg
-    curl -sS http://127.0.0.1:8088/status
-
-Expected (representative):
-
-    {"ok": true, "policy_version": "v0.5_dev", "environment": "dev"}
-
-    source python/.venv/bin/activate
-    python <<'PY'
-    import uuid
-    from datetime import datetime, timezone
-
-    from govai import GovAIClient, submit_event
-
-    def now_utc() -> str:
-        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-    run_id = str(uuid.uuid4())
-    client = GovAIClient("http://127.0.0.1:8088")
-
-    ai_system_id = "expense-ai"
-    dataset_id = "expense_dataset_v1"
-    model_version_id = "expense_model_v3"
-    risk_id = "risk_expense_model_v3"
-
-    events = [
-        ("data_registered", {
-            "ai_system_id": ai_system_id,
-            "dataset_id": dataset_id,
-            "dataset": "customer_expense_records",
-            "dataset_version": "v1",
-            "dataset_fingerprint": "sha256:sample",
-            "dataset_governance_id": "gov_expense_v1",
-            "dataset_governance_commitment": "basic_compliance",
-            "source": "internal",
-            "intended_use": "expense classification",
-            "limitations": "sample dataset",
-            "quality_summary": "validated sample",
-            "governance_status": "registered",
-        }),
-        ("model_trained", {
-            "ai_system_id": ai_system_id,
-            "model_version_id": model_version_id,
-            "training_code_ref": "git:local",
-        }),
-        ("evaluation_reported", {
-            "ai_system_id": ai_system_id,
-            "model_version_id": model_version_id,
-            "metric": "f1",
-            "value": 0.92,
-            "passed": True,
-        }),
-        ("risk_recorded", {
-            "ai_system_id": ai_system_id,
-            "risk_id": risk_id,
-            "severity": "medium",
-        }),
-        ("risk_reviewed", {
-            "ai_system_id": ai_system_id,
-            "risk_id": risk_id,
-            "decision": "approve",
-            "reviewer": "quickstart",
-        }),
-        ("human_approved", {
-            "ai_system_id": ai_system_id,
-            "approver": "quickstart",
-            "approved_scope": "deploy",
-            "dataset_id": dataset_id,
-            "model_version_id": model_version_id,
-        }),
-        ("model_promoted", {
-            "ai_system_id": ai_system_id,
-            "model_version_id": model_version_id,
-            "release_target": "prod",
-        }),
-    ]
-
-    for (event_type, payload) in events:
-        submit_event(client, {
-            "event_id": str(uuid.uuid4()),
-            "event_type": event_type,
-            "ts_utc": now_utc(),
-            "actor": "quickstart",
-            "system": "expense_pipeline",
-            "run_id": run_id,
-            "payload": payload,
-        })
-
-    print(run_id)
-    PY
-
-    export GOVAI_RUN_ID='<paste run_id>'
-    curl -sS "http://127.0.0.1:8088/compliance-summary?run_id=$GOVAI_RUN_ID"
-
-Expected (representative):
-
-    {
-      "ok": true,
-      "schema_version": "aigov.compliance_summary.v2",
-      "policy_version": "v0.5_dev",
-      "environment": "dev",
-      "run_id": "<uuid>",
-      "verdict": "VALID",
-      "current_state": {
-        "model": {
-          "evaluation_passed": true,
-          "promotion": {
-            "state": "promoted"
-          }
-        },
-        "approval": {
-          "human_approval_decision": "approved"
-        }
-      }
-    }
+- `docs/quickstart-5min.md` (local demo)
+- `docs/customer-quickstart.md` (customer / CI flow)
+- `docs/pilot-onboarding.md` (private pilot onboarding)
 
 ## Why GovAI
 
