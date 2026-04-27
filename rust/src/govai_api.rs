@@ -1219,8 +1219,12 @@ struct BlockedReason {
 }
 
 fn blocked_reasons_from_state(state: &projection::ComplianceCurrentState) -> Vec<BlockedReason> {
-    let missing: std::collections::BTreeSet<&str> =
-        state.requirements.missing.iter().map(|s| s.as_str()).collect();
+    let missing: std::collections::BTreeSet<&str> = state
+        .requirements
+        .missing
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
 
     // Stable order and stable messages (contract).
     let mut out: Vec<BlockedReason> = Vec::new();
@@ -1264,7 +1268,12 @@ mod discovery_enforcement_tests {
     use crate::schema::EvidenceEvent;
     use serde_json::json;
 
-    fn ev(run_id: &str, event_type: &str, event_id: &str, payload: serde_json::Value) -> EvidenceEvent {
+    fn ev(
+        run_id: &str,
+        event_type: &str,
+        event_id: &str,
+        payload: serde_json::Value,
+    ) -> EvidenceEvent {
         EvidenceEvent {
             event_id: event_id.to_string(),
             event_type: event_type.to_string(),
@@ -1351,9 +1360,15 @@ mod discovery_enforcement_tests {
         let events = base_valid_bundle(run_id);
         let state =
             projection::derive_current_state_from_events_with_context(run_id, &events, None, None);
-        assert_eq!(state.requirements.required, vec!["ai_discovery_completed".to_string()]);
+        assert_eq!(
+            state.requirements.required,
+            vec!["ai_discovery_completed".to_string()]
+        );
         assert_eq!(state.requirements.satisfied, Vec::<String>::new());
-        assert_eq!(state.requirements.missing, vec!["ai_discovery_completed".to_string()]);
+        assert_eq!(
+            state.requirements.missing,
+            vec!["ai_discovery_completed".to_string()]
+        );
         assert_eq!(compliance_verdict_from_state(&state), "BLOCKED");
         let reasons = blocked_reasons_from_state(&state);
         assert_eq!(reasons.len(), 1);
@@ -1372,8 +1387,14 @@ mod discovery_enforcement_tests {
         ));
         let state =
             projection::derive_current_state_from_events_with_context(run_id, &events, None, None);
-        assert_eq!(state.requirements.required, vec!["ai_discovery_completed".to_string()]);
-        assert_eq!(state.requirements.satisfied, vec!["ai_discovery_completed".to_string()]);
+        assert_eq!(
+            state.requirements.required,
+            vec!["ai_discovery_completed".to_string()]
+        );
+        assert_eq!(
+            state.requirements.satisfied,
+            vec!["ai_discovery_completed".to_string()]
+        );
         assert!(state.requirements.missing.is_empty());
         assert_eq!(compliance_verdict_from_state(&state), "VALID");
         assert!(blocked_reasons_from_state(&state).is_empty());
@@ -1395,8 +1416,14 @@ mod discovery_enforcement_tests {
             .requirements
             .required
             .contains(&"ai_discovery_completed".to_string()));
-        assert!(state.requirements.satisfied.contains(&"ai_discovery_completed".to_string()));
-        assert!(state.requirements.missing.contains(&"model_registered".to_string()));
+        assert!(state
+            .requirements
+            .satisfied
+            .contains(&"ai_discovery_completed".to_string()));
+        assert!(state
+            .requirements
+            .missing
+            .contains(&"model_registered".to_string()));
         assert!(state
             .requirements
             .missing
@@ -1404,7 +1431,13 @@ mod discovery_enforcement_tests {
         assert_eq!(compliance_verdict_from_state(&state), "BLOCKED");
         let reasons = blocked_reasons_from_state(&state);
         let codes: Vec<String> = reasons.into_iter().map(|r| r.code).collect();
-        assert_eq!(codes, vec!["model_registered".to_string(), "usage_policy_defined".to_string()]);
+        assert_eq!(
+            codes,
+            vec![
+                "model_registered".to_string(),
+                "usage_policy_defined".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -1417,7 +1450,12 @@ mod discovery_enforcement_tests {
             "d1",
             json!({ "openai": true, "transformers": false, "model_artifacts": false }),
         ));
-        events.push(ev(run_id, "model_registered", "mr1", json!({ "ref": "registry://model" })));
+        events.push(ev(
+            run_id,
+            "model_registered",
+            "mr1",
+            json!({ "ref": "registry://model" }),
+        ));
         events.push(ev(
             run_id,
             "usage_policy_defined",
@@ -1455,7 +1493,10 @@ mod discovery_enforcement_tests {
             .requirements
             .satisfied
             .contains(&"evaluation_completed".to_string()));
-        assert_eq!(state.requirements.missing, vec!["model_artifact_documented".to_string()]);
+        assert_eq!(
+            state.requirements.missing,
+            vec!["model_artifact_documented".to_string()]
+        );
         assert_eq!(compliance_verdict_from_state(&state), "BLOCKED");
         let reasons = blocked_reasons_from_state(&state);
         assert_eq!(reasons.len(), 1);
