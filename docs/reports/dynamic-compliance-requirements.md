@@ -59,3 +59,35 @@ git status --short
 git add docs/reports/dynamic-compliance-requirements.md
 git commit -m "docs: add audit report for dynamic requirements"
 git push
+
+## Evaluation gate
+
+The change preserves the evaluation gate as the first authoritative verdict rule.
+
+If `evaluation_passed == false`, the compliance verdict is `INVALID`, even when all required evidence is present.
+
+If `evaluation_passed == true` and no required evidence is missing, the compliance verdict can become `VALID`.
+
+## Human approval gate
+
+This change does not remove or modify the existing human approval evidence model.
+
+Human approval state remains available in `current_state.approval`.
+
+The new dynamic requirements engine only changes how required evidence is represented and how missing required evidence blocks the compliance summary verdict.
+
+## Evaluation gate
+
+The change preserves the evaluation gate as the first authoritative verdict rule.
+
+If `evaluation_passed == false`, the compliance verdict is `INVALID`, even when all required evidence is present.
+
+If `evaluation_passed == true` and no required evidence is missing, the compliance verdict can become `VALID`.
+
+## Human approval gate
+
+This change does not remove or modify the existing human approval evidence model.
+
+Human approval state remains available in `current_state.approval`.
+
+The new dynamic requirements engine only changes how required evidence is represented and how missing required evidence blocks the compliance summary verdict.
