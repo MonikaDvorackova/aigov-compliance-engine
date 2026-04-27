@@ -294,6 +294,12 @@ jobs:
             cd "${GITHUB_WORKSPACE}"
 
             make run RUN_ID="${RUN_ID}"
+
+            ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            curl -sS -X POST "${AUDIT_URL}/evidence" \
+              -H "Content-Type: application/json" \
+              -d "{\"event_id\":\"evt_ai_discovery_${RUN_ID}_${GITHUB_RUN_ID}\",\"event_type\":\"ai_discovery_reported\",\"ts_utc\":\"${ts}\",\"actor\":\"ci\",\"system\":\"github_actions\",\"run_id\":\"${RUN_ID}\",\"payload\":{\"openai\":false,\"transformers\":false,\"model_artifacts\":false}}"
+
             make approve RUN_ID="${RUN_ID}"
             make promote RUN_ID="${RUN_ID}"
 
@@ -366,6 +372,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "aigov-py==0.1.0"
           govai --help >/dev/null
+
+      - name: Submit AI discovery evidence
+        run: |
+          set -euo pipefail
+          ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          curl -sS -X POST "${GOVAI_AUDIT_BASE_URL}/evidence" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${GOVAI_API_KEY}" \
+            -d "{\"event_id\":\"evt_ai_discovery_${GOVAI_RUN_ID}_${GITHUB_RUN_ID}\",\"event_type\":\"ai_discovery_reported\",\"ts_utc\":\"${ts}\",\"actor\":\"ci\",\"system\":\"github_actions\",\"run_id\":\"${GOVAI_RUN_ID}\",\"payload\":{\"openai\":false,\"transformers\":false,\"model_artifacts\":false}}"
 
       - name: GovAI check (must be VALID)
         run: |

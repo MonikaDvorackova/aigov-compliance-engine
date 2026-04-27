@@ -182,7 +182,10 @@ fn has_evidence(events: &[EvidenceEvent], code: &str) -> bool {
 
         // Local model / evaluation evidence
         // Deterministic mapping: treat `evaluation_reported` as a completed evaluation signal.
-        "evaluation_completed" => has_event_type(events, "evaluation_completed") || has_event_type(events, "evaluation_reported"),
+        "evaluation_completed" => {
+            has_event_type(events, "evaluation_completed")
+                || has_event_type(events, "evaluation_reported")
+        }
 
         // Model artifact documentation evidence
         "model_artifact_documented" => has_event_type(events, "model_artifact_documented"),
