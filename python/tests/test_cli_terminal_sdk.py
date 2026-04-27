@@ -45,6 +45,7 @@ def test_subcommand_help() -> None:
         "fetch-bundle",
         "compliance-summary",
         "check",
+        "submit-evidence",
         "report",
         "export-bundle",
         "export-run",
@@ -54,6 +55,113 @@ def test_subcommand_help() -> None:
         with pytest.raises(SystemExit) as ei:
             build_parser().parse_args([sub, "--help"])
         assert ei.value.code == 0
+
+
+def test_submit_evidence_missing_run_id_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GOVAI_RUN_ID", raising=False)
+    monkeypatch.delenv("RUN_ID", raising=False)
+    code = main(
+        [
+            "--audit-base-url",
+            "http://audit.test",
+            "submit-evidence",
+            "--event-type",
+            "ai_discovery_reported",
+            "--payload-json",
+            "{}",
+        ]
+    )
+    assert code == cli_exit.EX_INVALID
+
+
+def test_submit_evidence_missing_payload_fails() -> None:
+    code = main(
+        [
+            "--audit-base-url",
+            "http://audit.test",
+            "submit-evidence",
+            "--run-id",
+            "r1",
+            "--event-type",
+            "ai_discovery_reported",
+        ]
+    )
+    assert code == cli_exit.EX_INVALID
+
+
+def test_submit_evidence_invalid_json_payload_fails() -> None:
+    code = main(
+        [
+            "--audit-base-url",
+            "http://audit.test",
+            "submit-evidence",
+            "--run-id",
+            "r1",
+            "--event-type",
+            "ai_discovery_reported",
+            "--payload-json",
+            "{",
+        ]
+    )
+    assert code == cli_exit.EX_INVALID
+
+
+def test_submit_evidence_success_sends_expected_event_and_api_key() -> None:
+    with patch("aigov_py.cli.GovAIClient") as client_cls:
+        inst = MagicMock()
+        client_cls.return_value = inst
+        with patch("aigov_py.cli.submit_event") as submit:
+            submit.return_value = {"ok": True, "record_hash": "h", "policy_version": "p", "environment": "dev"}
+            code = main(
+                [
+                    "--audit-base-url",
+                    "http://audit.test",
+                    "--api-key",
+                    "secret",
+                    "submit-evidence",
+                    "--run-id",
+                    "r1",
+                    "--event-type",
+                    "ai_discovery_reported",
+                    "--payload-json",
+                    "{\"signals\":[\"openai\"]}",
+                    "--event-id",
+                    "evt1",
+                    "--actor",
+                    "customer",
+                    "--system",
+                    "repo",
+                ]
+            )
+    assert code == cli_exit.EX_OK
+    assert client_cls.call_args[0][0] == "http://audit.test"
+    assert client_cls.call_args.kwargs["api_key"] == "secret"
+    ev = submit.call_args[0][1]
+    assert ev["event_id"] == "evt1"
+    assert ev["event_type"] == "ai_discovery_reported"
+    assert ev["run_id"] == "r1"
+    assert ev["actor"] == "customer"
+    assert ev["system"] == "repo"
+    assert ev["payload"] == {"signals": ["openai"]}
+
+
+def test_submit_evidence_http_error_exits_nonzero() -> None:
+    with patch("aigov_py.cli.submit_event") as submit:
+        submit.side_effect = Exception("HTTP 400")
+        code = main(
+            [
+                "--audit-base-url",
+                "http://audit.test",
+                "submit-evidence",
+                "--run-id",
+                "r1",
+                "--event-type",
+                "ai_discovery_reported",
+                "--payload-json",
+                "{}",
+            ]
+        )
+    assert code == cli_exit.EX_ERR
 
 
 def test_init_writes_config(tmp_path: Path) -> None:

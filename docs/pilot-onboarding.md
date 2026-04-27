@@ -20,7 +20,7 @@
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.1.0"
+python -m pip install "aigov-py==0.1.1"
 govai --help
 ```
 

@@ -2,13 +2,21 @@ import hashlib
 import os
 from typing import Any, Dict, Tuple
 
-from sklearn.datasets import load_iris
-
 from .canonical_json import canonical_dumps
 
 
+def _load_iris_safe():
+    try:
+        from sklearn.datasets import load_iris  # type: ignore
+    except Exception as e:  # pragma: no cover
+        raise ImportError(
+            "scikit-learn is required for Iris demo helpers (dataset_fingerprint_iris / dataset_governance_iris)."
+        ) from e
+    return load_iris()
+
+
 def dataset_fingerprint_iris() -> str:
-    iris = load_iris()
+    iris = _load_iris_safe()
     payload = {
         "dataset": "iris",
         "n_rows": int(iris.data.shape[0]),
@@ -26,7 +34,7 @@ def dataset_governance_iris() -> Dict[str, Any]:
     In a real product this would be provided by an internal governance workflow.
     """
 
-    iris = load_iris()
+    iris = _load_iris_safe()
     fp = dataset_fingerprint_iris()
 
     ai_system_id = os.environ.get("AIGOV_AI_SYSTEM_ID", "aigov_poc").strip() or "aigov_poc"
