@@ -2,6 +2,7 @@ use crate::schema::EvidenceEvent;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 fn payload_get_str(p: &Value, key: &str) -> Option<String> {
     p.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
@@ -129,6 +130,23 @@ pub struct EvidenceState {
 }
 
 #[derive(Debug, Serialize)]
+pub struct DiscoverySignals {
+    pub openai: bool,
+    pub transformers: bool,
+    pub model_artifacts: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EvidenceRequirements {
+    /// Stable evidence requirement codes derived deterministically from discovery signals.
+    pub required: Vec<String>,
+    /// Required evidence that is present in the current event bundle.
+    pub satisfied: Vec<String>,
+    /// Required evidence that is not present in the current event bundle.
+    pub missing: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ComplianceCurrentState {
     pub schema_version: String,
     pub run_id: String,
@@ -139,6 +157,97 @@ pub struct ComplianceCurrentState {
     pub risks: Option<RiskSummary>,
     pub approval: ApprovalState,
     pub evidence: EvidenceState,
+    /// Deterministic AI discovery signals reported into the evidence ledger (event_type `ai_discovery_reported`).
+    pub discovery: DiscoverySignals,
+    /// Evidence requirements derived from discovery signals.
+    pub requirements: EvidenceRequirements,
+}
+
+fn payload_get_bool_default(p: &Value, key: &str, default: bool) -> bool {
+    payload_get_bool(p, key).unwrap_or(default)
+}
+
+fn has_event_type(events: &[EvidenceEvent], event_type: &str) -> bool {
+    events.iter().any(|e| e.event_type == event_type)
+}
+
+fn has_evidence(events: &[EvidenceEvent], code: &str) -> bool {
+    match code {
+        // Mandatory: discovery must have been reported for the run.
+        "ai_discovery_completed" => has_event_type(events, "ai_discovery_reported"),
+
+        // OpenAI discovery-driven evidence
+        "model_registered" => has_event_type(events, "model_registered"),
+        "usage_policy_defined" => has_event_type(events, "usage_policy_defined"),
+
+        // Local model / evaluation evidence
+        // Deterministic mapping: treat `evaluation_reported` as a completed evaluation signal.
+        "evaluation_completed" => has_event_type(events, "evaluation_completed") || has_event_type(events, "evaluation_reported"),
+
+        // Model artifact documentation evidence
+        "model_artifact_documented" => has_event_type(events, "model_artifact_documented"),
+
+        // Unknown codes are treated as missing (defensive, deterministic).
+        _ => false,
+    }
+}
+
+fn derive_discovery_signals(events: &[EvidenceEvent]) -> DiscoverySignals {
+    let Some(ev) = find_last_event(events, "ai_discovery_reported") else {
+        return DiscoverySignals {
+            openai: false,
+            transformers: false,
+            model_artifacts: false,
+        };
+    };
+    let p = &ev.payload;
+    DiscoverySignals {
+        openai: payload_get_bool_default(p, "openai", false),
+        transformers: payload_get_bool_default(p, "transformers", false),
+        model_artifacts: payload_get_bool_default(p, "model_artifacts", false),
+    }
+}
+
+fn derive_evidence_requirements(
+    events: &[EvidenceEvent],
+    discovery: &DiscoverySignals,
+) -> EvidenceRequirements {
+    let mut required: BTreeSet<&'static str> = BTreeSet::new();
+
+    // Mandatory: discovery must be completed for every run (even if it reports no findings).
+    required.insert("ai_discovery_completed");
+
+    if discovery.openai {
+        required.insert("model_registered");
+        required.insert("usage_policy_defined");
+    }
+    if discovery.transformers {
+        required.insert("evaluation_completed");
+    }
+    if discovery.model_artifacts {
+        required.insert("model_artifact_documented");
+        required.insert("evaluation_completed");
+    }
+
+    let required_vec: Vec<String> = required.iter().copied().map(|s| s.to_string()).collect();
+    let satisfied_vec: Vec<String> = required
+        .iter()
+        .copied()
+        .filter(|code| has_evidence(events, code))
+        .map(|s| s.to_string())
+        .collect();
+    let missing_vec: Vec<String> = required
+        .iter()
+        .copied()
+        .filter(|code| !has_evidence(events, code))
+        .map(|s| s.to_string())
+        .collect();
+
+    EvidenceRequirements {
+        required: required_vec,
+        satisfied: satisfied_vec,
+        missing: missing_vec,
+    }
 }
 
 pub fn derive_current_state_from_events_with_context(
@@ -351,6 +460,9 @@ pub fn derive_current_state_from_events_with_context(
     let primary_risk_id = canonical_risk_ids.first().cloned();
     let latest_event_ts_utc = events.last().map(|e| e.ts_utc.clone());
 
+    let discovery = derive_discovery_signals(events);
+    let requirements = derive_evidence_requirements(events, &discovery);
+
     ComplianceCurrentState {
         run_id: run_id.to_string(),
         schema_version: "aigov.compliance_current_state.v2".to_string(),
@@ -383,6 +495,8 @@ pub fn derive_current_state_from_events_with_context(
             bundle_hash,
             bundle_generated_at,
         },
+        discovery,
+        requirements,
     }
 }
 

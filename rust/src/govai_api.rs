@@ -113,10 +113,16 @@ pub async fn status(
     policy_version: &'static str,
     deployment_env: GovaiEnvironment,
 ) -> Json<serde_json::Value> {
+    let base_url = std::env::var("GOVAI_BASE_URL")
+        .or_else(|_| std::env::var("AIGOV_BASE_URL"))
+        .ok()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty());
     Json(json!({
         "ok": true,
         "policy_version": policy_version,
         "environment": deployment_env.as_str(),
+        "base_url": base_url,
     }))
 }
 
@@ -1112,6 +1118,18 @@ async fn compliance_summary_route(
     match bundle::collect_events_for_run(&log_path, &q.run_id) {
         Ok(events) => {
             let events = canonicalize_events(events);
+            let deployment_environment = audit.deployment_env.as_str();
+            let ledger_environment = events
+                .last()
+                .and_then(|e| e.environment.as_deref())
+                .unwrap_or(deployment_environment);
+            let ledger_environment_note = if ledger_environment == deployment_environment {
+                serde_json::Value::Null
+            } else {
+                json!(format!(
+                    "ledger environment ({ledger_environment}) does not match deployment ({deployment_environment})"
+                ))
+            };
             let artifact_path = bundle::find_model_artifact_path(&events);
             let lp = format!("rust/{}", log_path);
             let bundle_hash = bundle::bundle_sha256(
@@ -1128,14 +1146,25 @@ async fn compliance_summary_route(
                 None,
             );
             let verdict = compliance_verdict_from_state(&derived);
+            let requirements = json!({
+                "required": derived.requirements.required,
+                "satisfied": derived.requirements.satisfied,
+                "missing": derived.requirements.missing
+            });
+            let blocked_reasons = blocked_reasons_from_state(&derived);
             (
                 StatusCode::OK,
                 Json(json!({
                     "ok": true,
                     "schema_version": "aigov.compliance_summary.v2",
                     "policy_version": audit.policy_version,
+                    "deployment_environment": deployment_environment,
+                    "ledger_environment": ledger_environment,
+                    "ledger_environment_note": ledger_environment_note,
                     "run_id": q.run_id,
                     "verdict": verdict,
+                    "requirements": requirements,
+                    "blocked_reasons": blocked_reasons,
                     "current_state": derived,
                 })),
             )
@@ -1160,9 +1189,14 @@ fn compliance_verdict_from_state(state: &projection::ComplianceCurrentState) -> 
     // Authoritative rule order (server-side): evaluation → approval → promotion.
     // - INVALID: evaluation explicitly failed.
     // - VALID: evaluation passed, risk reviewed + human approved (approve), and promotion executed.
-    // - BLOCKED: anything else (missing prerequisites / not yet promoted).
+    // - BLOCKED: anything else (missing prerequisites / missing required evidence / not yet promoted).
     if state.model.evaluation_passed == Some(false) {
         return "INVALID";
+    }
+
+    // Discovery-driven evidence gates (and mandatory discovery completion): additive enforcement.
+    if !state.requirements.missing.is_empty() {
+        return "BLOCKED";
     }
 
     let eval_ok = state.model.evaluation_passed == Some(true);
@@ -1175,6 +1209,289 @@ fn compliance_verdict_from_state(state: &projection::ComplianceCurrentState) -> 
         "VALID"
     } else {
         "BLOCKED"
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct BlockedReason {
+    code: String,
+    message: String,
+}
+
+fn blocked_reasons_from_state(state: &projection::ComplianceCurrentState) -> Vec<BlockedReason> {
+    let missing: std::collections::BTreeSet<&str> =
+        state.requirements.missing.iter().map(|s| s.as_str()).collect();
+
+    // Stable order and stable messages (contract).
+    let mut out: Vec<BlockedReason> = Vec::new();
+    let ordered: [(&str, &str); 5] = [
+        (
+            "ai_discovery_completed",
+            "AI discovery scan must be completed before compliance decision.",
+        ),
+        (
+            "model_registered",
+            "Detected OpenAI usage requires model registration.",
+        ),
+        (
+            "usage_policy_defined",
+            "Detected OpenAI usage requires usage policy definition.",
+        ),
+        (
+            "evaluation_completed",
+            "Detected AI system requires evaluation evidence.",
+        ),
+        (
+            "model_artifact_documented",
+            "Detected model artifact requires documentation.",
+        ),
+    ];
+
+    for (code, message) in ordered {
+        if missing.contains(code) {
+            out.push(BlockedReason {
+                code: code.to_string(),
+                message: message.to_string(),
+            });
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod discovery_enforcement_tests {
+    use super::*;
+    use crate::schema::EvidenceEvent;
+    use serde_json::json;
+
+    fn ev(run_id: &str, event_type: &str, event_id: &str, payload: serde_json::Value) -> EvidenceEvent {
+        EvidenceEvent {
+            event_id: event_id.to_string(),
+            event_type: event_type.to_string(),
+            ts_utc: "2026-04-21T12:00:00Z".to_string(),
+            actor: "test".to_string(),
+            system: "unit".to_string(),
+            run_id: run_id.to_string(),
+            environment: Some("dev".to_string()),
+            payload,
+        }
+    }
+
+    fn base_valid_bundle(run_id: &str) -> Vec<EvidenceEvent> {
+        vec![
+            ev(
+                run_id,
+                "evaluation_reported",
+                "e1",
+                json!({
+                    "ai_system_id": "ai1",
+                    "dataset_id": "d1",
+                    "model_version_id": "m1",
+                    "metric": "acc",
+                    "value": 0.9,
+                    "threshold": 0.8,
+                    "passed": true,
+                }),
+            ),
+            ev(
+                run_id,
+                "risk_reviewed",
+                "r1",
+                json!({
+                    "ai_system_id": "ai1",
+                    "dataset_id": "d1",
+                    "model_version_id": "m1",
+                    "risk_id": "risk-1",
+                    "assessment_id": "assess-1",
+                    "dataset_governance_commitment": "commit-1",
+                    "decision": "approve",
+                    "reviewer": "compliance",
+                    "justification": "ok",
+                }),
+            ),
+            ev(
+                run_id,
+                "human_approved",
+                "h1",
+                json!({
+                    "scope": "model_promoted",
+                    "decision": "approve",
+                    "approver": "compliance_officer",
+                    "justification": "ok",
+                    "assessment_id": "assess-1",
+                    "risk_id": "risk-1",
+                    "dataset_governance_commitment": "commit-1",
+                    "ai_system_id": "ai1",
+                    "dataset_id": "d1",
+                    "model_version_id": "m1",
+                }),
+            ),
+            ev(
+                run_id,
+                "model_promoted",
+                "p1",
+                json!({
+                    "artifact_path": "s3://bucket/model",
+                    "promotion_reason": "ok",
+                    "assessment_id": "assess-1",
+                    "risk_id": "risk-1",
+                    "dataset_governance_commitment": "commit-1",
+                    "approved_human_event_id": "h1",
+                    "ai_system_id": "ai1",
+                    "dataset_id": "d1",
+                    "model_version_id": "m1",
+                }),
+            ),
+        ]
+    }
+
+    #[test]
+    fn no_ai_discovery_reported_blocks_with_missing_ai_discovery_completed() {
+        let run_id = "run_no_discovery_event";
+        let events = base_valid_bundle(run_id);
+        let state =
+            projection::derive_current_state_from_events_with_context(run_id, &events, None, None);
+        assert_eq!(state.requirements.required, vec!["ai_discovery_completed".to_string()]);
+        assert_eq!(state.requirements.satisfied, Vec::<String>::new());
+        assert_eq!(state.requirements.missing, vec!["ai_discovery_completed".to_string()]);
+        assert_eq!(compliance_verdict_from_state(&state), "BLOCKED");
+        let reasons = blocked_reasons_from_state(&state);
+        assert_eq!(reasons.len(), 1);
+        assert_eq!(reasons[0].code, "ai_discovery_completed");
+    }
+
+    #[test]
+    fn ai_discovery_reported_with_no_findings_adds_no_extra_requirements() {
+        let run_id = "run_discovery_no_findings";
+        let mut events = base_valid_bundle(run_id);
+        events.push(ev(
+            run_id,
+            "ai_discovery_reported",
+            "d1",
+            json!({ "openai": false, "transformers": false, "model_artifacts": false }),
+        ));
+        let state =
+            projection::derive_current_state_from_events_with_context(run_id, &events, None, None);
+        assert_eq!(state.requirements.required, vec!["ai_discovery_completed".to_string()]);
+        assert_eq!(state.requirements.satisfied, vec!["ai_discovery_completed".to_string()]);
+        assert!(state.requirements.missing.is_empty());
+        assert_eq!(compliance_verdict_from_state(&state), "VALID");
+        assert!(blocked_reasons_from_state(&state).is_empty());
+    }
+
+    #[test]
+    fn openai_discovery_without_evidence_blocks() {
+        let run_id = "run_openai_blocked";
+        let mut events = base_valid_bundle(run_id);
+        events.push(ev(
+            run_id,
+            "ai_discovery_reported",
+            "d1",
+            json!({ "openai": true, "transformers": false, "model_artifacts": false }),
+        ));
+        let state =
+            projection::derive_current_state_from_events_with_context(run_id, &events, None, None);
+        assert!(state
+            .requirements
+            .required
+            .contains(&"ai_discovery_completed".to_string()));
+        assert!(state.requirements.satisfied.contains(&"ai_discovery_completed".to_string()));
+        assert!(state.requirements.missing.contains(&"model_registered".to_string()));
+        assert!(state
+            .requirements
+            .missing
+            .contains(&"usage_policy_defined".to_string()));
+        assert_eq!(compliance_verdict_from_state(&state), "BLOCKED");
+        let reasons = blocked_reasons_from_state(&state);
+        let codes: Vec<String> = reasons.into_iter().map(|r| r.code).collect();
+        assert_eq!(codes, vec!["model_registered".to_string(), "usage_policy_defined".to_string()]);
+    }
+
+    #[test]
+    fn openai_discovery_with_required_evidence_can_pass() {
+        let run_id = "run_openai_ok";
+        let mut events = base_valid_bundle(run_id);
+        events.push(ev(
+            run_id,
+            "ai_discovery_reported",
+            "d1",
+            json!({ "openai": true, "transformers": false, "model_artifacts": false }),
+        ));
+        events.push(ev(run_id, "model_registered", "mr1", json!({ "ref": "registry://model" })));
+        events.push(ev(
+            run_id,
+            "usage_policy_defined",
+            "up1",
+            json!({ "policy_id": "pol-1" }),
+        ));
+        let state =
+            projection::derive_current_state_from_events_with_context(run_id, &events, None, None);
+        assert!(state.requirements.missing.is_empty());
+        assert_eq!(compliance_verdict_from_state(&state), "VALID");
+        assert!(blocked_reasons_from_state(&state).is_empty());
+    }
+
+    #[test]
+    fn model_artifact_discovery_without_documentation_blocks() {
+        let run_id = "run_artifact_blocked";
+        let mut events = base_valid_bundle(run_id);
+        events.push(ev(
+            run_id,
+            "ai_discovery_reported",
+            "d1",
+            json!({ "openai": false, "transformers": false, "model_artifacts": true }),
+        ));
+        let state =
+            projection::derive_current_state_from_events_with_context(run_id, &events, None, None);
+        assert!(state
+            .requirements
+            .required
+            .contains(&"model_artifact_documented".to_string()));
+        assert!(state
+            .requirements
+            .required
+            .contains(&"evaluation_completed".to_string()));
+        assert!(state
+            .requirements
+            .satisfied
+            .contains(&"evaluation_completed".to_string()));
+        assert_eq!(state.requirements.missing, vec!["model_artifact_documented".to_string()]);
+        assert_eq!(compliance_verdict_from_state(&state), "BLOCKED");
+        let reasons = blocked_reasons_from_state(&state);
+        assert_eq!(reasons.len(), 1);
+        assert_eq!(reasons[0].code, "model_artifact_documented");
+    }
+
+    #[test]
+    fn explicit_failed_evaluation_overrides_success() {
+        let run_id = "run_eval_fail_overrides";
+        let mut events = base_valid_bundle(run_id);
+        events.push(ev(
+            run_id,
+            "ai_discovery_reported",
+            "d1",
+            json!({ "openai": false, "transformers": false, "model_artifacts": false }),
+        ));
+        // Later evaluation explicitly fails.
+        events.push(ev(
+            run_id,
+            "evaluation_reported",
+            "e2",
+            json!({
+                "ai_system_id": "ai1",
+                "dataset_id": "d1",
+                "model_version_id": "m1",
+                "metric": "acc",
+                "value": 0.1,
+                "threshold": 0.8,
+                "passed": false,
+            }),
+        ));
+        let state =
+            projection::derive_current_state_from_events_with_context(run_id, &events, None, None);
+        assert!(state.requirements.missing.is_empty());
+        assert_eq!(state.model.evaluation_passed, Some(false));
+        assert_eq!(compliance_verdict_from_state(&state), "INVALID");
     }
 }
 
