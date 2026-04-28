@@ -27,6 +27,60 @@ use serde_json::json;
 use std::collections::HashSet;
 use uuid::Uuid;
 
+use crate::api_error::api_error_with;
+
+fn clean_policy_prefix(s: &str) -> &str {
+    s.trim()
+        .strip_prefix("policy_violation:")
+        .map(|x| x.trim())
+        .unwrap_or_else(|| s.trim())
+}
+
+fn api_err(
+    status: StatusCode,
+    code: &str,
+    message: &str,
+    hint: &str,
+    details: Option<serde_json::Value>,
+    policy_version: Option<&str>,
+    extra_top_level: Option<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let mut extra = serde_json::Map::new();
+    if let Some(pv) = policy_version {
+        extra.insert(
+            "policy_version".to_string(),
+            serde_json::Value::String(pv.to_string()),
+        );
+    }
+    if let Some(ex) = extra_top_level {
+        if let serde_json::Value::Object(obj) = ex {
+            for (k, v) in obj {
+                extra.insert(k, v);
+            }
+        }
+    }
+    let extra = if extra.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(extra))
+    };
+    api_error_with(status, code, message, hint, details, extra)
+}
+
+fn normalize_error_code(raw: &str) -> String {
+    raw.trim()
+        .chars()
+        .map(|c| match c {
+            'a'..='z' => c.to_ascii_uppercase(),
+            'A'..='Z' | '0'..='9' => c,
+            _ => '_',
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
+}
+
+/// Backward-compatible shim for older call sites. Prefer `api_err` for new code.
 fn json_error(
     status: StatusCode,
     error: &str,
@@ -34,43 +88,29 @@ fn json_error(
     policy_version: Option<&str>,
     extra: Option<serde_json::Value>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let mut m = serde_json::Map::new();
-    m.insert("ok".to_string(), serde_json::Value::Bool(false));
-    m.insert(
-        "error".to_string(),
-        serde_json::Value::String(error.to_string()),
-    );
-    m.insert(
-        "message".to_string(),
-        serde_json::Value::String(message.to_string()),
-    );
-    // `code` is a stable, machine-readable discriminator.
-    // For most errors `code == error`; policy violations override with a more specific code.
-    m.insert(
-        "code".to_string(),
-        serde_json::Value::String(error.to_string()),
-    );
-    if let Some(pv) = policy_version {
-        m.insert(
-            "policy_version".to_string(),
-            serde_json::Value::String(pv.to_string()),
-        );
-    }
-    if let Some(ex) = extra {
-        if let serde_json::Value::Object(obj) = ex {
-            for (k, v) in obj {
-                m.insert(k, v);
-            }
+    let code = normalize_error_code(error);
+    let (details, extra_top) = match extra {
+        None => (None, None),
+        Some(serde_json::Value::Object(mut obj)) => {
+            let details = obj.remove("details");
+            let extra = if obj.is_empty() {
+                None
+            } else {
+                Some(serde_json::Value::Object(obj))
+            };
+            (details, extra)
         }
-    }
-    (status, Json(serde_json::Value::Object(m)))
-}
-
-fn clean_policy_prefix(s: &str) -> &str {
-    s.trim()
-        .strip_prefix("policy_violation:")
-        .map(|x| x.trim())
-        .unwrap_or_else(|| s.trim())
+        Some(v) => (Some(v), None),
+    };
+    api_err(
+        status,
+        &code,
+        message,
+        "Retry. If this persists, contact support.",
+        details,
+        policy_version,
+        extra_top,
+    )
 }
 
 pub fn core_router(policy_version: &'static str, deployment_env: GovaiEnvironment) -> Router {
@@ -279,10 +319,12 @@ async fn ingest(
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
-            return json_error(
+            return api_err(
                 StatusCode::BAD_REQUEST,
-                &e,
-                "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
                 None,
             );
@@ -290,34 +332,40 @@ async fn ingest(
     };
 
     if let Err(e) = prepare_event_for_ingest(&mut event, audit.deployment_env, &log_path) {
-        return json_error(
+        return api_err(
             StatusCode::BAD_REQUEST,
-            "policy_violation",
+            "POLICY_VIOLATION",
             clean_policy_prefix(&e),
+            "Fix the request payload to satisfy the environment/policy constraints and retry.",
+            Some(json!({ "raw": e, "policy_code": "environment_policy" })),
             Some(audit.policy_version),
-            Some(json!({ "details": e, "code": "environment_policy" })),
+            None,
         );
     }
 
     if let Err(e) = policy::enforce(&event, &log_path, &audit.policy) {
-        return json_error(
+        return api_err(
             StatusCode::BAD_REQUEST,
-            "policy_violation",
+            "POLICY_VIOLATION",
             clean_policy_prefix(&e.message),
+            "Fix the request payload to satisfy the policy and retry.",
+            Some(json!({ "raw": e.message, "policy_code": e.code })),
             Some(audit.policy_version),
-            Some(json!({ "details": e.message, "code": e.code })),
+            None,
         );
     }
 
     let existing = match collect_existing_and_reject_duplicate(&log_path, &event) {
         Ok(e) => e,
         Err(e) => {
-            return json_error(
+            return api_err(
                 StatusCode::CONFLICT,
-                "duplicate_event",
-                "This event_id already exists for this run_id. Use a new event_id or retry with idempotency handling.",
+                "DUPLICATE_EVENT_ID",
+                "This event_id already exists for this run_id.",
+                "Use a new `event_id`, or treat this request as an idempotent retry and stop sending duplicates.",
+                Some(json!({ "raw": e })),
                 Some(audit.policy_version),
-                Some(json!({ "details": e })),
+                None,
             );
         }
     };
@@ -337,10 +385,12 @@ async fn ingest(
     let metering_team = if audit.metering.enabled {
         let key_hash = match audit_api_key::raw_bearer_token(&headers) {
             None => {
-                return json_error(
+                return api_err(
                     StatusCode::UNAUTHORIZED,
-                    "unauthorized",
-                    "Missing or invalid Authorization bearer token.",
+                    "MISSING_API_KEY",
+                    "Missing API key.",
+                    "Provide `Authorization: Bearer <api_key>`.",
+                    None,
                     None,
                     None,
                 );
@@ -350,21 +400,25 @@ async fn ingest(
         let team_id = match metering::team_id_for_key_hash(&audit.pool, &key_hash).await {
             Ok(t) => t,
             Err(e) => {
-                return json_error(
+                return api_err(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "metering_error",
-                    "We could not load metering information for this API key. Please retry; if it persists, contact support.",
+                    "METERING_ERROR",
+                    "We could not load metering information for this API key.",
+                    "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                    Some(json!({ "raw": e.to_string() })),
                     Some(audit.policy_version),
-                    Some(json!({ "details": e.to_string() })),
+                    None,
                 );
             }
         };
         let team_id = match team_id {
             None => {
-                return json_error(
+                return api_err(
                     StatusCode::FORBIDDEN,
-                    "team_not_configured_for_api_key",
-                    "This API key is valid, but it is not linked to a billing team. Ask an admin to configure billing for this key.",
+                    "TEAM_NOT_CONFIGURED",
+                    "This API key is valid, but it is not linked to a billing team.",
+                    "Ask an admin to configure billing for this API key (or use a key that is linked to a team).",
+                    None,
                     Some(audit.policy_version),
                     None,
                 );
@@ -379,12 +433,14 @@ async fn ingest(
         {
             Ok(x) => x,
             Err(e) => {
-                return json_error(
+                return api_err(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "metering_error",
-                    "We could not load metering counters. Please retry; if it persists, contact support.",
+                    "METERING_ERROR",
+                    "We could not load metering counters.",
+                    "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                    Some(json!({ "raw": e.to_string() })),
                     Some(audit.policy_version),
-                    Some(json!({ "details": e.to_string() })),
+                    None,
                 );
             }
         };
@@ -400,13 +456,14 @@ async fn ingest(
             let team_s = team_id.to_string();
             let plan_s = plan_id_str(plan);
             return match r {
-                MeteringReject::MonthlyRunLimit { used, limit } => (
+                MeteringReject::MonthlyRunLimit { used, limit } => api_err(
                     StatusCode::TOO_MANY_REQUESTS,
-                    Json(json!({
-                        "ok": false,
-                        "error": "monthly_run_limit_exceeded",
-                        "code": "monthly_run_limit_exceeded",
-                        "message": "Monthly run limit exceeded for this team. Start a new month or upgrade your plan.",
+                    "MONTHLY_RUN_LIMIT_EXCEEDED",
+                    "Monthly run limit exceeded for this team.",
+                    "Start a new month, or upgrade your plan.",
+                    Some(json!({ "used": used, "limit": limit })),
+                    Some(audit.policy_version),
+                    Some(json!({
                         "metering": "on",
                         "count_kind": "new_runs_month",
                         "team_id": team_s,
@@ -414,16 +471,16 @@ async fn ingest(
                         "used": used,
                         "limit": limit,
                         "year_month": ym,
-                        "policy_version": audit.policy_version
                     })),
                 ),
-                MeteringReject::MonthlyEventLimit { used, limit } => (
+                MeteringReject::MonthlyEventLimit { used, limit } => api_err(
                     StatusCode::TOO_MANY_REQUESTS,
-                    Json(json!({
-                        "ok": false,
-                        "error": "monthly_event_limit_exceeded",
-                        "code": "monthly_event_limit_exceeded",
-                        "message": "Monthly evidence event limit exceeded for this team. Start a new month or upgrade your plan.",
+                    "MONTHLY_EVENT_LIMIT_EXCEEDED",
+                    "Monthly evidence event limit exceeded for this team.",
+                    "Start a new month, or upgrade your plan.",
+                    Some(json!({ "used": used, "limit": limit })),
+                    Some(audit.policy_version),
+                    Some(json!({
                         "metering": "on",
                         "count_kind": "evidence_events_month",
                         "team_id": team_s,
@@ -431,20 +488,20 @@ async fn ingest(
                         "used": used,
                         "limit": limit,
                         "year_month": ym,
-                        "policy_version": audit.policy_version
                     })),
                 ),
                 MeteringReject::PerRunEventLimit {
                     run_id,
                     would_be,
                     limit,
-                } => (
+                } => api_err(
                     StatusCode::TOO_MANY_REQUESTS,
-                    Json(json!({
-                        "ok": false,
-                        "error": "per_run_event_limit_exceeded",
-                        "code": "per_run_event_limit_exceeded",
-                        "message": "This run has reached its per-run evidence event limit. Use a new run_id or upgrade your plan.",
+                    "PER_RUN_EVENT_LIMIT_EXCEEDED",
+                    "This run has reached its per-run evidence event limit.",
+                    "Use a new `run_id`, or upgrade your plan.",
+                    Some(json!({ "used": pre_count, "would_be": would_be, "limit": limit, "run_id": run_id })),
+                    Some(audit.policy_version),
+                    Some(json!({
                         "metering": "on",
                         "count_kind": "evidence_events_per_run",
                         "team_id": team_s,
@@ -454,7 +511,6 @@ async fn ingest(
                         "event_count": would_be,
                         "limit": limit,
                         "year_month": ym,
-                        "policy_version": audit.policy_version
                     })),
                 ),
             };
@@ -470,28 +526,34 @@ async fn ingest(
             Err(evidence_usage::CheckEvidenceQuotaError::Exceeded(q)) => {
                 return (
                     StatusCode::TOO_MANY_REQUESTS,
-                    Json(json!({
-                        "ok": false,
-                        "error": "evidence_quota_exceeded",
-                        "code": "evidence_quota_exceeded",
-                        "message": "Monthly evidence event limit exceeded for this tenant. Wait until the next billing period or enable metering / upgrade your plan.",
-                        "metering": "off",
-                        "count_kind": "evidence_events",
-                        "tenant_id": tid,
-                        "used": q.used,
-                        "limit": q.limit,
-                        "period_start": q.period_start.format("%Y-%m-%d").to_string(),
-                        "policy_version": audit.policy_version,
-                    })),
+                    api_err(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "MONTHLY_EVENT_LIMIT_EXCEEDED",
+                        "Monthly evidence event limit exceeded for this tenant.",
+                        "Wait until the next billing period, or enable metering / upgrade your plan.",
+                        Some(json!({ "used": q.used, "limit": q.limit, "period_start": q.period_start.format("%Y-%m-%d").to_string() })),
+                        Some(audit.policy_version),
+                        Some(json!({
+                            "metering": "off",
+                            "count_kind": "evidence_events",
+                            "tenant_id": tid,
+                            "used": q.used,
+                            "limit": q.limit,
+                            "period_start": q.period_start.format("%Y-%m-%d").to_string(),
+                        })),
+                    )
+                    .1,
                 );
             }
             Err(evidence_usage::CheckEvidenceQuotaError::Database(e)) => {
-                return json_error(
+                return api_err(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "db_error",
-                    "We could not read usage counters. Please retry; if it persists, contact support.",
+                    "DB_ERROR",
+                    "We could not read usage counters.",
+                    "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                    Some(json!({ "raw": e })),
                     Some(audit.policy_version),
-                    Some(json!({ "details": e })),
+                    None,
                 );
             }
         }
@@ -510,12 +572,14 @@ async fn ingest(
                 )
                 .await
                 {
-                    return json_error(
+                    return api_err(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        "metering_persist_error",
-                        "The event was appended, but metering counters could not be updated. Please retry; if it persists, contact support.",
+                        "METERING_PERSIST_ERROR",
+                        "The event was appended, but metering counters could not be updated.",
+                        "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                        Some(json!({ "raw": e })),
                         Some(audit.policy_version),
-                        Some(json!({ "details": e })),
+                        None,
                     );
                 }
                 let nr1 = new_run_ids + if is_new_run { 1 } else { 0 };
@@ -545,12 +609,14 @@ async fn ingest(
                     .as_ref()
                     .expect("legacy billing tenant when metering is off");
                 if let Err(e) = evidence_usage::increment_evidence_usage(&audit.pool, tid).await {
-                    return json_error(
+                    return api_err(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        "usage_persist_error",
-                        "The event was appended, but usage counters could not be updated. Please retry; if it persists, contact support.",
+                        "USAGE_PERSIST_ERROR",
+                        "The event was appended, but usage counters could not be updated.",
+                        "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                        Some(json!({ "raw": e })),
                         Some(audit.policy_version),
-                        Some(json!({ "details": e })),
+                        None,
                     );
                 }
                 (
@@ -564,12 +630,14 @@ async fn ingest(
                 )
             }
         }
-        Err(e) => json_error(
+        Err(e) => api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "append_error",
-            "We could not append this evidence event. Please retry; if it persists, contact support.",
+            "APPEND_ERROR",
+            "We could not append this evidence event.",
+            "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+            Some(json!({ "raw": e })),
             Some(audit.policy_version),
-            Some(json!({ "details": e })),
+            None,
         ),
     }
 }
@@ -590,10 +658,12 @@ async fn usage_route(
     if audit.metering.enabled {
         let key_hash = match audit_api_key::raw_bearer_token(&headers) {
             None => {
-                return json_error(
+                return api_err(
                     StatusCode::UNAUTHORIZED,
-                    "unauthorized",
-                    "Missing or invalid Authorization bearer token.",
+                    "MISSING_API_KEY",
+                    "Missing API key.",
+                    "Provide `Authorization: Bearer <api_key>`.",
+                    None,
                     None,
                     None,
                 );
@@ -603,20 +673,24 @@ async fn usage_route(
         let team_id = match metering::team_id_for_key_hash(&audit.pool, &key_hash).await {
             Ok(t) => t,
             Err(e) => {
-                return json_error(
+                return api_err(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "metering_error",
-                    "We could not load metering information for this API key. Please retry; if it persists, contact support.",
+                    "METERING_ERROR",
+                    "We could not load metering information for this API key.",
+                    "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                    Some(json!({ "raw": e.to_string() })),
                     Some(audit.policy_version),
-                    Some(json!({ "details": e.to_string() })),
+                    None,
                 );
             }
         };
         let Some(team_id) = team_id else {
-            return json_error(
+            return api_err(
                 StatusCode::FORBIDDEN,
-                "team_not_configured_for_api_key",
-                "This API key is valid, but it is not linked to a billing team. Ask an admin to configure billing for this key.",
+                "TEAM_NOT_CONFIGURED",
+                "This API key is valid, but it is not linked to a billing team.",
+                "Ask an admin to configure billing for this API key (or use a key that is linked to a team).",
+                None,
                 Some(audit.policy_version),
                 None,
             );
@@ -635,12 +709,14 @@ async fn usage_route(
         {
             Ok(x) => x,
             Err(e) => {
-                return json_error(
+                return api_err(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "metering_error",
-                    "We could not load metering counters. Please retry; if it persists, contact support.",
+                    "METERING_ERROR",
+                    "We could not load metering counters.",
+                    "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                    Some(json!({ "raw": e.to_string() })),
                     Some(audit.policy_version),
-                    Some(json!({ "details": e.to_string() })),
+                    None,
                 );
             }
         };
@@ -724,12 +800,14 @@ async fn usage_route(
             })),
             )
         }
-        Err(e) => json_error(
+        Err(e) => api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "db_error",
-            "We could not load usage for this tenant. Please retry; if it persists, contact support.",
+            "DB_ERROR",
+            "We could not load usage for this tenant.",
+            "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+            Some(json!({ "raw": e.to_string() })),
             Some(audit.policy_version),
-            Some(json!({ "details": e })),
+            None,
         ),
     }
 }
@@ -741,10 +819,12 @@ async fn verify(
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
-            return json_error(
+            return api_err(
                 StatusCode::BAD_REQUEST,
-                &e,
-                "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
                 None,
             );
@@ -755,16 +835,14 @@ async fn verify(
             StatusCode::OK,
             Json(json!({ "ok": true, "policy_version": audit.policy_version })),
         ),
-        Err(e) => (
-            StatusCode::OK,
-            Json(json!({
-                "ok": false,
-                "error": "chain_invalid",
-                "code": "chain_invalid",
-                "message": "The append-only chain failed verification. The ledger may have been corrupted.",
-                "details": e,
-                "policy_version": audit.policy_version
-            })),
+        Err(e) => api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "CHAIN_INVALID",
+            "The append-only chain failed verification. The ledger may have been corrupted.",
+            "Retry later. If this persists, contact support (this is a server-side integrity issue).",
+            Some(json!({ "raw": e })),
+            Some(audit.policy_version),
+            None,
         ),
     }
 }
@@ -777,10 +855,12 @@ async fn bundle_route(
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
-            return json_error(
+            return api_err(
                 StatusCode::BAD_REQUEST,
-                &e,
-                "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
                 None,
             )
@@ -789,16 +869,14 @@ async fn bundle_route(
     match bundle::collect_events_for_run(&log_path, &q.run_id) {
         Ok(events) => {
             if events.is_empty() {
-                return (
-                    StatusCode::OK,
-                    Json(json!({
-                        "ok": false,
-                        "error": "run_not_found",
-                        "code": "run_not_found",
-                        "message": "No events were found for this run_id in the current tenant ledger.",
-                        "policy_version": audit.policy_version,
-                        "run_id": q.run_id
-                    })),
+                return api_err(
+                    StatusCode::NOT_FOUND,
+                    "RUN_NOT_FOUND",
+                    "No events were found for this run_id in the current tenant ledger.",
+                    "Verify the `run_id` and the tenant context (`X-GovAI-Project` / API key) match where evidence was ingested.",
+                    None,
+                    Some(audit.policy_version),
+                    Some(json!({ "run_id": q.run_id })),
                 );
             }
             let events = canonicalize_events(events);
@@ -806,16 +884,14 @@ async fn bundle_route(
             let doc = bundle::bundle_document_value(&q.run_id, audit.policy_version, &lp, &events);
             (StatusCode::OK, Json(doc))
         }
-        Err(e) => (
-            StatusCode::OK,
-            Json(json!({
-                "ok": false,
-                "error": "run_not_found",
-                "code": "run_not_found",
-                "message": "No events were found for this run_id in the current tenant ledger.",
-                "details": e,
-                "policy_version": audit.policy_version
-            })),
+        Err(e) => api_err(
+            StatusCode::NOT_FOUND,
+            "RUN_NOT_FOUND",
+            "No events were found for this run_id in the current tenant ledger.",
+            "Verify the `run_id` and the tenant context (`X-GovAI-Project` / API key) match where evidence was ingested.",
+            Some(json!({ "raw": e })),
+            Some(audit.policy_version),
+            Some(json!({ "run_id": q.run_id })),
         ),
     }
 }
@@ -829,10 +905,12 @@ async fn export_run_route(
 ) -> (StatusCode, Json<serde_json::Value>) {
     let run_id = run_id.trim().to_string();
     if run_id.is_empty() {
-        return json_error(
+        return api_err(
             StatusCode::BAD_REQUEST,
-            "run_id_required",
+            "RUN_ID_REQUIRED",
             "Missing required path parameter run_id.",
+            "Provide a non-empty `run_id` path segment.",
+            None,
             Some(audit.policy_version),
             None,
         );
@@ -841,10 +919,12 @@ async fn export_run_route(
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
-            return json_error(
+            return api_err(
                 StatusCode::BAD_REQUEST,
-                &e,
-                "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
                 None,
             );
@@ -854,20 +934,24 @@ async fn export_run_route(
     let events = match bundle::collect_events_for_run(&log_path, &run_id) {
         Ok(e) => e,
         Err(e) => {
-            return json_error(
+            return api_err(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "bundle_read_error",
-                "We could not read events for this run_id. Please retry; if it persists, contact support.",
+                "BUNDLE_READ_ERROR",
+                "We could not read events for this run_id.",
+                "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                Some(json!({ "run_id": run_id, "raw": e })),
                 Some(audit.policy_version),
-                Some(json!({ "run_id": run_id, "details": e })),
+                None,
             );
         }
     };
     if events.is_empty() {
-        return json_error(
+        return api_err(
             StatusCode::NOT_FOUND,
-            "run_not_found",
+            "RUN_NOT_FOUND",
             "No events were found for this run_id in the current tenant ledger.",
+            "Verify the `run_id` and the tenant context (`X-GovAI-Project` / API key) match where evidence was ingested.",
+            None,
             Some(audit.policy_version),
             Some(json!({ "run_id": run_id })),
         );
@@ -890,12 +974,14 @@ async fn export_run_route(
     {
         Ok(r) => r,
         Err(e) => {
-            return json_error(
+            return api_err(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "chain_read_error",
-                "We could not load chain records for this run_id. Please retry; if it persists, contact support.",
+                "CHAIN_READ_ERROR",
+                "We could not load chain records for this run_id.",
+                "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                Some(json!({ "run_id": run_id, "raw": e })),
                 Some(audit.policy_version),
-                Some(json!({ "run_id": run_id, "details": e })),
+                None,
             );
         }
     };
@@ -983,10 +1069,12 @@ async fn bundle_hash_route(
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
-            return json_error(
+            return api_err(
                 StatusCode::BAD_REQUEST,
-                &e,
-                "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
                 None,
             )
@@ -995,16 +1083,14 @@ async fn bundle_hash_route(
     match bundle::collect_events_for_run(&log_path, &q.run_id) {
         Ok(events) => {
             if events.is_empty() {
-                return (
-                    StatusCode::OK,
-                    Json(json!({
-                        "ok": false,
-                        "error": "run_not_found",
-                        "code": "run_not_found",
-                        "message": "No events were found for this run_id in the current tenant ledger.",
-                        "policy_version": audit.policy_version,
-                        "run_id": q.run_id
-                    })),
+                return api_err(
+                    StatusCode::NOT_FOUND,
+                    "RUN_NOT_FOUND",
+                    "No events were found for this run_id in the current tenant ledger.",
+                    "Verify the `run_id` and the tenant context (`X-GovAI-Project` / API key) match where evidence was ingested.",
+                    None,
+                    Some(audit.policy_version),
+                    Some(json!({ "run_id": q.run_id })),
                 );
             }
             let events = canonicalize_events(events);
@@ -1029,49 +1115,46 @@ async fn bundle_hash_route(
                 })),
             )
         }
-        Err(e) => (
-            StatusCode::OK,
-            Json(json!({
-                "ok": false,
-                "error": "run_not_found",
-                "code": "run_not_found",
-                "message": "No events were found for this run_id in the current tenant ledger.",
-                "details": e,
-                "policy_version": audit.policy_version
-            })),
+        Err(e) => api_err(
+            StatusCode::NOT_FOUND,
+            "RUN_NOT_FOUND",
+            "No events were found for this run_id in the current tenant ledger.",
+            "Verify the `run_id` and the tenant context (`X-GovAI-Project` / API key) match where evidence was ingested.",
+            Some(json!({ "raw": e })),
+            Some(audit.policy_version),
+            Some(json!({ "run_id": q.run_id })),
         ),
     }
 }
 
-async fn verify_log(State(audit): State<AuditState>, headers: HeaderMap) -> (StatusCode, String) {
+async fn verify_log(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<serde_json::Value>) {
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
-            return (
+            return api_err(
                 StatusCode::BAD_REQUEST,
-                json!({
-                    "ok": false,
-                    "error": e,
-                    "code": e,
-                    "message": "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
-                    "policy_version": audit.policy_version
-                })
-                .to_string(),
-            )
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
+                Some(audit.policy_version),
+                None,
+            );
         }
     };
     match verify_chain::verify_chain(&log_path) {
-        Ok(_) => (StatusCode::OK, "{\"ok\":true}".to_string()),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            json!({
-                "ok": false,
-                "error": "chain_invalid",
-                "code": "chain_invalid",
-                "message": "The append-only chain failed verification. The ledger may have been corrupted.",
-                "details": e
-            })
-            .to_string(),
+        Ok(_) => (StatusCode::OK, Json(json!({ "ok": true }))),
+        Err(e) => api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "CHAIN_INVALID",
+            "The append-only chain failed verification. The ledger may have been corrupted.",
+            "Retry later. If this persists, contact support (this is a server-side integrity issue).",
+            Some(json!({ "raw": e })),
+            Some(audit.policy_version),
+            None,
         ),
     }
 }
@@ -1132,28 +1215,33 @@ async fn compliance_summary_route(
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
-            return json_error(
+            return api_err(
                 StatusCode::BAD_REQUEST,
-                &e,
-                "Missing tenant context. Provide `X-GovAI-Project` header (recommended) or a bearer API key (tenant fingerprint fallback).",
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
-                Some(json!({ "run_id": q.run_id })),
+                Some(json!({
+                    "schema_version": "aigov.compliance_summary.v2",
+                    "run_id": q.run_id,
+                })),
             )
         }
     };
     match bundle::collect_events_for_run(&log_path, &q.run_id) {
         Ok(events) => {
             if events.is_empty() {
-                return (
-                    StatusCode::OK,
-                    Json(json!({
-                        "ok": false,
+                return api_err(
+                    StatusCode::NOT_FOUND,
+                    "RUN_NOT_FOUND",
+                    "No events were found for this run_id in the current tenant ledger.",
+                    "Verify the `run_id` and the tenant context (`X-GovAI-Project` / API key) match where evidence was ingested.",
+                    None,
+                    Some(audit.policy_version),
+                    Some(json!({
                         "schema_version": "aigov.compliance_summary.v2",
-                        "error": "run_not_found",
-                        "code": "run_not_found",
-                        "message": "No events were found for this run_id in the current tenant ledger.",
-                        "policy_version": audit.policy_version,
-                        "run_id": q.run_id
+                        "run_id": q.run_id,
                     })),
                 );
             }
@@ -1209,16 +1297,15 @@ async fn compliance_summary_route(
                 })),
             )
         }
-        Err(e) => (
-            StatusCode::OK,
-            Json(json!({
-                "ok": false,
+        Err(e) => api_err(
+            StatusCode::NOT_FOUND,
+            "RUN_NOT_FOUND",
+            "No events were found for this run_id in the current tenant ledger.",
+            "Verify the `run_id` and the tenant context (`X-GovAI-Project` / API key) match where evidence was ingested.",
+            Some(json!({ "raw": e })),
+            Some(audit.policy_version),
+            Some(json!({
                 "schema_version": "aigov.compliance_summary.v2",
-                "error": "run_not_found",
-                "code": "run_not_found",
-                "message": "No events were found for this run_id in the current tenant ledger.",
-                "details": e,
-                "policy_version": audit.policy_version,
                 "run_id": q.run_id,
             })),
         ),
@@ -1576,6 +1663,64 @@ mod discovery_enforcement_tests {
     }
 }
 
+#[cfg(test)]
+mod api_error_response_tests {
+    use super::*;
+    use axum::http::HeaderValue;
+    use serde_json::Value;
+
+    fn pool_lazy_for_tests() -> DbPool {
+        sqlx::PgPool::connect_lazy("postgres://postgres:postgres@localhost/postgres")
+            .expect("connect_lazy should not contact the database")
+    }
+
+    #[tokio::test]
+    async fn compliance_summary_run_not_found_is_404_with_standard_error_shape() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ledger_base = tmp.path().join("audit_log.jsonl");
+        let ledger_base_static: &'static str =
+            Box::leak(ledger_base.to_str().unwrap().to_string().into_boxed_str());
+        let policy_version = "test_policy_v1";
+
+        // Create an empty tenant-scoped ledger file so bundle reads succeed but return 0 events.
+        let tenant_id = "team-alpha";
+        let tenant_ledger = project::resolve_ledger_path(ledger_base.to_str().unwrap(), tenant_id);
+        std::fs::write(&tenant_ledger, "").unwrap();
+
+        let state = AuditState {
+            ledger_base: ledger_base_static,
+            policy_version,
+            deployment_env: GovaiEnvironment::Dev,
+            policy: crate::policy_config::load_with_env("dev").config,
+            pool: pool_lazy_for_tests(),
+            metering: crate::metering::MeteringConfig {
+                enabled: false,
+                default_plan: crate::metering::GovaiPlan::Free,
+            },
+        };
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-govai-project", HeaderValue::from_static("team-alpha"));
+
+        let (status, Json(body)) = compliance_summary_route(
+            State(state),
+            headers,
+            Query(ComplianceSummaryQuery {
+                run_id: "missing-run".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            body.pointer("/error/code").and_then(Value::as_str),
+            Some("RUN_NOT_FOUND")
+        );
+        assert!(body.pointer("/error/hint").and_then(Value::as_str).unwrap_or("").len() > 5);
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub pool: DbPool,
@@ -1624,12 +1769,14 @@ async fn me(
     let cfg = match AuthConfig::from_env() {
         Ok(c) => c,
         Err(e) => {
-            return json_error(
+            return api_err(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "config_error",
+                "CONFIG_ERROR",
                 "Server authentication is not configured correctly.",
+                "Contact support (this is a server-side configuration issue).",
+                Some(json!({ "raw": e })),
                 None,
-                Some(json!({ "details": e })),
+                None,
             )
         }
     };
@@ -1642,12 +1789,14 @@ async fn me(
     let teams = match db::list_user_teams(&state.pool, &user.user_id).await {
         Ok(t) => t,
         Err(e) => {
-            return json_error(
+            return api_err(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "db_error",
-                "We could not load your teams. Please retry.",
+                "DB_ERROR",
+                "We could not load your teams.",
+                "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                Some(json!({ "raw": e.to_string() })),
                 None,
-                Some(json!({ "details": e.to_string() })),
+                None,
             )
         }
     };

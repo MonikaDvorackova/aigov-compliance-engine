@@ -258,9 +258,18 @@ async fn canonical_evidence_billing_http() {
     let bytes = r3.into_body().collect().await.unwrap().to_bytes();
     let v: Value = serde_json::from_slice(&bytes).expect("json body");
     assert_eq!(v["ok"], false);
-    assert_eq!(v["error"], "evidence_quota_exceeded");
-    assert_eq!(v["code"], "evidence_quota_exceeded");
-    assert!(v["message"].as_str().unwrap_or("").trim().len() > 0);
+    assert_eq!(v["error"]["code"], "MONTHLY_EVENT_LIMIT_EXCEEDED");
+    assert!(v["error"]["message"].as_str().unwrap_or("").trim().len() > 0);
+    assert!(v["error"]["hint"].as_str().unwrap_or("").trim().len() > 0);
+    assert_eq!(
+        v["error"]["details"]["used"].as_u64(),
+        Some(FREE_TIER_EVIDENCE_LIMIT)
+    );
+    assert_eq!(
+        v["error"]["details"]["limit"].as_u64(),
+        Some(FREE_TIER_EVIDENCE_LIMIT)
+    );
+    assert!(v["error"]["details"]["period_start"].as_str().is_some());
     assert_eq!(v["metering"], "off");
     assert_eq!(v["count_kind"], "evidence_events");
     assert_eq!(v["tenant_id"], json!(tenant));
@@ -421,8 +430,10 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
     assert_eq!(r2.status(), StatusCode::BAD_REQUEST);
     let b2: Value =
         serde_json::from_slice(&r2.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    assert_eq!(b2["error"], "policy_violation");
-    let err = b2["message"].as_str().unwrap_or("");
+    assert_eq!(b2["ok"], false);
+    assert_eq!(b2["error"]["code"], "POLICY_VIOLATION");
+    assert!(b2["error"]["hint"].as_str().unwrap_or("").trim().len() > 0);
+    let err = b2["error"]["message"].as_str().unwrap_or("");
     assert!(
         err.contains("does not match") && err.contains("staging"),
         "unexpected error: {err}"
@@ -492,10 +503,11 @@ async fn ingest_policy_violation_includes_code_and_message() {
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["ok"], false);
-    assert_eq!(v["error"], "policy_violation");
-    assert_eq!(v["code"], "missing_data_registered");
-    assert!(v["message"].as_str().unwrap_or("").trim().len() > 0);
-    assert!(v["message"]
+    assert_eq!(v["error"]["code"], "POLICY_VIOLATION");
+    assert!(v["error"]["message"].as_str().unwrap_or("").trim().len() > 0);
+    assert!(v["error"]["hint"].as_str().unwrap_or("").trim().len() > 0);
+    assert_eq!(v["error"]["details"]["policy_code"], "missing_data_registered");
+    assert!(v["error"]["message"]
         .as_str()
         .unwrap_or("")
         .contains("model_trained"));
@@ -664,10 +676,12 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
     std::env::remove_var("GOVAI_API_KEYS");
     let v: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(v["error"], "monthly_run_limit_exceeded");
     assert_eq!(v["ok"], false);
-    assert_eq!(v["code"], "monthly_run_limit_exceeded");
-    assert!(v["message"].as_str().unwrap_or("").trim().len() > 0);
+    assert_eq!(v["error"]["code"], "MONTHLY_RUN_LIMIT_EXCEEDED");
+    assert!(v["error"]["message"].as_str().unwrap_or("").trim().len() > 0);
+    assert!(v["error"]["hint"].as_str().unwrap_or("").trim().len() > 0);
+    assert_eq!(v["error"]["details"]["used"], json!(25));
+    assert_eq!(v["error"]["details"]["limit"], json!(25));
     assert_eq!(v["metering"], "on");
     assert_eq!(v["count_kind"], "new_runs_month");
     assert_eq!(v["team_id"], json!(team_id.to_string()));

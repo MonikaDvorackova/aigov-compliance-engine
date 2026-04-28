@@ -11,6 +11,7 @@ pub mod verify_chain;
 pub mod projection;
 
 pub mod api_usage;
+pub mod api_error;
 pub mod audit_api_key;
 pub mod auth;
 pub mod db;
