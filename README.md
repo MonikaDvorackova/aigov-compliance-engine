@@ -85,7 +85,11 @@ Quickstarts:
 
 ## Hosted pilot prerequisites
 
-GovAI is **ready for hosted pilots with manual or semi-automated onboarding**. It is **not self-serve SaaS** and **not billing-ready**.
+GovAI is **ready for GitHub Marketplace draft and hosted pilot onboarding**.
+
+It is **not yet a full self-serve SaaS**.
+
+Hosted backend and API key provisioning are still **operator managed**.
 
 Repeatable operator + customer steps (pilot runbook):
 
@@ -99,8 +103,6 @@ Minimum hosted-pilot path (what must exist before a new pilot user can reach `VA
 - **How evidence is submitted**: evidence events are appended to the hosted audit service via `POST /evidence` (either via `govai run demo-deterministic` for onboarding, or via your CI/app pipeline emitting evidence events).
 - **How the run reaches `VALID`**: the run transitions `BLOCKED → VALID` only after all required evidence is appended for the same `run_id` and policy rules pass; the authoritative source is `GET /compliance-summary`.
 - **How CI gate checks `VALID`**: the GitHub Action runs `govai check`, which calls `GET /compliance-summary` and passes only when the server returns `VALID`.
-
-Marketplace draft should wait until this hosted-pilot path is **repeatable** (provisioning URL + keys, running the deterministic onboarding flow, and demonstrating a strict `VALID` gate in CI).
 
 ## Canonical flow (discovery → requirements → BLOCKED → evidence → VALID → export → CI)
 
@@ -322,20 +324,11 @@ It is **not yet a full self-serve SaaS** (no productized signup, automated provi
 
 It is **not yet billing-ready** (no self-serve checkout and no automated billing).
 
-## Future GitHub Marketplace readiness checklist (draft)
+## Marketplace draft checklist
 
-- **Working action**: the composite action runs end-to-end in a clean repo with pinned tag (for example `@v1`).
-- **Strict gate**: the action/job fails CI unless the verdict from `GET /compliance-summary` is `VALID` (including fail-fast on missing configuration).
-- **README copy-paste example**: one minimal workflow snippet that users can paste without reading other docs.
-- **Screenshots or terminal output**: include at least one screenshot or captured terminal output showing `BLOCKED` then `VALID`, plus a failing gate on non-`VALID`.
-- **Support contact**: publish a support email (and optionally an issue template) suitable for Marketplace users.
-- **Version tag**: maintain a semver tag (`v1`, `v1.0.0`, etc.) and document the upgrade policy (what can change under `@v1`).
-
-## Marketplace blockers remaining (as of now)
-
-- **Hosted backend URL provisioning**: a repeatable operator runbook for provisioning and communicating a stable `GOVAI_AUDIT_BASE_URL`.
-- **API key provisioning**: a repeatable process for issuing, rotating, and revoking `GOVAI_API_KEY` values for pilot customers.
-- **Deterministic demo run / evidence path**: confirm the onboarding demo (`govai run demo-deterministic`) reliably produces `BLOCKED → VALID` against the hosted backend for new customers.
-- **Support contact**: a support email and response expectations suitable for Marketplace users (placeholder today: `support@example.com` — replace before any public release).
-- **Version tag**: a maintained GitHub Action tag policy (`@v1`) with documented upgrade guarantees (draft policy: see `docs/hosted-pilot-runbook.md`).
-- **Screenshots or terminal output**: captured output showing (1) `BLOCKED`, (2) `VALID`, and (3) CI failing on non-`VALID`.
+- **root action exists**: `action.yml` exists at the repository root.
+- **strict gate fails on missing config**: missing `run_id`, `base_url`, or `api_key` fails fast.
+- **gate passes only on VALID**: the action exits 0 only when the backend verdict is `VALID`.
+- **BLOCKED output shows missing evidence**: `BLOCKED` is surfaced as a compliance failure, not a silent skip.
+- **hosted base URL and API key are required**: customers must configure `GOVAI_AUDIT_BASE_URL` and `GOVAI_API_KEY`.
+- **support contact is listed**: support contact for Marketplace users is `support@govbase.dev`.

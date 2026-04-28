@@ -26,7 +26,7 @@ If you already have a hosted GovAI backend + API key, start with the canonical o
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.1.0"
+python -m pip install "aigov-py==0.1.1"
 govai --help
 ```
 
