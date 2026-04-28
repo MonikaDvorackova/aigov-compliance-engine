@@ -56,10 +56,13 @@ def _config_path_from_args(ns: argparse.Namespace) -> Path | None:
 
 
 def _audit_url(ns: argparse.Namespace) -> str:
+    flag = getattr(ns, "audit_base_url", None)
+    if flag:
+        return str(flag).rstrip("/")
     return cli_config.resolve_audit_base_url(
-        flag=getattr(ns, "audit_base_url", None) or None,
+        flag=None,
         config_path=_config_path_from_args(ns),
-    )
+    ).rstrip("/")
 
 
 def _api_key(ns: argparse.Namespace) -> str | None:
@@ -696,7 +699,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--audit-base-url",
         default=None,
-        help="Audit / ledger service base URL (overrides config if set; env GOVAI_AUDIT_BASE_URL / AIGOV_AUDIT_URL take precedence).",
+        help="Audit / ledger service base URL (overrides env/config when set).",
     )
     p.add_argument(
         "--api-key",
@@ -781,7 +784,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s_discover = sub.add_parser(
         "discover",
-        help="Scan a repo deterministically and record ai_discovery_reported for the run.",
+        help="(Deprecated) Use `govai discovery scan`. Scan a repo deterministically and record ai_discovery_reported for the run.",
     )
     s_discover.add_argument("--run-id", default=None, help="Run UUID (fallback: env GOVAI_RUN_ID or RUN_ID).")
     s_discover.add_argument("--path", default=".", help="Path to scan (default: current directory).")
@@ -799,6 +802,48 @@ def build_parser() -> argparse.ArgumentParser:
         help="Evidence actor label (default: env AIGOV_ACTOR or govai_cli).",
     )
     s_discover.add_argument(
+        "--system",
+        default=os.environ.get("AIGOV_SYSTEM") or "govai_cli",
+        help="Evidence system label (default: env AIGOV_SYSTEM or govai_cli).",
+    )
+
+    # New: discovery group
+    s_discovery = sub.add_parser("discovery", help="AI discovery as silent infrastructure.")
+    s_discovery_sub = s_discovery.add_subparsers(dest="discovery_cmd", required=True)
+
+    s_discovery_scan = s_discovery_sub.add_parser(
+        "scan",
+        help="Scan a repository for AI usage (optionally submit to hosted backend for a run_id).",
+    )
+    s_discovery_scan.add_argument("--path", default=".", help="Path to scan (default: current directory).")
+    s_discovery_scan.add_argument(
+        "--no-history",
+        action="store_true",
+        help="Disable git history/change summary enrichment.",
+    )
+    s_discovery_scan.add_argument(
+        "--format",
+        default="json",
+        choices=["json", "text"],
+        help="Output format (default: json).",
+    )
+    s_discovery_scan.add_argument(
+        "--submit",
+        action="store_true",
+        help="Submit `ai_discovery_reported` evidence event to hosted backend.",
+    )
+    s_discovery_scan.add_argument("--run-id", default=None, help="Run UUID (required with --submit).")
+    s_discovery_scan.add_argument(
+        "--event-id",
+        default=None,
+        help="Optional event_id override (default: ai_discovery_reported_<run_id>).",
+    )
+    s_discovery_scan.add_argument(
+        "--actor",
+        default=os.environ.get("AIGOV_ACTOR") or "govai_cli",
+        help="Evidence actor label (default: env AIGOV_ACTOR or govai_cli).",
+    )
+    s_discovery_scan.add_argument(
         "--system",
         default=os.environ.get("AIGOV_SYSTEM") or "govai_cli",
         help="Evidence system label (default: env AIGOV_SYSTEM or govai_cli).",
@@ -1036,7 +1081,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cli_exit.EX_INVALID
 
         try:
-            scan = scan_repo(scan_path)
+            scan = scan_repo(scan_path, include_history=True)
             openai_override = _parse_bool_override(getattr(args, "openai", None), name="--openai")
             transformers_override = _parse_bool_override(getattr(args, "transformers", None), name="--transformers")
             model_artifacts_override = _parse_bool_override(
@@ -1103,6 +1148,87 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f" model_artifacts={str(model_artifacts).lower()}", file=sys.stderr)
         if overrides_used:
             print(" note: one or more flags overrode scan results", file=sys.stderr)
+
+        event_id = (getattr(args, "event_id", None) or "").strip() or f"ai_discovery_reported_{run_id}"
+        actor = (getattr(args, "actor", None) or "govai_cli").strip() or "govai_cli"
+        system = (getattr(args, "system", None) or "govai_cli").strip() or "govai_cli"
+
+        ev = {
+            "event_id": event_id,
+            "event_type": "ai_discovery_reported",
+            "ts_utc": _utc_now_z(),
+            "actor": actor,
+            "system": system,
+            "run_id": run_id,
+            "payload": payload_obj,
+        }
+
+        try:
+            client = GovAIClient(audit_url, api_key=api_key)
+            out = submit_event(client, ev)
+        except Exception as e:
+            print(str(e), file=sys.stderr)
+            return cli_exit.EX_ERR
+
+        _print_json(out, compact=True)
+        return cli_exit.EX_OK
+
+    if args.cmd == "discovery" and getattr(args, "discovery_cmd", None) == "scan":
+        scan_path = Path(getattr(args, "path", ".")).expanduser()
+        if not scan_path.exists():
+            print(f"scan path does not exist: {scan_path}", file=sys.stderr)
+            return cli_exit.EX_INVALID
+
+        include_history = not bool(getattr(args, "no_history", False))
+        try:
+            scan = scan_repo(scan_path, include_history=include_history)
+        except Exception as e:
+            print(str(e), file=sys.stderr)
+            return cli_exit.EX_ERR
+
+        fmt = (getattr(args, "format", "json") or "json").strip().lower()
+        if fmt == "text":
+            findings = scan.get("findings") if isinstance(scan, dict) else None
+            print(f"AI discovery: path={scan_path.resolve()}", file=sys.stderr)
+            if isinstance(findings, list) and findings:
+                print(f"findings: {len(findings)}", file=sys.stderr)
+                for f in findings[:50]:
+                    if not isinstance(f, dict):
+                        continue
+                    usage = f.get("detected_ai_usage")
+                    file_path = f.get("file_path")
+                    detector = f.get("detector_type")
+                    conf = f.get("confidence")
+                    print(f"- {usage} {file_path} detector={detector} confidence={conf}", file=sys.stderr)
+            else:
+                print("findings: 0", file=sys.stderr)
+        else:
+            _print_json({"ok": True, "scan": scan}, compact=args.compact_json)
+
+        if not bool(getattr(args, "submit", False)):
+            return cli_exit.EX_OK
+
+        run_id = _resolve_run_id(args)
+        if not run_id:
+            print("run id required for submission: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
+            return cli_exit.EX_INVALID
+
+        # Backward-compatible fields used by Rust requirement derivation.
+        scan_openai = bool(scan.get("openai")) if isinstance(scan, dict) else False
+        scan_transformers = bool(scan.get("transformers")) if isinstance(scan, dict) else False
+        scan_model_artifacts = bool(scan.get("model_artifacts")) if isinstance(scan, dict) else False
+        findings = scan.get("findings") if isinstance(scan, dict) else []
+        findings_list = findings if isinstance(findings, list) else []
+
+        payload_obj = {
+            "schema_version": "aigov.ai_discovery_reported.v2",
+            "openai": scan_openai,
+            "transformers": scan_transformers,
+            "model_artifacts": scan_model_artifacts,
+            "scanned_path": str(scan_path.resolve()),
+            "findings": findings_list,
+            "findings_count": len(findings_list),
+        }
 
         event_id = (getattr(args, "event_id", None) or "").strip() or f"ai_discovery_reported_{run_id}"
         actor = (getattr(args, "actor", None) or "govai_cli").strip() or "govai_cli"
