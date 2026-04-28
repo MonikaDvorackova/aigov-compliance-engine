@@ -27,7 +27,7 @@ services:
       GOVAI_AUTO_MIGRATE: "true"
       DATABASE_URL: "postgres://postgres:postgres@db:5432/govai"
       # Optional but recommended even for operator-hosted:
-      # GOVAI_API_KEYS: "replace-me"
+      GOVAI_API_KEYS: "test-key"
       # GOVAI_BASE_URL: "http://localhost:8088"
     ports:
       - "8088:8088"
