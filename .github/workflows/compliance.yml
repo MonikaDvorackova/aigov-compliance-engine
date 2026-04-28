@@ -250,12 +250,21 @@ jobs:
 
       - id: govai_emit_run_id
         if: success()
+        env:
+          # Prefer pull_request payload fields (always present for PR events),
+          # but keep compatibility with github.base_ref/head_ref.
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || github.base_ref }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.head_ref }}
         run: |
           set -euo pipefail
           OUT="${GITHUB_OUTPUT:?}"
           if [ "${REPORTS_CHANGED_FLAG}" != "true" ]; then
             echo "run_id=" >> "${OUT}"
             exit 0
+          fi
+          is_release_promotion="false"
+          if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ] && [ "${PR_BASE_REF:-}" = "main" ] && [ "${PR_HEAD_REF:-}" = "staging" ]; then
+            is_release_promotion="true"
           fi
           REPORTS_CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           SORTED_UNIQ="$(
@@ -270,6 +279,13 @@ jobs:
             exit 0
           fi
           if [ "${c}" -gt 1 ]; then
+            if [ "${is_release_promotion}" = "true" ]; then
+              # staging -> main promotions aggregate multiple already-reviewed reports.
+              # Keep downstream jobs working by emitting a deterministic single run_id.
+              only="$(printf '%s\n' "${SORTED_UNIQ}" | awk 'NF{print; exit}')"
+              echo "run_id=${only}" >> "${OUT}"
+              exit 0
+            fi
             joined="$(printf '%s\n' "${SORTED_UNIQ}" | awk 'NF' | paste -sd ',' - | sed 's/,/, /g')"
             echo "::error::GovAI compliance gate: ${c} distinct report run IDs in one change set (${joined}). Split into one docs/reports/*.md change per PR (or one basename) so a single run_id is validated."
             exit 1

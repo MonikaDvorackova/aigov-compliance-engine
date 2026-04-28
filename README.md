@@ -199,3 +199,8 @@ Limits are exposed via GET /usage.
 - hash chaining (prev_hash → record_hash)
 - deterministic decision (policy_version)
 - exportable audit JSON
+
+Minimal definitions and non-claims:
+
+- `docs/trust-model.md`
+- `docs/cvut-teaching.md` (teaching-friendly)

@@ -20,6 +20,11 @@ AIGOV_MODE ?= ci
 	demo demo_new \
 	env_check
 
+.PHONY: discovery_scan
+discovery_scan:
+	cd python && . .venv/bin/activate && \
+		python -m aigov_py.cli discovery scan --path ..
+
 FORCE:
 
 AUDIT_URL ?= http://127.0.0.1:8088
@@ -265,6 +270,8 @@ flow_full: require_run check_audit
 	$(MAKE) approve RUN_ID="$(RUN_ID)"; \
 	$(MAKE) promote RUN_ID="$(RUN_ID)"; \
 	$(MAKE) report_prepare RUN_ID="$(RUN_ID)"; \
+	cd python && . .venv/bin/activate && \
+		RUN_ID="$(RUN_ID)" AIGOV_MODE="$(AIGOV_MODE)" python -m aigov_py.ai_discovery_completed; \
 	echo "GET $(AUDIT_URL)/compliance-summary?run_id=$(RUN_ID)"; \
 	curl -fsS "$(AUDIT_URL)/compliance-summary?run_id=$(RUN_ID)"; echo
 

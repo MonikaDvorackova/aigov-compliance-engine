@@ -21,7 +21,6 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
@@ -720,6 +719,21 @@ async fn usage_route(
                 );
             }
         };
+        let (compliance_checks, exports, discovery_scans) =
+            match metering::load_monthly_ops(&audit.pool, team_id, ym).await {
+                Ok(x) => x,
+                Err(e) => {
+                    return api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "METERING_ERROR",
+                        "We could not load usage counters.",
+                        "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                        Some(json!({ "raw": e.to_string() })),
+                        Some(audit.policy_version),
+                        None,
+                    );
+                }
+            };
         let used_runs_u64 = new_run_ids.max(0) as u64;
         let used_events_u64 = evidence_events.max(0) as u64;
         let rem_runs = plan_limits.runs_per_month.saturating_sub(used_runs_u64);
@@ -736,10 +750,16 @@ async fn usage_route(
                 "plan": plan_name,
                 "new_run_ids": new_run_ids,
                 "evidence_events": evidence_events,
+                "compliance_checks": compliance_checks,
+                "exports": exports,
+                "discovery_scans": discovery_scans,
                 // Additive normalized usage surface (do not remove existing fields).
                 "usage": {
                     "evidence_events": used_events_u64,
-                    "runs": used_runs_u64
+                    "runs": used_runs_u64,
+                    "compliance_checks": compliance_checks.max(0) as u64,
+                    "exports": exports.max(0) as u64,
+                    "discovery_scans": discovery_scans.max(0) as u64
                 },
                 "limits": {
                     "evidence_events": plan_limits.evidence_events_per_month,
@@ -760,9 +780,9 @@ async fn usage_route(
     }
 
     let tenant_id = project::billing_tenant_id(&headers);
-    match evidence_usage::get_evidence_usage(&audit.pool, &tenant_id).await {
-        Ok((count, period)) => {
-            let used_events_u64 = count.max(0) as u64;
+    match evidence_usage::get_usage_counters(&audit.pool, &tenant_id).await {
+        Ok((evidence_count, compliance_checks, exports, discovery_scans, period)) => {
+            let used_events_u64 = evidence_count.max(0) as u64;
             let plan_name = "free";
             let plan_limits = pricing::plan_limits_by_name(plan_name).unwrap_or(pricing::PlanLimits {
                 name: "free",
@@ -780,13 +800,19 @@ async fn usage_route(
                 "metering": "off",
                 "tenant_id": tenant_id,
                 "period_start": period.format("%Y-%m-%d").to_string(),
-                "evidence_events_count": count,
+                "evidence_events_count": evidence_count,
+                "compliance_checks_count": compliance_checks,
+                "exports_count": exports,
+                "discovery_scans_count": discovery_scans,
                 "limit": evidence_usage::FREE_TIER_EVIDENCE_LIMIT,
                 // Additive normalized usage surface.
                 "plan": plan_name,
                 "usage": {
                     "evidence_events": used_events_u64,
-                    "runs": 0
+                    "runs": 0,
+                    "compliance_checks": compliance_checks.max(0) as u64,
+                    "exports": exports.max(0) as u64,
+                    "discovery_scans": discovery_scans.max(0) as u64
                 },
                 "limits": {
                     "evidence_events": plan_limits.evidence_events_per_month,
@@ -930,6 +956,21 @@ async fn export_run_route(
             );
         }
     };
+    let ledger_tenant_id = match project::require_tenant_id_for_ledger(&headers, audit.deployment_env) {
+        Ok(t) => t,
+        Err(e) => {
+            return api_err(
+                StatusCode::BAD_REQUEST,
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+    let billing_tenant_id = project::billing_tenant_id(&headers);
 
     let events = match bundle::collect_events_for_run(&log_path, &run_id) {
         Ok(e) => e,
@@ -1027,18 +1068,36 @@ async fn export_run_route(
         .and_then(|e| e.get("passed"))
         .and_then(|v| v.as_bool());
 
+    let derived = projection::derive_current_state_from_events_with_context(
+        &run_id,
+        &events,
+        Some(bundle_sha256.clone()),
+        last_ts.clone(),
+    );
+    let verdict = compliance_verdict_from_state(&derived);
+    let blocked_reasons = blocked_reasons_from_state(&derived);
+
     let out = json!({
         "ok": true,
         "schema_version": "aigov.audit_export.v1",
         "policy_version": audit.policy_version,
         "environment": audit.deployment_env.as_str(),
-        "exported_at_utc": Utc::now().to_rfc3339(),
+        // Deterministic: derived from ledger content, not server clock.
+        "exported_at_utc": last_ts,
+        "tenant": {
+            "ledger_tenant_id": ledger_tenant_id,
+            "billing_tenant_id": billing_tenant_id
+        },
         "run": {
             "run_id": run_id,
             "policy_version": audit.policy_version,
             "log_path": log_path_report,
             "model_artifact_path": bundle_doc.get("model_artifact_path").cloned().unwrap_or(serde_json::Value::Null),
             "identifiers": bundle_doc.get("identifiers").cloned().unwrap_or(serde_json::Value::Null)
+        },
+        "discovery": {
+            "findings": derived.discovery,
+            "required_evidence": derived.requirements.required,
         },
         "evidence_hashes": {
             "bundle_sha256": bundle_sha256,
@@ -1048,15 +1107,67 @@ async fn export_run_route(
         "decision": {
             "human_approval": human,
             "promotion": promo,
-            "evaluation_passed": eval_passed
+            "evaluation_passed": eval_passed,
+            "verdict": verdict,
+            "blocked_reasons": blocked_reasons
         },
+        "evidence_requirements": {
+            "required_evidence": derived.requirements.required,
+            "provided_evidence": derived.requirements.satisfied,
+            "missing_evidence": derived.requirements.missing
+        },
+        "evidence_events": bundle_doc.get("events").cloned().unwrap_or(serde_json::Value::Null),
         "timestamps": {
             "first_event_ts_utc": first_ts,
-            "last_event_ts_utc": last_ts,
+            "last_event_ts_utc": derived.evidence.latest_event_ts_utc,
             "human_approval_ts_utc": human_ts,
             "promotion_ts_utc": promo_ts
         }
     });
+
+    if audit.metering.enabled {
+        let key_hash = match audit_api_key::raw_bearer_token(&headers) {
+            None => {
+                return api_err(
+                    StatusCode::UNAUTHORIZED,
+                    "MISSING_API_KEY",
+                    "Missing API key.",
+                    "Provide `Authorization: Bearer <api_key>`.",
+                    None,
+                    None,
+                    None,
+                );
+            }
+            Some(t) => key_fingerprint(t),
+        };
+        let team_id = match metering::team_id_for_key_hash(&audit.pool, &key_hash).await {
+            Ok(t) => t,
+            Err(e) => {
+                return api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "METERING_ERROR",
+                    "We could not load metering information for this API key.",
+                    "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                    Some(json!({ "raw": e.to_string() })),
+                    Some(audit.policy_version),
+                    None,
+                );
+            }
+        };
+        if let Some(team_id) = team_id {
+            let ym = metering::year_month_utc_now();
+            let _ = metering::increment_team_op_counter(
+                &audit.pool,
+                team_id,
+                ym,
+                metering::TeamOpCounter::Export,
+            )
+            .await;
+        }
+    } else {
+        let tenant_id = project::billing_tenant_id(&headers);
+        let _ = evidence_usage::increment_export_usage(&audit.pool, &tenant_id).await;
+    }
 
     (StatusCode::OK, Json(out))
 }
@@ -1280,6 +1391,51 @@ async fn compliance_summary_route(
                 "missing": derived.requirements.missing
             });
             let blocked_reasons = blocked_reasons_from_state(&derived);
+
+            if audit.metering.enabled {
+                let key_hash = match audit_api_key::raw_bearer_token(&headers) {
+                    None => {
+                        return api_err(
+                            StatusCode::UNAUTHORIZED,
+                            "MISSING_API_KEY",
+                            "Missing API key.",
+                            "Provide `Authorization: Bearer <api_key>`.",
+                            None,
+                            None,
+                            None,
+                        );
+                    }
+                    Some(t) => key_fingerprint(t),
+                };
+                let team_id = match metering::team_id_for_key_hash(&audit.pool, &key_hash).await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        return api_err(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "METERING_ERROR",
+                            "We could not load metering information for this API key.",
+                            "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                            Some(json!({ "raw": e.to_string() })),
+                            Some(audit.policy_version),
+                            None,
+                        );
+                    }
+                };
+                if let Some(team_id) = team_id {
+                    let ym = metering::year_month_utc_now();
+                    let _ = metering::increment_team_op_counter(
+                        &audit.pool,
+                        team_id,
+                        ym,
+                        metering::TeamOpCounter::ComplianceCheck,
+                    )
+                    .await;
+                }
+            } else {
+                let tenant_id = project::billing_tenant_id(&headers);
+                let _ = evidence_usage::increment_compliance_check_usage(&audit.pool, &tenant_id).await;
+            }
+
             (
                 StatusCode::OK,
                 Json(json!({

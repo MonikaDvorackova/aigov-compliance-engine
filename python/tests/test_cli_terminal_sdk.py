@@ -51,10 +51,17 @@ def test_subcommand_help() -> None:
         "export-run",
         "usage",
         "create-assessment",
+        "discovery",
     ):
         with pytest.raises(SystemExit) as ei:
             build_parser().parse_args([sub, "--help"])
         assert ei.value.code == 0
+
+
+def test_discovery_scan_help() -> None:
+    with pytest.raises(SystemExit) as ei:
+        build_parser().parse_args(["discovery", "scan", "--help"])
+    assert ei.value.code == 0
 
 
 def test_submit_evidence_missing_run_id_fails(monkeypatch: pytest.MonkeyPatch) -> None:
