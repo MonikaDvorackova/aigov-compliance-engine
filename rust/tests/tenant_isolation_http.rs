@@ -29,6 +29,14 @@ fn database_url() -> Option<String> {
         .ok()
 }
 
+fn seed_empty_tenant_ledger(tenant_id: &str) {
+    let ledger_path = project::resolve_ledger_path("audit_log.jsonl", tenant_id);
+    if let Some(parent) = std::path::Path::new(&ledger_path).parent() {
+        std::fs::create_dir_all(parent).expect("create ledger dir");
+    }
+    std::fs::write(&ledger_path, "").expect("seed empty tenant ledger");
+}
+
 fn sample_data_registered(run_id: &str, event_id: &str) -> Value {
     json!({
         "event_id": event_id,
@@ -96,6 +104,8 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
 
     let tenant_a = format!("tenant_a_{}", uuid::Uuid::new_v4());
     let tenant_b = format!("tenant_b_{}", uuid::Uuid::new_v4());
+    seed_empty_tenant_ledger(&tenant_a);
+    seed_empty_tenant_ledger(&tenant_b);
 
     let run_id = uuid::Uuid::new_v4().to_string();
     let ev_id = uuid::Uuid::new_v4().to_string();
@@ -115,7 +125,10 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
         )
         .await
         .unwrap();
-    assert_eq!(r.status(), StatusCode::OK);
+    let s = r.status();
+    let bytes = r.into_body().collect().await.unwrap().to_bytes();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(s, StatusCode::OK, "unexpected /evidence response: {v}");
 
     // Evidence must exist only in tenant A ledger
     let lp_a = project::resolve_ledger_path("audit_log.jsonl", &tenant_a);
@@ -162,6 +175,10 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
         .await
         .unwrap();
     assert_eq!(summary_b.status(), StatusCode::OK);
+    let vb: Value =
+        serde_json::from_slice(&summary_b.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(vb["ok"], false, "unexpected /compliance-summary: {vb}");
+    assert_eq!(vb["error"], "run_not_found");
 
     let export_b = app
         .oneshot(
@@ -245,6 +262,7 @@ async fn bearer_fingerprint_fallback_selects_tenant_ledger_at_route_level() {
     let app = test_router(pool, GovaiEnvironment::Prod).await;
     let token = "mysecret";
     let tenant = aigov_audit::api_usage::key_fingerprint(token);
+    seed_empty_tenant_ledger(&tenant);
 
     let run_id = uuid::Uuid::new_v4().to_string();
     let ev_id = uuid::Uuid::new_v4().to_string();
@@ -262,7 +280,10 @@ async fn bearer_fingerprint_fallback_selects_tenant_ledger_at_route_level() {
         )
         .await
         .unwrap();
-    assert_eq!(r.status(), StatusCode::OK);
+    let s = r.status();
+    let bytes = r.into_body().collect().await.unwrap().to_bytes();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(s, StatusCode::OK, "unexpected /evidence response: {v}");
 
     let lp = project::resolve_ledger_path("audit_log.jsonl", &tenant);
     let raw = std::fs::read_to_string(&lp).unwrap_or_default();
@@ -282,6 +303,7 @@ async fn dev_defaults_to_default_tenant_ledger_without_headers() {
     let _lock = CWD_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
+    seed_empty_tenant_ledger("default");
 
     let pool = PgPoolOptions::new()
         .max_connections(1)
@@ -310,7 +332,10 @@ async fn dev_defaults_to_default_tenant_ledger_without_headers() {
         )
         .await
         .unwrap();
-    assert_eq!(r.status(), StatusCode::OK);
+    let s = r.status();
+    let bytes = r.into_body().collect().await.unwrap().to_bytes();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(s, StatusCode::OK, "unexpected /evidence response: {v}");
 
     let lp = project::resolve_ledger_path("audit_log.jsonl", "default");
     let raw = std::fs::read_to_string(&lp).unwrap_or_default();

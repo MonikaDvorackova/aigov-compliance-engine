@@ -788,6 +788,19 @@ async fn bundle_route(
     };
     match bundle::collect_events_for_run(&log_path, &q.run_id) {
         Ok(events) => {
+            if events.is_empty() {
+                return (
+                    StatusCode::OK,
+                    Json(json!({
+                        "ok": false,
+                        "error": "run_not_found",
+                        "code": "run_not_found",
+                        "message": "No events were found for this run_id in the current tenant ledger.",
+                        "policy_version": audit.policy_version,
+                        "run_id": q.run_id
+                    })),
+                );
+            }
             let events = canonicalize_events(events);
             let lp = format!("rust/{}", log_path);
             let doc = bundle::bundle_document_value(&q.run_id, audit.policy_version, &lp, &events);
@@ -981,6 +994,19 @@ async fn bundle_hash_route(
     };
     match bundle::collect_events_for_run(&log_path, &q.run_id) {
         Ok(events) => {
+            if events.is_empty() {
+                return (
+                    StatusCode::OK,
+                    Json(json!({
+                        "ok": false,
+                        "error": "run_not_found",
+                        "code": "run_not_found",
+                        "message": "No events were found for this run_id in the current tenant ledger.",
+                        "policy_version": audit.policy_version,
+                        "run_id": q.run_id
+                    })),
+                );
+            }
             let events = canonicalize_events(events);
             let artifact_path = bundle::find_model_artifact_path(&events);
             let lp = format!("rust/{}", log_path);
@@ -1117,6 +1143,20 @@ async fn compliance_summary_route(
     };
     match bundle::collect_events_for_run(&log_path, &q.run_id) {
         Ok(events) => {
+            if events.is_empty() {
+                return (
+                    StatusCode::OK,
+                    Json(json!({
+                        "ok": false,
+                        "schema_version": "aigov.compliance_summary.v2",
+                        "error": "run_not_found",
+                        "code": "run_not_found",
+                        "message": "No events were found for this run_id in the current tenant ledger.",
+                        "policy_version": audit.policy_version,
+                        "run_id": q.run_id
+                    })),
+                );
+            }
             let events = canonicalize_events(events);
             let deployment_environment = audit.deployment_env.as_str();
             let ledger_environment = events
