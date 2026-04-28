@@ -91,6 +91,17 @@ If the gate is enabled but not configured, you’ll see errors like:
 ::error::Fix: Set repository Secret GOVAI_API_KEY (Settings → Secrets and variables → Actions → Secrets).
 ```
 
+## Example BLOCKED failure output (missing evidence)
+
+When the backend returns `BLOCKED`, the job fails (strict gate) and prints the verdict as a **compliance verdict** (not a fetch/connectivity failure):
+
+```text
+BLOCKED
+::error::GovAI verdict: BLOCKED
+::error::Required evidence is missing. See missing_evidence above.
+# If `govai check` includes missing_evidence details, they are printed above the action error.
+```
+
 ## Local usage in this repository
 
 Reference the action from the same repo (omit `actions/checkout` only if you do not need your application sources):
