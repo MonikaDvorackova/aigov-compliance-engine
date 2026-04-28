@@ -98,6 +98,7 @@ Repeatable operator + customer steps (pilot runbook):
 Minimum hosted-pilot path (what must exist before a new pilot user can reach `VALID`):
 
 - **How a pilot user gets `base_url`**: the operator provides a hosted HTTPS audit API base URL (the GovAI audit service), for example `https://audit.example.com`.
+- **Example**: `GOVAI_AUDIT_BASE_URL=https://audit.govbase.dev`
 - **How a pilot user gets an API key**: the operator provisions and distributes a bearer token (one per customer/team). This is manual or semi-automated in a pilot.
 - **How a pilot user creates/receives `run_id`**: the pilot user generates a UUID (or the operator provides one). The same `run_id` must be reused for evidence submission, the CI gate, and export.
 - **How evidence is submitted**: evidence events are appended to the hosted audit service via `POST /evidence` (either via `govai run demo-deterministic` for onboarding, or via your CI/app pipeline emitting evidence events).
