@@ -20,6 +20,26 @@ Reference: `docs/hosted-backend-deployment.md`.
 
 ---
 
+## Hosted audit endpoint (`audit.govbase.dev`)
+
+For the hosted pilot environment, the audit service is exposed as a **public HTTPS origin**:
+
+- **Correct `GOVAI_AUDIT_BASE_URL`**: `https://audit.govbase.dev`
+- **Origin-only**: it must point to the audit service origin and be usable as-is.
+  - Do **not** point it to a dashboard or login page.
+  - Do **not** include path prefixes like `/api` or `/v1`.
+
+This base URL must serve the audit service endpoints directly, e.g.:
+
+- `GET /health`
+- `GET /status`
+- `GET /compliance-summary?run_id=...`
+- `POST /evidence`
+
+Setup details: `docs/hosted-audit-subdomain.md`.
+
+---
+
 ## Start hosted backend (minimal pilot: Docker Compose)
 
 From the repo root:
