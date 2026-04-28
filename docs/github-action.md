@@ -38,11 +38,23 @@ Configure in **Settings → Secrets and variables → Actions**:
 |------|------|----------|---------|
 | `GOVAI_AUDIT_BASE_URL` | Variable | Yes | Base URL of the GovAI audit API |
 | `GOVAI_RUN_ID` | Variable | Yes* | Evidence run id shared across evidence submission, `govai check`, and export |
-| `GOVAI_API_KEY` | Secret | If your API enforces auth | Bearer token for the audit API |
+| `GOVAI_API_KEY` | Secret | Yes (for the customer-facing CI gate) | Bearer token for the audit API |
 
 \*Or supply `run_id` from another step/job output instead of `vars.GOVAI_RUN_ID`.
 
 Use **one** `GOVAI_RUN_ID` value for the whole release pipeline: every `POST /evidence` for that deployment, the `govai check` step, and `govai export-run` must refer to the **same** id.
+
+## Fail-fast behavior (customer-facing gate)
+
+The repository’s customer-facing workflow gate (`.github/workflows/govai-check.yml`) is **strict**:
+
+- If any of these are missing, the job **fails immediately** (non-zero exit code):
+  - `GOVAI_AUDIT_BASE_URL`
+  - `GOVAI_API_KEY`
+  - `GOVAI_RUN_ID`
+- This is intentional so a misconfigured gate cannot “skip green” and accidentally allow merges.
+
+The **composite action** input `api_key` remains optional for teams running a demo / fork / unauthenticated audit API, but the primary customer gate workflow requires it.
 
 ## Minimal copy-paste workflow
 
@@ -64,9 +76,19 @@ jobs:
       - name: GovAI compliance check
         uses: Kovali/GovAI/.github/actions/govai-check@v1
         with:
-          run_id: ${{ env.GOVAI_RUN_ID }}
+          run_id: ${{ vars.GOVAI_RUN_ID }}
           base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}
           api_key: ${{ secrets.GOVAI_API_KEY }}
+```
+
+## Example misconfiguration failure output
+
+If the gate is enabled but not configured, you’ll see errors like:
+
+```text
+::error::Missing required configuration: GOVAI_API_KEY
+::error::GovAI compliance gate cannot run because it must authenticate to the GovAI audit API to fetch the compliance verdict.
+::error::Fix: Set repository Secret GOVAI_API_KEY (Settings → Secrets and variables → Actions → Secrets).
 ```
 
 ## Local usage in this repository
