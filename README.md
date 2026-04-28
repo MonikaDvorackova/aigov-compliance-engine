@@ -38,7 +38,7 @@ See docs/pilot-onboarding.md for private pilot setup.
 
 **Indicative tiers** (no self-service checkout or automated billing on this site):
 
-- **Free — €0:** local testing and evaluation, limited runs, PyPI CLI (`aigov-py==0.1.0`), audit evidence export.
+- **Free — €0:** local testing and evaluation, limited runs, PyPI CLI (`aigov-py==0.1.1`), audit evidence export.
 - **Pro — €199/month:** production CI, higher run/event limits, GitHub Action, hosted audit endpoint, standard support.
 - **Enterprise — Custom:** regulated or larger teams, custom limits, self-hosted or dedicated deployment, SSO/access control where supported, audit and procurement support.
 
@@ -59,7 +59,7 @@ Required evidence missing. Deployment halted.
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.1.0"
+python -m pip install "aigov-py==0.1.1"
 ```
 
 **Repository contributors** (editable install from a clone of this repo):
@@ -82,6 +82,25 @@ Quickstarts:
 - `docs/quickstart-5min.md` (local demo)
 - `docs/customer-quickstart.md` (legacy customer / CI quickstart)
 - `docs/pilot-onboarding.md` (private pilot onboarding)
+
+## Hosted pilot prerequisites
+
+GovAI is **ready for hosted pilots with manual or semi-automated onboarding**. It is **not self-serve SaaS** and **not billing-ready**.
+
+Repeatable operator + customer steps (pilot runbook):
+
+- `docs/hosted-pilot-runbook.md`
+
+Minimum hosted-pilot path (what must exist before a new pilot user can reach `VALID`):
+
+- **How a pilot user gets `base_url`**: the operator provides a hosted HTTPS audit API base URL (the GovAI audit service), for example `https://audit.example.com`.
+- **How a pilot user gets an API key**: the operator provisions and distributes a bearer token (one per customer/team). This is manual or semi-automated in a pilot.
+- **How a pilot user creates/receives `run_id`**: the pilot user generates a UUID (or the operator provides one). The same `run_id` must be reused for evidence submission, the CI gate, and export.
+- **How evidence is submitted**: evidence events are appended to the hosted audit service via `POST /evidence` (either via `govai run demo-deterministic` for onboarding, or via your CI/app pipeline emitting evidence events).
+- **How the run reaches `VALID`**: the run transitions `BLOCKED → VALID` only after all required evidence is appended for the same `run_id` and policy rules pass; the authoritative source is `GET /compliance-summary`.
+- **How CI gate checks `VALID`**: the GitHub Action runs `govai check`, which calls `GET /compliance-summary` and passes only when the server returns `VALID`.
+
+Marketplace draft should wait until this hosted-pilot path is **repeatable** (provisioning URL + keys, running the deterministic onboarding flow, and demonstrating a strict `VALID` gate in CI).
 
 ## Canonical flow (discovery → requirements → BLOCKED → evidence → VALID → export → CI)
 
@@ -159,11 +178,70 @@ Use `govai check` to gate deployments. It does not compute compliance locally �
 
 Use **one** GovAI evidence run id (`GOVAI_RUN_ID`) for every evidence submission, the gate, and export.
 
-    export GOVAI_AUDIT_BASE_URL='https://your-audit-service'
-    export GOVAI_RUN_ID='<your evidence run uuid>'
-    govai check --run-id "$GOVAI_RUN_ID"
+If you are onboarding a new pilot customer, follow `docs/hosted-pilot-runbook.md` end-to-end first (hosted backend + key + deterministic demo + CI gate + export).
 
-See `docs/github-action.md` for the composite GitHub Action (installs `aigov-py==0.1.0` from PyPI).
+### Minimal copy-paste GitHub Actions workflow (strict gate)
+
+1) Set repository configuration in **Settings → Secrets and variables → Actions**:
+
+- Variable `GOVAI_AUDIT_BASE_URL`: `https://<your GovAI audit API base URL>`
+- Variable `GOVAI_RUN_ID`: `<your evidence run id>` (not GitHub’s `github.run_id`)
+- Secret `GOVAI_API_KEY`: `<your API key>` (required; missing key fails CI immediately)
+
+2) Add this workflow file to your repo at `.github/workflows/govai-check.yml`:
+
+```yaml
+name: GovAI compliance gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  govai-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: GovAI compliance check (must be VALID)
+        uses: Kovali/GovAI/.github/actions/govai-check@v1
+        with:
+          run_id: ${{ vars.GOVAI_RUN_ID }}
+          base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}
+          api_key: ${{ secrets.GOVAI_API_KEY }}
+```
+
+See `docs/github-action.md` for the action behavior details (strict fail-fast on missing config).
+
+### First-time end-to-end (reach `BLOCKED` then `VALID`)
+
+To validate your setup before relying on the CI gate, run the hosted deterministic onboarding flow locally against your GovAI audit API:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install "aigov-py==0.1.1"
+
+export GOVAI_AUDIT_BASE_URL="https://<your GovAI audit API base URL>"
+export GOVAI_API_KEY="YOUR_API_KEY"
+
+export GOVAI_RUN_ID="$(python3 - <<'PY'
+import uuid
+print(uuid.uuid4())
+PY
+)"
+
+export GOVAI_DEMO_RUN_ID="$GOVAI_RUN_ID"
+govai run demo-deterministic
+govai check --run-id "$GOVAI_RUN_ID"
+```
+
+Expected behavior:
+
+- First, the run reports `verdict: BLOCKED` and lists missing required evidence.
+- After the demo appends the remaining evidence for the same `run_id`, the run becomes `verdict: VALID`.
+- The CI gate passes only when the server verdict is `VALID`.
 
 ## Operator-hosted backend (Docker Compose quickstart)
 
@@ -252,3 +330,12 @@ It is **not yet billing-ready** (no self-serve checkout and no automated billing
 - **Screenshots or terminal output**: include at least one screenshot or captured terminal output showing `BLOCKED` then `VALID`, plus a failing gate on non-`VALID`.
 - **Support contact**: publish a support email (and optionally an issue template) suitable for Marketplace users.
 - **Version tag**: maintain a semver tag (`v1`, `v1.0.0`, etc.) and document the upgrade policy (what can change under `@v1`).
+
+## Marketplace blockers remaining (as of now)
+
+- **Hosted backend URL provisioning**: a repeatable operator runbook for provisioning and communicating a stable `GOVAI_AUDIT_BASE_URL`.
+- **API key provisioning**: a repeatable process for issuing, rotating, and revoking `GOVAI_API_KEY` values for pilot customers.
+- **Deterministic demo run / evidence path**: confirm the onboarding demo (`govai run demo-deterministic`) reliably produces `BLOCKED → VALID` against the hosted backend for new customers.
+- **Support contact**: a support email and response expectations suitable for Marketplace users (placeholder today: `support@example.com` — replace before any public release).
+- **Version tag**: a maintained GitHub Action tag policy (`@v1`) with documented upgrade guarantees (draft policy: see `docs/hosted-pilot-runbook.md`).
+- **Screenshots or terminal output**: captured output showing (1) `BLOCKED`, (2) `VALID`, and (3) CI failing on non-`VALID`.

@@ -10,7 +10,7 @@ inputs:
     required: true
   api_key:
     description: "GovAI API key"
-    required: false
+    required: true
 
 runs:
   using: "composite"
@@ -25,7 +25,7 @@ runs:
       run: |
         set -euo pipefail
         python -m pip install --upgrade pip
-        python -m pip install "aigov-py==0.1.0"
+        python -m pip install "aigov-py==0.1.1"
         govai --help >/dev/null
 
     - name: Run GovAI compliance check
@@ -46,8 +46,18 @@ runs:
           exit 1
         fi
 
-        verdict="$(govai check --run-id "${{ inputs.run_id }}")"
-        verdict="$(printf '%s' "${verdict}" | tr -d '\r\n' | xargs)"
+        if [ -z "${GOVAI_API_KEY:-}" ]; then
+          echo "::error::Missing required input: api_key (set GOVAI_API_KEY as a GitHub Actions secret and pass it to the action)"
+          exit 1
+        fi
+
+        out="$(govai check --run-id "${{ inputs.run_id }}" 2>&1)" || {
+          echo "::error::GovAI check failed (cannot fetch verdict). Verify base_url, api_key, and run_id."
+          echo "${out}"
+          exit 1
+        }
+
+        verdict="$(printf '%s' "${out}" | tr -d '\r\n' | xargs)"
         if [ "${verdict}" != "VALID" ]; then
           echo "::error::GovAI compliance gate failed: verdict=${verdict}"
           exit 1
