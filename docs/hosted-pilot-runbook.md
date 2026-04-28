@@ -55,7 +55,7 @@ In hosted mode, enable authentication by setting `GOVAI_API_KEYS` on the server 
 
 - For local pilot setups, you can use: `GOVAI_API_KEYS=test-key`
 
-- **Placeholder support contact**: `support@example.com` (replace before any public release).
+- **Support contact**: `support@govbase.dev`
 
 Minimal approach:
 

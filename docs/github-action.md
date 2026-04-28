@@ -104,7 +104,7 @@ BLOCKED
 
 ## Local usage in this repository
 
-Reference the action from the same repo (omit `actions/checkout` only if you do not need your application sources):
+Internal repository example (for developing GovAI itself). Marketplace users should use `Kovali/GovAI@v1`:
 
 ```yaml
 - name: GovAI compliance check

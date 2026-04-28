@@ -279,12 +279,12 @@ export default function Page() {
             Run AI compliance checks in CI
           </div>
           <div style={{ marginTop: 4, fontSize: 12.5, lineHeight: 1.45, color: "var(--govai-text-secondary)" }}>
-            Official package <span style={{ fontFamily: "ui-monospace, monospace" }}>aigov-py==0.1.0</span> on PyPI. One{" "}
+            Official package <span style={{ fontFamily: "ui-monospace, monospace" }}>aigov-py==0.1.1</span> on PyPI. One{" "}
             <span style={{ fontFamily: "ui-monospace, monospace" }}>GOVAI_RUN_ID</span> for evidence, check, and export.
           </div>
 
           <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-            <LandingCopyBlock label="Install" code={"pip install aigov-py==0.1.0"} />
+            <LandingCopyBlock label="Install" code={"pip install aigov-py==0.1.1"} />
             <LandingCopyBlock
               label="Quick usage"
               code={[
