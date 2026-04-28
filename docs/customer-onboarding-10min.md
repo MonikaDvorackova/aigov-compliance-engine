@@ -1,15 +1,15 @@
-# Customer onboarding (hosted, ~10 minutes)
+# Customer onboarding (hosted pilot, ~10 minutes)
 
 Goal: verify a hosted GovAI backend is wired correctly by running a deterministic evidence flow that transitions:
 
 `BLOCKED` → `VALID`, then exporting the audit JSON.
 
-This is the **canonical** customer onboarding entry point.
+This is the **canonical hosted-pilot onboarding** entry point. It assumes manual or semi-automated provisioning by an operator (not a self-serve signup flow).
 
 ## Prereqs
 
 - Python 3.10+
-- Your GovAI admin provides:
+- Your GovAI admin/operator provides (pilot provisioning):
   - `GOVAI_AUDIT_BASE_URL` (e.g. `https://api.example.com`)
   - `GOVAI_API_KEY` (Bearer token)
 
