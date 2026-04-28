@@ -20,6 +20,11 @@ AIGOV_MODE ?= ci
 	demo demo_new \
 	env_check
 
+.PHONY: discovery_scan
+discovery_scan:
+	cd python && . .venv/bin/activate && \
+		python -m aigov_py.cli discovery scan --path ..
+
 FORCE:
 
 AUDIT_URL ?= http://127.0.0.1:8088
