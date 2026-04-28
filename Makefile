@@ -265,6 +265,8 @@ flow_full: require_run check_audit
 	$(MAKE) approve RUN_ID="$(RUN_ID)"; \
 	$(MAKE) promote RUN_ID="$(RUN_ID)"; \
 	$(MAKE) report_prepare RUN_ID="$(RUN_ID)"; \
+	cd python && . .venv/bin/activate && \
+		RUN_ID="$(RUN_ID)" AIGOV_MODE="$(AIGOV_MODE)" python -m aigov_py.ai_discovery_completed; \
 	echo "GET $(AUDIT_URL)/compliance-summary?run_id=$(RUN_ID)"; \
 	curl -fsS "$(AUDIT_URL)/compliance-summary?run_id=$(RUN_ID)"; echo
 
