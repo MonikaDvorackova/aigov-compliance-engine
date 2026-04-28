@@ -206,7 +206,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: GovAI compliance check (must be VALID)
-        uses: Kovali/GovAI/.github/actions/govai-check@v1
+        uses: Kovali/GovAI@v1
         with:
           run_id: ${{ vars.GOVAI_RUN_ID }}
           base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}

@@ -22,7 +22,7 @@ Configure branch protection so this job is a **required check** before merging t
 
 Use the GovAI GitHub Action (pin a semver tag such as `@v1`):
 
-`Kovali/GovAI/.github/actions/govai-check@v1`
+`Kovali/GovAI@v1`
 
 ## Action inputs
 
@@ -74,7 +74,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: GovAI compliance check
-        uses: Kovali/GovAI/.github/actions/govai-check@v1
+        uses: Kovali/GovAI@v1
         with:
           run_id: ${{ vars.GOVAI_RUN_ID }}
           base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}

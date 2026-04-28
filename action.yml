@@ -1,0 +1,64 @@
+name: "GovAI Compliance Check"
+description: "Fails CI unless the GovAI compliance verdict is VALID"
+
+inputs:
+  run_id:
+    description: "GovAI evidence run id (same as GOVAI_RUN_ID for evidence, check, and export)"
+    required: true
+  base_url:
+    description: "GovAI audit service base URL"
+    required: true
+  api_key:
+    description: "GovAI API key"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install GovAI CLI
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -m pip install --upgrade pip
+        python -m pip install "aigov-py==0.1.1"
+        govai --help >/dev/null
+
+    - name: Run GovAI compliance check
+      shell: bash
+      env:
+        GOVAI_AUDIT_BASE_URL: ${{ inputs.base_url }}
+        GOVAI_API_KEY: ${{ inputs.api_key }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${{ inputs.run_id }}" ]; then
+          echo "::error::Missing required input: run_id"
+          exit 1
+        fi
+
+        if [ -z "${GOVAI_AUDIT_BASE_URL:-}" ]; then
+          echo "::error::Missing required input: base_url"
+          exit 1
+        fi
+
+        if [ -z "${GOVAI_API_KEY:-}" ]; then
+          echo "::error::Missing required input: api_key (set GOVAI_API_KEY as a GitHub Actions secret and pass it to the action)"
+          exit 1
+        fi
+
+        out="$(govai check --run-id "${{ inputs.run_id }}" 2>&1)" || {
+          echo "::error::GovAI check failed (cannot fetch verdict). Verify base_url, api_key, and run_id."
+          echo "${out}"
+          exit 1
+        }
+
+        verdict="$(printf '%s' "${out}" | tr -d '\r\n' | xargs)"
+        if [ "${verdict}" != "VALID" ]; then
+          echo "::error::GovAI compliance gate failed: verdict=${verdict}"
+          exit 1
+        fi
