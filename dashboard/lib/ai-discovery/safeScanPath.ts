@@ -1,10 +1,16 @@
 import { relative, resolve } from "node:path";
 
-/** Default: parent of the dashboard app (repository root in this monorepo layout). */
+/**
+ * Discovery root.
+ *
+ * Production/custom deployments should set AI_DISCOVERY_ROOT explicitly.
+ * The fallback is intentionally scoped to the dashboard directory to avoid
+ * making Next/Turbopack track the whole monorepo during build.
+ */
 export function getDiscoveryRepoRoot(): string {
   const fromEnv = process.env.AI_DISCOVERY_ROOT?.trim();
   if (fromEnv) return resolve(fromEnv);
-  return resolve(process.cwd(), "..");
+  return resolve(process.cwd());
 }
 
 export type SafeResolveResult =
