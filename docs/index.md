@@ -30,14 +30,15 @@ GovAI does **not** generate missing evidence and is **not** a legal certificatio
 ## Private pilot and pricing
 
 - **Private pilot onboarding**: [pilot-onboarding.md](pilot-onboarding.md)
-- **Pilot quickstart**: [customer-quickstart.md](customer-quickstart.md)
+- **Customer onboarding (hosted, ~10 minutes — canonical)**: [customer-onboarding-10min.md](customer-onboarding-10min.md)
+- **Legacy quickstart (HTTP-first / older flow)**: [customer-quickstart.md](customer-quickstart.md)
 
 Pricing for the pilot is agreed directly (no self-serve checkout or automated billing in this repo).
 
 ## Quickstart links
 
 - **Local 5-minute demo (audit service + end-to-end flow)**: [quickstart-5min.md](quickstart-5min.md)
-- **Customer / CI quickstart (minimal hosted-style flow)**: [customer-quickstart.md](customer-quickstart.md)
+- **Legacy customer / CI quickstart**: [customer-quickstart.md](customer-quickstart.md)
 - **GitHub Action**: [github-action.md](github-action.md)
 
 ## Concepts
