@@ -3,9 +3,10 @@ use axum::Json;
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, TokenData, Validation};
 use once_cell::sync::OnceCell;
 use serde::Deserialize;
-use serde_json::json;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
+
+use crate::api_error::api_error;
 
 #[derive(Clone)]
 pub struct AuthConfig {
@@ -140,64 +141,52 @@ pub async fn require_user(
 
     let token = auth.strip_prefix("Bearer ").unwrap_or("").trim();
     if token.is_empty() {
-        return Err((
+        return Err(api_error(
             StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "ok": false,
-                "error": "missing_token",
-                "code": "missing_token",
-                "message": "Missing Authorization bearer token."
-            })),
+            "MISSING_AUTH_TOKEN",
+            "Missing Authorization bearer token.",
+            "Provide `Authorization: Bearer <access_token>` (Supabase JWT).",
+            None,
         ));
     }
 
     let header = decode_header(token).map_err(|_| {
-        (
+        api_error(
             StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "ok": false,
-                "error": "invalid_token",
-                "code": "invalid_token",
-                "message": "Invalid JWT."
-            })),
+            "INVALID_AUTH_TOKEN",
+            "Invalid JWT.",
+            "Ensure the token is a valid, unexpired Supabase access token (JWT).",
+            None,
         )
     })?;
 
     let kid = header.kid.ok_or_else(|| {
-        (
+        api_error(
             StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "ok": false,
-                "error": "invalid_token",
-                "code": "invalid_token",
-                "message": "Invalid JWT."
-            })),
+            "INVALID_AUTH_TOKEN",
+            "Invalid JWT.",
+            "Ensure the token is a valid Supabase access token (JWT).",
+            None,
         )
     })?;
 
     let jwks = get_jwks(cfg).await.map_err(|e| {
-        (
+        api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "ok": false,
-                "error": "jwks_error",
-                "code": "jwks_error",
-                "message": "We could not validate the JWT because the JWKS could not be loaded.",
-                "details": e
-            })),
+            "JWKS_UNAVAILABLE",
+            "We could not validate the JWT because the JWKS could not be loaded.",
+            "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+            Some(serde_json::Value::String(e)),
         )
     })?;
 
     let key = pick_decoding_key(&jwks, &kid).map_err(|e| {
-        (
+        api_error(
             StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "ok": false,
-                "error": "invalid_token",
-                "code": "invalid_token",
-                "message": "Invalid JWT.",
-                "details": e
-            })),
+            "INVALID_AUTH_TOKEN",
+            "Invalid JWT.",
+            "Ensure the token is a valid Supabase access token (JWT).",
+            Some(serde_json::Value::String(e)),
         )
     })?;
 
@@ -207,14 +196,12 @@ pub async fn require_user(
     validation.validate_aud = false;
 
     let data: TokenData<Claims> = decode(token, &key, &validation).map_err(|_| {
-        (
+        api_error(
             StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "ok": false,
-                "error": "invalid_token",
-                "code": "invalid_token",
-                "message": "Invalid JWT."
-            })),
+            "INVALID_AUTH_TOKEN",
+            "Invalid JWT.",
+            "Ensure the token is a valid, unexpired Supabase access token (JWT).",
+            None,
         )
     })?;
 
@@ -222,38 +209,32 @@ pub async fn require_user(
     let _ = data.claims.exp;
 
     if data.claims.iss != cfg.issuer {
-        return Err((
+        return Err(api_error(
             StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "ok": false,
-                "error": "invalid_issuer",
-                "code": "invalid_issuer",
-                "message": "JWT issuer does not match the configured Supabase issuer."
-            })),
+            "INVALID_JWT_ISSUER",
+            "JWT issuer does not match the configured Supabase issuer.",
+            "Use an access token issued by this project's Supabase instance.",
+            None,
         ));
     }
 
     if !aud_ok(&data.claims, &cfg.audience) {
-        return Err((
+        return Err(api_error(
             StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "ok": false,
-                "error": "invalid_audience",
-                "code": "invalid_audience",
-                "message": "JWT audience does not match the configured audience."
-            })),
+            "INVALID_JWT_AUDIENCE",
+            "JWT audience does not match the configured audience.",
+            "Request a token with the correct audience for this API.",
+            None,
         ));
     }
 
     let user_id = Uuid::parse_str(&data.claims.sub).map_err(|_| {
-        (
+        api_error(
             StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "ok": false,
-                "error": "invalid_subject",
-                "code": "invalid_subject",
-                "message": "JWT subject (sub) is invalid."
-            })),
+            "INVALID_JWT_SUBJECT",
+            "JWT subject (sub) is invalid.",
+            "Re-authenticate and retry with a fresh access token.",
+            None,
         )
     })?;
 

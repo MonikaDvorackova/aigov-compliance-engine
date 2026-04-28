@@ -157,10 +157,14 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
         )
         .await
         .unwrap();
-    assert_eq!(bundle_b.status(), StatusCode::OK);
+    // Tenant B should not be able to observe tenant A runs; surfaced as not-found.
+    assert_eq!(bundle_b.status(), StatusCode::NOT_FOUND);
     let v: Value =
         serde_json::from_slice(&bundle_b.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(v["ok"], false);
+    assert_eq!(v["error"]["code"], "RUN_NOT_FOUND");
+    assert!(v["error"]["message"].as_str().unwrap_or("").trim().len() > 0);
+    assert!(v["error"]["hint"].as_str().unwrap_or("").trim().len() > 0);
 
     let summary_b = app
         .clone()
@@ -174,11 +178,13 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
         )
         .await
         .unwrap();
-    assert_eq!(summary_b.status(), StatusCode::OK);
+    assert_eq!(summary_b.status(), StatusCode::NOT_FOUND);
     let vb: Value =
         serde_json::from_slice(&summary_b.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(vb["ok"], false, "unexpected /compliance-summary: {vb}");
-    assert_eq!(vb["error"], "run_not_found");
+    assert_eq!(vb["error"]["code"], "RUN_NOT_FOUND");
+    assert!(vb["error"]["message"].as_str().unwrap_or("").trim().len() > 0);
+    assert!(vb["error"]["hint"].as_str().unwrap_or("").trim().len() > 0);
 
     let export_b = app
         .oneshot(
@@ -232,9 +238,9 @@ async fn missing_tenant_context_is_rejected_in_prod() {
     let v: Value =
         serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(v["ok"], false);
-    assert_eq!(v["error"], "missing_tenant_context");
-    assert_eq!(v["code"], "missing_tenant_context");
-    assert!(v["message"].as_str().unwrap_or("").trim().len() > 0);
+    assert_eq!(v["error"]["code"], "MISSING_TENANT_CONTEXT");
+    assert!(v["error"]["message"].as_str().unwrap_or("").trim().len() > 0);
+    assert!(v["error"]["hint"].as_str().unwrap_or("").trim().len() > 0);
 }
 
 #[tokio::test]
@@ -382,7 +388,7 @@ async fn verify_log_missing_tenant_context_is_rejected_in_prod() {
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["ok"], false);
-    assert_eq!(v["error"], "missing_tenant_context");
-    assert_eq!(v["code"], "missing_tenant_context");
-    assert!(v["message"].as_str().unwrap_or("").trim().len() > 0);
+    assert_eq!(v["error"]["code"], "MISSING_TENANT_CONTEXT");
+    assert!(v["error"]["message"].as_str().unwrap_or("").trim().len() > 0);
+    assert!(v["error"]["hint"].as_str().unwrap_or("").trim().len() > 0);
 }
