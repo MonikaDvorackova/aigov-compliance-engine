@@ -1199,6 +1199,7 @@ async fn export_run_route(
         "discovery": {
             "findings": derived.discovery,
             "required_evidence": derived.requirements.required,
+            "required_requirements": derived.requirements.required_requirements,
         },
         // Additive: file-level discovery evidence surfaced for auditors.
         // Deterministic ordering; derived only from the stored `ai_discovery_reported` payload.
@@ -1218,7 +1219,10 @@ async fn export_run_route(
         "evidence_requirements": {
             "required_evidence": derived.requirements.required,
             "provided_evidence": derived.requirements.satisfied,
-            "missing_evidence": derived.requirements.missing
+            "missing_evidence": derived.requirements.missing,
+            "required_requirements": derived.requirements.required_requirements,
+            "provided_requirements": derived.requirements.satisfied_requirements,
+            "missing_requirements": derived.requirements.missing_requirements
         },
         "evidence_events": bundle_doc.get("events").cloned().unwrap_or(serde_json::Value::Null),
         "timestamps": {
@@ -1492,7 +1496,10 @@ async fn compliance_summary_route(
             let requirements = json!({
                 "required": derived.requirements.required,
                 "satisfied": derived.requirements.satisfied,
-                "missing": derived.requirements.missing
+                "missing": derived.requirements.missing,
+                "required_requirements": derived.requirements.required_requirements,
+                "satisfied_requirements": derived.requirements.satisfied_requirements,
+                "missing_requirements": derived.requirements.missing_requirements
             });
             let blocked_reasons = blocked_reasons_from_state(&derived);
 
