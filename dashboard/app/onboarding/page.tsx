@@ -8,6 +8,8 @@ import { Panel } from "../_ui/console/primitives";
 import { primaryCardDescription } from "../_ui/console/surfaces";
 
 const PYPI_VERSION = "0.1.0";
+const DOCS_HOSTED_BACKEND_DEPLOYMENT =
+  "https://github.com/MonikaDvorackova/aigov-compliance-engine/blob/main/docs/hosted-backend-deployment.md";
 
 export default function OnboardingPage() {
   return (
@@ -59,6 +61,43 @@ export default function OnboardingPage() {
             boxShadow: "0 1px 0 rgba(255,255,255,0.03) inset",
           }}
         >
+          <div style={{ fontSize: 12.5, fontWeight: 650, color: "var(--govai-text)", marginBottom: 6 }}>
+            Hosted onboarding (recommended)
+          </div>
+          <p style={{ ...primaryCardDescription(), margin: "0 0 10px", fontSize: 12.5, lineHeight: 1.55 }}>
+            Use your hosted GovAI audit endpoint and API key, run a deterministic demo, observe{" "}
+            <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>BLOCKED</span>, submit evidence,
+            observe <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>VALID</span>, and export
+            verifiable JSON.
+          </p>
+          <ul
+            style={{
+              margin: 0,
+              paddingLeft: 18,
+              color: "var(--govai-text-secondary)",
+              fontSize: 12.5,
+              lineHeight: 1.55,
+            }}
+          >
+            <li>Base URL</li>
+            <li>API key</li>
+            <li>Run deterministic demo</li>
+            <li>Observe BLOCKED</li>
+            <li>Submit evidence</li>
+            <li>Observe VALID</li>
+            <li>Export JSON</li>
+          </ul>
+        </Panel>
+
+        <Panel
+          style={{
+            padding: "12px 12px 12px",
+            marginTop: 12,
+            background: "var(--govai-bg-panel)",
+            border: "1px solid var(--govai-border-faint)",
+            boxShadow: "0 1px 0 rgba(255,255,255,0.03) inset",
+          }}
+        >
           <div style={{ fontSize: 12.5, fontWeight: 650, color: "var(--govai-text)", marginBottom: 6 }}>Prerequisites</div>
           <ul
             style={{
@@ -82,7 +121,7 @@ export default function OnboardingPage() {
           <LandingCopyBlock label="Install (PyPI)" code={`pip install aigov-py==${PYPI_VERSION}`} />
 
           <div style={{ fontSize: 9.5, fontWeight: 650, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--govai-text-label)" }}>
-            2) Set API key and base URL
+            2) Set base URL and API key
           </div>
           <LandingCopyBlock
             label="Environment"
@@ -151,6 +190,27 @@ export default function OnboardingPage() {
             code={['govai export-run --run-id "$GOVAI_RUN_ID" > govai-audit.json', "", "ls -lh govai-audit.json"].join("\n")}
           />
         </div>
+
+        <Panel
+          style={{
+            padding: "12px 12px 12px",
+            marginTop: 18,
+            background: "var(--govai-bg-panel)",
+            border: "1px solid var(--govai-border-faint)",
+            boxShadow: "0 1px 0 rgba(255,255,255,0.03) inset",
+          }}
+        >
+          <div style={{ fontSize: 12.5, fontWeight: 650, color: "var(--govai-text)", marginBottom: 6 }}>
+            Developer-only: self-host / operator setup (secondary)
+          </div>
+          <p style={{ ...primaryCardDescription(), margin: 0, fontSize: 12.5, lineHeight: 1.55 }}>
+            If you need to run the GovAI audit service yourself (Rust + Postgres), follow{" "}
+            <a href={DOCS_HOSTED_BACKEND_DEPLOYMENT} target="_blank" rel="noreferrer" style={{ color: "var(--govai-text-secondary)" }}>
+              Hosted backend deployment (docs)
+            </a>
+            .
+          </p>
+        </Panel>
 
         <Panel
           style={{
