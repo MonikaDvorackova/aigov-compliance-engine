@@ -136,6 +136,54 @@ pub struct DiscoverySignals {
     pub model_artifacts: bool,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct Requirement {
+    pub code: String,
+    /// One of: `policy`, `discovery`, `lifecycle`.
+    pub source: String,
+    pub description: String,
+}
+
+fn requirement_source_and_description(code: &str) -> (&'static str, &'static str) {
+    match code {
+        // Lifecycle gates
+        "ai_discovery_completed" => (
+            "lifecycle",
+            "AI discovery scan must be completed before compliance decision.",
+        ),
+
+        // Discovery-driven requirements
+        "model_registered" => (
+            "discovery",
+            "Detected OpenAI usage requires model registration.",
+        ),
+        "usage_policy_defined" => (
+            "discovery",
+            "Detected OpenAI usage requires usage policy definition.",
+        ),
+        "evaluation_completed" => (
+            "discovery",
+            "Detected AI system requires evaluation evidence.",
+        ),
+        "model_artifact_documented" => (
+            "discovery",
+            "Detected model artifact requires documentation.",
+        ),
+
+        // Defensive fallback: still deterministic, but marks unknown requirements as policy-derived.
+        _ => ("policy", "Policy requirement."),
+    }
+}
+
+fn to_requirement(code: &str) -> Requirement {
+    let (source, description) = requirement_source_and_description(code);
+    Requirement {
+        code: code.to_string(),
+        source: source.to_string(),
+        description: description.to_string(),
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct EvidenceRequirements {
     /// Stable evidence requirement codes derived deterministically from discovery signals.
@@ -144,6 +192,12 @@ pub struct EvidenceRequirements {
     pub satisfied: Vec<String>,
     /// Required evidence that is not present in the current event bundle.
     pub missing: Vec<String>,
+    /// Additive structured requirements (backward compatible with string arrays).
+    pub required_requirements: Vec<Requirement>,
+    /// Additive structured satisfied requirements (backward compatible with string arrays).
+    pub satisfied_requirements: Vec<Requirement>,
+    /// Additive structured missing requirements (backward compatible with string arrays).
+    pub missing_requirements: Vec<Requirement>,
 }
 
 #[derive(Debug, Serialize)]
@@ -250,6 +304,23 @@ fn derive_evidence_requirements(
         required: required_vec,
         satisfied: satisfied_vec,
         missing: missing_vec,
+        required_requirements: required
+            .iter()
+            .copied()
+            .map(to_requirement)
+            .collect::<Vec<_>>(),
+        satisfied_requirements: required
+            .iter()
+            .copied()
+            .filter(|code| has_evidence(events, code))
+            .map(to_requirement)
+            .collect::<Vec<_>>(),
+        missing_requirements: required
+            .iter()
+            .copied()
+            .filter(|code| !has_evidence(events, code))
+            .map(to_requirement)
+            .collect::<Vec<_>>(),
     }
 }
 
