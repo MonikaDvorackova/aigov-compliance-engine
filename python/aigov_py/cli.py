@@ -148,6 +148,313 @@ def _demo_event_id(kind: str, run_id: str) -> str:
     return f"demo_{kind}_{run_id}"
 
 
+def _require_env_nonempty(name: str) -> str | None:
+    raw = (os.environ.get(name) or "").strip()
+    return raw if raw else None
+
+
+def _missing_evidence_from_summary(summary: Any) -> list[str]:
+    if not isinstance(summary, dict):
+        return []
+    requirements = summary.get("requirements")
+    if not isinstance(requirements, dict):
+        current_state = summary.get("current_state")
+        if isinstance(current_state, dict):
+            requirements = current_state.get("requirements")
+    if not isinstance(requirements, dict):
+        return []
+
+    items = requirements.get("missing_evidence") or []
+    out: list[str] = []
+    if not isinstance(items, list):
+        return out
+    for item in items:
+        if isinstance(item, dict):
+            code = item.get("code")
+            if isinstance(code, str) and code.strip():
+                out.append(code.strip())
+        elif isinstance(item, str) and item.strip():
+            out.append(item.strip())
+    return out
+
+
+def run_demo_deterministic(*, timeout_sec: float) -> int:
+    """
+    ``govai run demo-deterministic``: deterministic, hosted-friendly demo flow.
+
+    Required flow:
+    1) create a run id
+    2) submit incomplete evidence
+    3) check decision and print BLOCKED
+    4) print missing evidence
+    5) submit required evidence
+    6) check decision and print VALID
+    7) export audit JSON
+
+    Requirements:
+    - Must not require local Postgres when hosted env vars are provided.
+    - Requires GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY; if missing, exit 2 with clear instructions.
+    """
+    base_url = _require_env_nonempty("GOVAI_AUDIT_BASE_URL")
+    api_key = _require_env_nonempty("GOVAI_API_KEY")
+    if not base_url or not api_key:
+        print("error: deterministic demo requires hosted env vars", file=sys.stderr)
+        if not base_url:
+            print("", file=sys.stderr)
+            print("Missing GOVAI_AUDIT_BASE_URL.", file=sys.stderr)
+            print('Set it, e.g. export GOVAI_AUDIT_BASE_URL="https://YOUR_GOVAI_AUDIT_SERVICE"', file=sys.stderr)
+        if not api_key:
+            print("", file=sys.stderr)
+            print("Missing GOVAI_API_KEY.", file=sys.stderr)
+            print('Set it, e.g. export GOVAI_API_KEY="YOUR_API_KEY"', file=sys.stderr)
+        print("", file=sys.stderr)
+        print(
+            "This demo does not need local Postgres when GOVAI_AUDIT_BASE_URL points to a hosted GovAI audit service.",
+            file=sys.stderr,
+        )
+        return cli_exit.EX_INVALID
+
+    actor = (os.environ.get("AIGOV_ACTOR") or "govai_demo").strip() or "govai_demo"
+    system = (os.environ.get("AIGOV_SYSTEM") or "govai_demo_cli").strip() or "govai_demo_cli"
+
+    # Prefer uuid4; allow override for deterministic tests.
+    run_id = (os.environ.get("GOVAI_DEMO_RUN_ID") or "").strip() or str(uuid.uuid4())
+    print(f"run_id: {run_id}")
+
+    ai_system_id = "demo-ai-system"
+    dataset_id = "demo-dataset-v1"
+    dataset_commitment = "basic_compliance"
+    model_version_id = model_version_id_for_run(run_id)
+    assessment_id = assessment_id_for_run(run_id)
+    risk_id = risk_id_for_run(run_id)
+    human_event_id = approved_human_event_id_for_run(run_id)
+
+    client = GovAIClient(base_url.rstrip("/"), api_key=api_key)
+
+    # (2) Submit incomplete evidence.
+    incomplete_seq: list[dict[str, Any]] = [
+        {
+            "event_id": _demo_event_id("data_registered", run_id),
+            "event_type": "data_registered",
+            "ts_utc": _utc_now_z(),
+            "actor": actor,
+            "system": system,
+            "run_id": run_id,
+            "payload": {
+                "ai_system_id": ai_system_id,
+                "dataset_id": dataset_id,
+                "dataset": "demo_dataset",
+                "dataset_version": "v1",
+                "dataset_fingerprint": "sha256:demo",
+                "dataset_governance_id": "gov_demo_v1",
+                "dataset_governance_commitment": dataset_commitment,
+                "source": "internal",
+                "intended_use": "deterministic onboarding demo",
+                "limitations": "demo only",
+                "quality_summary": "demo only",
+                "governance_status": "registered",
+            },
+        },
+        {
+            "event_id": _demo_event_id("model_trained", run_id),
+            "event_type": "model_trained",
+            "ts_utc": _utc_now_z(),
+            "actor": actor,
+            "system": system,
+            "run_id": run_id,
+            "payload": {
+                "model_version_id": model_version_id,
+                "ai_system_id": ai_system_id,
+                "dataset_id": dataset_id,
+                "model_type": "LogisticRegression",
+                "artifact_path": f"registry://demo/model/{model_version_id}",
+                "artifact_sha256": "govai_demo_placeholder",
+            },
+        },
+    ]
+
+    try:
+        print("(2/7) submit incomplete evidence")
+        for ev in incomplete_seq:
+            submit_event(client, ev)
+
+        print("(3/7) check decision (expect BLOCKED)")
+        summary1 = get_compliance_summary(client, run_id, timeout=timeout_sec)
+    except Exception as e:
+        print(f"error: demo failed during incomplete phase: {e}", file=sys.stderr)
+        return cli_exit.EX_ERR
+
+    verdict1 = summary1.get("verdict") if isinstance(summary1, dict) else None
+    verdict1_str = verdict1.strip() if isinstance(verdict1, str) and verdict1.strip() else "BLOCKED"
+    print(f"verdict: {verdict1_str}")
+
+    print("(4/7) missing evidence:")
+    missing = _missing_evidence_from_summary(summary1)
+    if missing:
+        for code in missing:
+            print(f"- {code}")
+    else:
+        print("- (none reported by server)")
+
+    # (5) Submit required evidence.
+    risk_class = (os.environ.get("AIGOV_RISK_CLASS") or "high").strip() or "high"
+    severity = float(os.environ.get("AIGOV_RISK_SEVERITY", "4"))
+    likelihood = float(os.environ.get("AIGOV_RISK_LIKELIHOOD", "0.3"))
+    owner = (os.environ.get("AIGOV_RISK_OWNER") or "risk_owner").strip() or "risk_owner"
+    reviewer = (os.environ.get("AIGOV_RISK_REVIEWER") or "risk_officer").strip() or "risk_officer"
+
+    complete_seq: list[dict[str, Any]] = [
+        {
+            "event_id": _demo_event_id("evaluation_reported", run_id),
+            "event_type": "evaluation_reported",
+            "ts_utc": _utc_now_z(),
+            "actor": actor,
+            "system": system,
+            "run_id": run_id,
+            "payload": {
+                "ai_system_id": ai_system_id,
+                "dataset_id": dataset_id,
+                "model_version_id": model_version_id,
+                "metric": "accuracy",
+                "value": 0.95,
+                "threshold": 0.8,
+                "passed": True,
+            },
+        },
+        {
+            "event_id": _demo_event_id("risk_recorded", run_id),
+            "event_type": "risk_recorded",
+            "ts_utc": _utc_now_z(),
+            "actor": actor,
+            "system": system,
+            "run_id": run_id,
+            "payload": {
+                "assessment_id": assessment_id,
+                "ai_system_id": ai_system_id,
+                "dataset_id": dataset_id,
+                "model_version_id": model_version_id,
+                "risk_id": risk_id,
+                "risk_class": risk_class,
+                "severity": severity,
+                "likelihood": likelihood,
+                "status": "submitted",
+                "mitigation": "Demo mitigation: enforce evaluation gate + require human approval before promotion.",
+                "owner": owner,
+                "dataset_governance_commitment": dataset_commitment,
+            },
+        },
+        {
+            "event_id": _demo_event_id("risk_mitigated", run_id),
+            "event_type": "risk_mitigated",
+            "ts_utc": _utc_now_z(),
+            "actor": actor,
+            "system": system,
+            "run_id": run_id,
+            "payload": {
+                "assessment_id": assessment_id,
+                "ai_system_id": ai_system_id,
+                "dataset_id": dataset_id,
+                "model_version_id": model_version_id,
+                "risk_id": risk_id,
+                "status": "mitigated",
+                "mitigation": "Demo mitigation applied.",
+                "dataset_governance_commitment": dataset_commitment,
+            },
+        },
+        {
+            "event_id": _demo_event_id("risk_reviewed", run_id),
+            "event_type": "risk_reviewed",
+            "ts_utc": _utc_now_z(),
+            "actor": actor,
+            "system": system,
+            "run_id": run_id,
+            "payload": {
+                "assessment_id": assessment_id,
+                "ai_system_id": ai_system_id,
+                "dataset_id": dataset_id,
+                "model_version_id": model_version_id,
+                "risk_id": risk_id,
+                "decision": "approve",
+                "reviewer": reviewer,
+                "justification": "Demo review: acceptable residual risk within governed demo scope.",
+                "dataset_governance_commitment": dataset_commitment,
+            },
+        },
+        {
+            "event_id": human_event_id,
+            "event_type": "human_approved",
+            "ts_utc": _utc_now_z(),
+            "actor": actor,
+            "system": system,
+            "run_id": run_id,
+            "payload": {
+                "scope": "model_promoted",
+                "decision": "approve",
+                "approved": True,
+                "approver": "compliance_officer",
+                "justification": "Demo: approve promotion after evaluation + risk review.",
+                "ai_system_id": ai_system_id,
+                "dataset_id": dataset_id,
+                "model_version_id": model_version_id,
+                "assessment_id": assessment_id,
+                "risk_id": risk_id,
+                "dataset_governance_commitment": dataset_commitment,
+            },
+        },
+        {
+            "event_id": _demo_event_id("model_promoted", run_id),
+            "event_type": "model_promoted",
+            "ts_utc": _utc_now_z(),
+            "actor": actor,
+            "system": system,
+            "run_id": run_id,
+            "payload": {
+                "artifact_path": f"registry://demo/artifacts/model/{model_version_id}",
+                "promotion_reason": "approved_by_human",
+                "ai_system_id": ai_system_id,
+                "dataset_id": dataset_id,
+                "model_version_id": model_version_id,
+                "assessment_id": assessment_id,
+                "risk_id": risk_id,
+                "dataset_governance_commitment": dataset_commitment,
+                "approved_human_event_id": human_event_id,
+            },
+        },
+    ]
+
+    try:
+        print("(5/7) submit required evidence")
+        for ev in complete_seq:
+            submit_event(client, ev)
+
+        print("(6/7) check decision (expect VALID)")
+        summary2 = get_compliance_summary(client, run_id, timeout=timeout_sec)
+    except Exception as e:
+        print(f"error: demo failed during completion phase: {e}", file=sys.stderr)
+        return cli_exit.EX_ERR
+
+    verdict2 = summary2.get("verdict") if isinstance(summary2, dict) else None
+    verdict2_str = verdict2.strip() if isinstance(verdict2, str) and verdict2.strip() else "UNKNOWN"
+    print(f"verdict: {verdict2_str}")
+    if verdict2_str != "VALID":
+        return cli_exit.EX_ERR
+
+    try:
+        print("(7/7) export audit JSON")
+        exported = export_run(client, run_id, project=os.environ.get("GOVAI_PROJECT"))
+    except Exception as e:
+        print(f"error: export failed: {e}", file=sys.stderr)
+        return cli_exit.EX_ERR
+
+    out_dir = Path("docs") / "demo"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"audit_export_{run_id}.json"
+    out_path.write_text(json.dumps(exported, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"exported: {out_path}")
+
+    return cli_exit.EX_OK
+
+
 def run_demo(audit_url: str, api_key: str | None) -> int:
     """``govai run demo``: submit a full compliance sequence; print server verdict."""
     actor = (os.environ.get("AIGOV_ACTOR") or "govai_demo").strip() or "govai_demo"
@@ -428,6 +735,10 @@ def build_parser() -> argparse.ArgumentParser:
     s_run = sub.add_parser("run", help="Run scripted flows against the audit service.")
     s_run_sub = s_run.add_subparsers(dest="run_cmd", required=True)
     s_run_sub.add_parser("demo", help="Full evidence sequence for one run; prints VALID or BLOCKED.")
+    s_run_sub.add_parser(
+        "demo-deterministic",
+        help="Deterministic demo: BLOCKED → missing evidence → VALID → export audit JSON (requires GOVAI_* env vars).",
+    )
 
     s_verify = sub.add_parser("verify", help="Verify local docs/* artifacts and governance hash chain.")
     s_verify.add_argument("--run-id", default=None, help="Run UUID (fallback: env GOVAI_RUN_ID or RUN_ID).")
@@ -564,6 +875,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         audit_url = _audit_url(args)
         api_key = _api_key(args)
         return run_demo(audit_url, api_key)
+
+    if args.cmd == "run" and getattr(args, "run_cmd", None) == "demo-deterministic":
+        return run_demo_deterministic(timeout_sec=float(getattr(args, "timeout", 30.0)))
 
     audit_url = _audit_url(args)
     api_key = _api_key(args)
