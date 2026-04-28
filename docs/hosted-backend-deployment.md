@@ -153,6 +153,49 @@ curl -sS "$GOVAI_BASE_URL/usage" \
   -H "Authorization: Bearer replace_with_real_secret"
 ```
 
+## Operator-hosted quickstart (Docker Compose)
+
+This is a **minimal operator-hosted path** for running the GovAI Rust audit service plus Postgres on a single machine using Docker Compose. It is intended for evaluation, internal environments, and “boring” first deployments.
+
+Non-goals (this quickstart does **not** claim):
+
+- high availability / multi-region
+- zero-downtime deploys
+- secret management beyond environment variables
+- backups/restore automation (you must configure this yourself)
+
+### Start
+
+From the repo root:
+
+```bash
+docker compose up -d --build
+```
+
+The service listens on `http://127.0.0.1:8088`.
+
+### Migrations
+
+In this Compose setup, migrations run automatically on startup because it sets:
+
+- `GOVAI_AUTO_MIGRATE=true`
+
+Outside Compose, migrations are **off by default**. To enable, set `GOVAI_AUTO_MIGRATE=true` for the process.
+
+### Smoke tests
+
+```bash
+curl -sS http://127.0.0.1:8088/status
+curl -sS http://127.0.0.1:8088/health
+```
+
+### Operator env vars (recommended)
+
+Edit `docker-compose.yml` and set:
+
+- `GOVAI_API_KEYS` (otherwise core audit endpoints are unauthenticated)
+- `GOVAI_BASE_URL` (shown in `GET /status`)
+
 ## Notes / pending
 
 - `GET /usage` is **implemented** already.

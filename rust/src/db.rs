@@ -6,8 +6,9 @@ use uuid::Uuid;
 pub type DbPool = PgPool;
 
 pub async fn init_pool_from_env() -> Result<DbPool, String> {
-    let database_url =
-        std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL missing".to_string())?;
+    let database_url = std::env::var("GOVAI_DATABASE_URL")
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .map_err(|_| "DATABASE_URL missing (or GOVAI_DATABASE_URL)".to_string())?;
     PgPoolOptions::new()
         .max_connections(10)
         .connect(&database_url)
