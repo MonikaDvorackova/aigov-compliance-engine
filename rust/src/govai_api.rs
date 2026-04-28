@@ -81,6 +81,10 @@ fn normalize_error_code(raw: &str) -> String {
         .to_string()
 }
 
+fn tenant_scoped_not_found_hint() -> &'static str {
+    "The resource was not found under the current tenant context. Check the run id, API key, and tenant or project header."
+}
+
 /// Backward-compatible shim for older call sites. Prefer `api_err` for new code.
 fn json_error(
     status: StatusCode,
@@ -371,6 +375,9 @@ async fn ingest(
         }
     };
 
+    // Used for usage counters after a successful append (avoid double counting on rejected ingests).
+    let is_discovery_scan = event.event_type == "ai_discovery_reported";
+
     // Legacy `govai_usage_counters` tenant (only when `GOVAI_METERING` is off); same scope as `GET /usage`.
     let tenant_id_legacy = if !audit.metering.enabled {
         Some(project::billing_tenant_id(&headers))
@@ -583,6 +590,18 @@ async fn ingest(
                         None,
                     );
                 }
+
+                // Operational usage: discovery scans are counted when discovery evidence is accepted.
+                if is_discovery_scan {
+                    let _ = metering::increment_team_op_counter(
+                        &audit.pool,
+                        team_id,
+                        ym,
+                        metering::TeamOpCounter::DiscoveryScan,
+                    )
+                    .await;
+                }
+
                 let nr1 = new_run_ids + if is_new_run { 1 } else { 0 };
                 let ev1 = evidence_events + 1;
                 let warnings = metering::basic_warnings(plan, limits, nr1, ev1, is_new_run);
@@ -620,6 +639,23 @@ async fn ingest(
                         None,
                     );
                 }
+
+                if is_discovery_scan {
+                    if let Err(e) =
+                        evidence_usage::increment_discovery_scan_usage(&audit.pool, tid).await
+                    {
+                        return api_err(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "USAGE_PERSIST_ERROR",
+                            "The event was appended, but usage counters could not be updated.",
+                            "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                            Some(json!({ "raw": e })),
+                            Some(audit.policy_version),
+                            None,
+                        );
+                    }
+                }
+
                 (
                     StatusCode::OK,
                     Json(json!({
@@ -901,7 +937,7 @@ async fn bundle_route(
                     StatusCode::NOT_FOUND,
                     "RUN_NOT_FOUND",
                     "No events were found for this run_id in the current tenant ledger.",
-                    "Verify the `run_id` and the tenant context (`X-GovAI-Project` / API key) match where evidence was ingested.",
+                    tenant_scoped_not_found_hint(),
                     None,
                     Some(audit.policy_version),
                     Some(json!({ "run_id": q.run_id })),
@@ -916,7 +952,7 @@ async fn bundle_route(
             StatusCode::NOT_FOUND,
             "RUN_NOT_FOUND",
             "No events were found for this run_id in the current tenant ledger.",
-            "Verify the `run_id` and the tenant context (`X-GovAI-Project` / API key) match where evidence was ingested.",
+            tenant_scoped_not_found_hint(),
             Some(json!({ "raw": e })),
             Some(audit.policy_version),
             Some(json!({ "run_id": q.run_id })),
@@ -1079,7 +1115,7 @@ async fn export_run_route(
             StatusCode::NOT_FOUND,
             "RUN_NOT_FOUND",
             "No events were found for this run_id in the current tenant ledger.",
-            "Verify the `run_id` and the tenant context (`X-GovAI-Project` / API key) match where evidence was ingested.",
+            tenant_scoped_not_found_hint(),
             None,
             Some(audit.policy_version),
             Some(json!({ "run_id": run_id })),
@@ -1306,7 +1342,7 @@ async fn bundle_hash_route(
                     StatusCode::NOT_FOUND,
                     "RUN_NOT_FOUND",
                     "No events were found for this run_id in the current tenant ledger.",
-                    "Verify the `run_id` and the tenant context (`X-GovAI-Project` / API key) match where evidence was ingested.",
+                    tenant_scoped_not_found_hint(),
                     None,
                     Some(audit.policy_version),
                     Some(json!({ "run_id": q.run_id })),
@@ -1338,7 +1374,7 @@ async fn bundle_hash_route(
             StatusCode::NOT_FOUND,
             "RUN_NOT_FOUND",
             "No events were found for this run_id in the current tenant ledger.",
-            "Verify the `run_id` and the tenant context (`X-GovAI-Project` / API key) match where evidence was ingested.",
+            tenant_scoped_not_found_hint(),
             Some(json!({ "raw": e })),
             Some(audit.policy_version),
             Some(json!({ "run_id": q.run_id })),
@@ -1455,7 +1491,7 @@ async fn compliance_summary_route(
                     StatusCode::NOT_FOUND,
                     "RUN_NOT_FOUND",
                     "No events were found for this run_id in the current tenant ledger.",
-                    "Verify the `run_id` and the tenant context (`X-GovAI-Project` / API key) match where evidence was ingested.",
+                    tenant_scoped_not_found_hint(),
                     None,
                     Some(audit.policy_version),
                     Some(json!({
@@ -1568,7 +1604,7 @@ async fn compliance_summary_route(
             StatusCode::NOT_FOUND,
             "RUN_NOT_FOUND",
             "No events were found for this run_id in the current tenant ledger.",
-            "Verify the `run_id` and the tenant context (`X-GovAI-Project` / API key) match where evidence was ingested.",
+            tenant_scoped_not_found_hint(),
             Some(json!({ "raw": e })),
             Some(audit.policy_version),
             Some(json!({
@@ -1936,6 +1972,9 @@ mod api_error_response_tests {
     use axum::http::HeaderValue;
     use serde_json::Value;
 
+    const TENANT_SCOPED_NOT_FOUND_HINT: &str =
+        "The resource was not found under the current tenant context. Check the run id, API key, and tenant or project header.";
+
     fn pool_lazy_for_tests() -> DbPool {
         sqlx::PgPool::connect_lazy("postgres://postgres:postgres@localhost/postgres")
             .expect("connect_lazy should not contact the database")
@@ -1984,7 +2023,10 @@ mod api_error_response_tests {
             body.pointer("/error/code").and_then(Value::as_str),
             Some("RUN_NOT_FOUND")
         );
-        assert!(body.pointer("/error/hint").and_then(Value::as_str).unwrap_or("").len() > 5);
+        assert_eq!(
+            body.pointer("/error/hint").and_then(Value::as_str),
+            Some(TENANT_SCOPED_NOT_FOUND_HINT)
+        );
     }
 }
 
