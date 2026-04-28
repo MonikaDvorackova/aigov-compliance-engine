@@ -1008,6 +1008,92 @@ tbody tr.govai-run-row {
   box-sizing: border-box;
 }
 
+/* Shared code / command block — used by LandingCopyBlock (homepage + onboarding) */
+.govai_code_card {
+  max-width: 100%;
+  min-width: 0;
+  border-radius: 10px;
+  background: var(--govai-bg-panel);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+  overflow: hidden;
+}
+
+.govai_code_card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 10px 8px;
+  border-bottom: 1px solid var(--govai-border-faint);
+  background: color-mix(in srgb, var(--govai-bg-elevated) 60%, transparent);
+}
+
+.govai_code_card__label {
+  min-width: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--govai-text-label);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.govai_code_copy {
+  flex-shrink: 0;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--govai-border);
+  background: transparent;
+  color: var(--govai-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+
+.govai_code_copy:hover {
+  background: var(--govai-bg-elevated);
+  border-color: var(--govai-border);
+  color: var(--govai-text);
+}
+
+.govai_code_copy:focus-visible {
+  outline: 2px solid var(--govai-border-focus);
+  outline-offset: 2px;
+}
+
+.govai_code_pre {
+  margin: 0;
+  padding: 10px 10px 12px;
+  max-width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--govai-text-secondary);
+  white-space: pre;
+  overflow-y: hidden;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.govai_code_pre code {
+  display: block;
+}
+
+@media (max-width: 560px) {
+  .govai_code_pre {
+    font-size: 10.5px;
+  }
+  .govai_code_copy {
+    min-height: 34px;
+  }
+}
+
 button.govai_btn {
   font: inherit;
   cursor: pointer;

@@ -16,7 +16,7 @@ export default function OnboardingPage() {
     <InfraShell maxWidth={720} align="start" padding={20} background={LANDING_SHELL_BACKGROUND}>
       <Header />
 
-      <div style={{ maxWidth: 620, marginLeft: "auto", marginRight: "auto", paddingTop: 2 }}>
+      <div className="mx-auto max-w-2xl px-4 sm:px-6" style={{ paddingTop: 2 }}>
         <div style={{ textAlign: "center" }}>
           <div style={{ letterSpacing: "0.2em", fontSize: 10, opacity: 0.62, marginBottom: 8 }}>GOVAI</div>
           <h1
@@ -114,7 +114,7 @@ export default function OnboardingPage() {
           </ul>
         </Panel>
 
-        <div style={{ marginTop: 18, display: "grid", gap: 12 }}>
+        <div className="mt-5 grid min-w-0 gap-6">
           <div style={{ fontSize: 9.5, fontWeight: 650, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--govai-text-label)" }}>
             1) Install CLI
           </div>
