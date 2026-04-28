@@ -1,0 +1,10 @@
+{
+  "name": "govai-check-action",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "test:action": "node --test test/action.test.js",
+    "simulate:action": "node scripts/simulate-action.js"
+  }
+}
+

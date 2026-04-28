@@ -1,0 +1,18 @@
+name: "GovAI Compliance Check"
+description: "Blocking compliance gate: calls GET /compliance-summary and fails unless verdict is VALID."
+author: "GovAI"
+
+inputs:
+  run_id:
+    description: "GovAI evidence run id (UUID)."
+    required: true
+  base_url:
+    description: "GovAI audit service base URL (e.g. https://api.example.com)."
+    required: true
+  api_key:
+    description: "GovAI API key (Bearer token)."
+    required: true
+
+runs:
+  using: "node20"
+  main: "dist/index.js"
