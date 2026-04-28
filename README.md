@@ -151,6 +151,23 @@ Use **one** GovAI evidence run id (`GOVAI_RUN_ID`) for every evidence submission
 
 See `docs/github-action.md` for the composite GitHub Action (installs `aigov-py==0.1.0` from PyPI).
 
+## Operator-hosted backend (Docker Compose quickstart)
+
+This repo includes a minimal operator-hosted path to run the Rust audit service + Postgres locally via Docker Compose (intended as a **quickstart**, not production hardening).
+
+```bash
+docker compose up -d --build
+```
+
+Smoke test:
+
+```bash
+curl -sS http://127.0.0.1:8088/status
+curl -sS http://127.0.0.1:8088/health
+```
+
+Details and limitations: `docs/hosted-backend-deployment.md` → “Operator-hosted quickstart (Docker Compose)”.
+
 ## Audit export (machine-readable)
 
 To export a run into a **stable JSON** document that includes the **decision** fields and **hashes** (bundle SHA-256 + append-only chain hashes), use:
