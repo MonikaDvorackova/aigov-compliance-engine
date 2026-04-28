@@ -181,6 +181,47 @@ def _missing_evidence_from_summary(summary: Any) -> list[str]:
     return out
 
 
+def _requirements_dict_from_summary(summary: dict[str, Any]) -> dict[str, Any] | None:
+    requirements = summary.get("requirements")
+    if not isinstance(requirements, dict):
+        current_state = summary.get("current_state")
+        if isinstance(current_state, dict):
+            requirements = current_state.get("requirements")
+    return requirements if isinstance(requirements, dict) else None
+
+
+def _print_check_failure_details(summary: dict[str, Any], verdict: str) -> None:
+    """After the verdict line, print missing_evidence and blocked_reasons for CI visibility."""
+    if verdict not in ("BLOCKED", "INVALID"):
+        return
+    req = _requirements_dict_from_summary(summary)
+    if isinstance(req, dict):
+        missing_evidence = req.get("missing_evidence") or []
+        if isinstance(missing_evidence, list) and missing_evidence:
+            print("missing_evidence:")
+            for item in missing_evidence:
+                if isinstance(item, dict):
+                    code = item.get("code")
+                    src = item.get("source")
+                    if isinstance(code, str) and code.strip():
+                        extra = f" ({src})" if src else ""
+                        print(f"  - {code.strip()}{extra}")
+                    else:
+                        print(f"  - {item}")
+                elif isinstance(item, str) and item.strip():
+                    print(f"  - {item.strip()}")
+    blocked_reasons = summary.get("blocked_reasons") or []
+    if isinstance(blocked_reasons, list) and blocked_reasons:
+        print("blocked_reasons:")
+        for reason in blocked_reasons:
+            if isinstance(reason, dict):
+                code = reason.get("code")
+                message = reason.get("message")
+                print(f"  - {code}: {message}")
+            else:
+                print(f"  - {reason}")
+
+
 def run_demo_deterministic(*, timeout_sec: float) -> int:
     """
     ``govai run demo-deterministic``: deterministic, hosted-friendly demo flow.
@@ -1023,6 +1064,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         verdict = verdict.strip()
         print(verdict)
+        if verdict in ("BLOCKED", "INVALID"):
+            _print_check_failure_details(summary, verdict)
         return cli_exit.EX_OK if verdict == "VALID" else cli_exit.EX_INVALID
 
     if args.cmd == "submit-evidence":

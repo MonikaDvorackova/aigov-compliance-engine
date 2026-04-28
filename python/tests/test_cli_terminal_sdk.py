@@ -273,6 +273,24 @@ def test_check_exits_invalid_on_invalid(capsys: pytest.CaptureFixture[str]) -> N
     assert capsys.readouterr().out.strip() == "INVALID"
 
 
+def test_check_blocked_prints_missing_evidence(capsys: pytest.CaptureFixture[str]) -> None:
+    s = {
+        "ok": True,
+        "verdict": "BLOCKED",
+        "requirements": {
+            "missing_evidence": [{"code": "evaluation_reported", "source": "policy"}],
+        },
+    }
+    with patch("aigov_py.cli.get_compliance_summary", return_value=s):
+        code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
+    assert code == cli_exit.EX_INVALID
+    out = capsys.readouterr().out
+    lines = [ln.strip() for ln in out.strip().splitlines()]
+    assert lines[0] == "BLOCKED"
+    assert any("evaluation_reported" in ln for ln in lines)
+    assert "missing_evidence:" in out
+
+
 def test_check_exits_invalid_no_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GOVAI_RUN_ID", raising=False)
     monkeypatch.delenv("RUN_ID", raising=False)

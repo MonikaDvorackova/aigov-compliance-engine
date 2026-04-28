@@ -97,9 +97,12 @@ When the backend returns `BLOCKED`, the job fails (strict gate) and prints the v
 
 ```text
 BLOCKED
+missing_evidence:
+  - evaluation_reported (policy)
+blocked_reasons:
+  - …
 ::error::GovAI verdict: BLOCKED
-::error::Required evidence is missing. See missing_evidence above.
-# If `govai check` includes missing_evidence details, they are printed above the action error.
+::error::Required evidence is missing — see missing_evidence and blocked_reasons in the govai check output above.
 ```
 
 ## Local usage in this repository

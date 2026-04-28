@@ -181,7 +181,7 @@ Collect:
 
 ---
 
-## Version tag policy (placeholder)
+## Version tag policy
 
 - Use `@v1` for stable GitHub Action examples once the hosted-pilot evidence is repeatable.
 - Use `@v1.0.0` for immutable releases (do not move).

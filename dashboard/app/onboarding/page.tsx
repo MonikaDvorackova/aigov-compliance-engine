@@ -7,9 +7,9 @@ import { LANDING_SHELL_BACKGROUND } from "../_ui/landingShellBackground";
 import { Panel } from "../_ui/console/primitives";
 import { primaryCardDescription } from "../_ui/console/surfaces";
 
-const PYPI_VERSION = "0.1.0";
+const PYPI_VERSION = "0.1.1";
 const DOCS_HOSTED_BACKEND_DEPLOYMENT =
-  "https://github.com/MonikaDvorackova/aigov-compliance-engine/blob/main/docs/hosted-backend-deployment.md";
+  "https://github.com/Kovali/GovAI/blob/main/docs/hosted-backend-deployment.md";
 
 export default function OnboardingPage() {
   return (
