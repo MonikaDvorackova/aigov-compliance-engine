@@ -20,3 +20,21 @@ Customers now receive actionable error responses with a stable machine-readable 
     "details": {}
   }
 }
+
+## Evaluation gate
+
+The change was evaluated against the standard test suite.
+
+Verification commands:
+
+- `python -m pytest -q`
+- `cd rust && cargo test -- --test-threads=1`
+
+Result: passed locally before opening the PR.
+
+## Human approval gate
+
+This change requires PR review before merge into `staging`.
+
+Approval status: pending GitHub review.
+
