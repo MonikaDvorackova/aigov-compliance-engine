@@ -27,6 +27,11 @@ GovAI does **not** generate missing evidence and is **not** a legal certificatio
 - **`INVALID`**: evidence present but fails policy (deployment rejected)
 - **`BLOCKED`**: required evidence missing (deployment halted)
 
+## Trust and explainability (minimal)
+
+- **Definitions and non-claims**: [trust-model.md](trust-model.md)
+- **Teaching-friendly (ČVUT-style)**: [cvut-teaching.md](cvut-teaching.md)
+
 ## Private pilot and pricing
 
 - **Private pilot onboarding**: [pilot-onboarding.md](pilot-onboarding.md)

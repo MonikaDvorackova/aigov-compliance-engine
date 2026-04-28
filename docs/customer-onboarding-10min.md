@@ -73,6 +73,9 @@ ls -la "govai-export-${GOVAI_RUN_ID}.json"
 
 ## What to do next
 
+- Read the precise definitions and non-claims:
+  - [trust-model.md](trust-model.md)
+
 - Add the GitHub Action compliance gate: see [github-action.md](github-action.md).
   - Your CI must submit evidence events for the same `GOVAI_RUN_ID` before the gate runs.
 
