@@ -8,19 +8,25 @@
 - GitHub Action integration
 - onboarding support during pilot
 
+## Canonical customer onboarding (hosted)
+
+If you already have a hosted GovAI backend + API key, start with the canonical onboarding flow:
+
+- [customer-onboarding-10min.md](customer-onboarding-10min.md)
+
 ## What you need before starting
 
 - Python 3.11+
 - GitHub repository with CI
 - `GOVAI_AUDIT_BASE_URL`
-- optional `GOVAI_API_KEY`
+- `GOVAI_API_KEY`
 - `GOVAI_RUN_ID`
 
 ## Install the CLI
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.1.1"
+python -m pip install "aigov-py==0.1.0"
 govai --help
 ```
 
@@ -48,36 +54,9 @@ PY
 
 ## Add the GitHub Action
 
-Use:
+Use the GitHub Action documented here (copy/paste workflow):
 
-`MonikaDvorackova/aigov-compliance-engine/.github/actions/govai-check@v1`
-
-Minimal example:
-
-```yaml
-name: GovAI Check
-
-on:
-  push:
-    branches: [main]
-
-jobs:
-  govai:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set GOVAI_RUN_ID
-        run: echo "GOVAI_RUN_ID=${{ github.sha }}" >> $GITHUB_ENV
-
-      - name: Run GovAI Check
-        uses: MonikaDvorackova/aigov-compliance-engine/.github/actions/govai-check@v1
-        with:
-          run_id: ${{ env.GOVAI_RUN_ID }}
-          base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}
-          api_key: ${{ secrets.GOVAI_API_KEY }}
-```
+- [github-action.md](github-action.md)
 
 Evidence submission must use the same `GOVAI_RUN_ID` before this step.
 

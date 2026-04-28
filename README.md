@@ -78,8 +78,9 @@ Start the audit service, emit evidence, and read the authoritative decision from
 
 Quickstarts:
 
+- `docs/customer-onboarding-10min.md` (hosted customer onboarding — canonical)
 - `docs/quickstart-5min.md` (local demo)
-- `docs/customer-quickstart.md` (customer / CI flow)
+- `docs/customer-quickstart.md` (legacy customer / CI quickstart)
 - `docs/pilot-onboarding.md` (private pilot onboarding)
 
 ## Why GovAI
