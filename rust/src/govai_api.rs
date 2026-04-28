@@ -21,7 +21,6 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
@@ -957,6 +956,21 @@ async fn export_run_route(
             );
         }
     };
+    let ledger_tenant_id = match project::require_tenant_id_for_ledger(&headers, audit.deployment_env) {
+        Ok(t) => t,
+        Err(e) => {
+            return api_err(
+                StatusCode::BAD_REQUEST,
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+    let billing_tenant_id = project::billing_tenant_id(&headers);
 
     let events = match bundle::collect_events_for_run(&log_path, &run_id) {
         Ok(e) => e,
@@ -1054,18 +1068,36 @@ async fn export_run_route(
         .and_then(|e| e.get("passed"))
         .and_then(|v| v.as_bool());
 
+    let derived = projection::derive_current_state_from_events_with_context(
+        &run_id,
+        &events,
+        Some(bundle_sha256.clone()),
+        last_ts.clone(),
+    );
+    let verdict = compliance_verdict_from_state(&derived);
+    let blocked_reasons = blocked_reasons_from_state(&derived);
+
     let out = json!({
         "ok": true,
         "schema_version": "aigov.audit_export.v1",
         "policy_version": audit.policy_version,
         "environment": audit.deployment_env.as_str(),
-        "exported_at_utc": Utc::now().to_rfc3339(),
+        // Deterministic: derived from ledger content, not server clock.
+        "exported_at_utc": last_ts,
+        "tenant": {
+            "ledger_tenant_id": ledger_tenant_id,
+            "billing_tenant_id": billing_tenant_id
+        },
         "run": {
             "run_id": run_id,
             "policy_version": audit.policy_version,
             "log_path": log_path_report,
             "model_artifact_path": bundle_doc.get("model_artifact_path").cloned().unwrap_or(serde_json::Value::Null),
             "identifiers": bundle_doc.get("identifiers").cloned().unwrap_or(serde_json::Value::Null)
+        },
+        "discovery": {
+            "findings": derived.discovery,
+            "required_evidence": derived.requirements.required,
         },
         "evidence_hashes": {
             "bundle_sha256": bundle_sha256,
@@ -1075,11 +1107,19 @@ async fn export_run_route(
         "decision": {
             "human_approval": human,
             "promotion": promo,
-            "evaluation_passed": eval_passed
+            "evaluation_passed": eval_passed,
+            "verdict": verdict,
+            "blocked_reasons": blocked_reasons
         },
+        "evidence_requirements": {
+            "required_evidence": derived.requirements.required,
+            "provided_evidence": derived.requirements.satisfied,
+            "missing_evidence": derived.requirements.missing
+        },
+        "evidence_events": bundle_doc.get("events").cloned().unwrap_or(serde_json::Value::Null),
         "timestamps": {
             "first_event_ts_utc": first_ts,
-            "last_event_ts_utc": last_ts,
+            "last_event_ts_utc": derived.evidence.latest_event_ts_utc,
             "human_approval_ts_utc": human_ts,
             "promotion_ts_utc": promo_ts
         }

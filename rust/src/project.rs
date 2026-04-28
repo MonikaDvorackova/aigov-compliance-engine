@@ -88,7 +88,26 @@ fn sanitize_project_segment(project_id: &str) -> String {
 pub fn resolve_ledger_path(ledger_base: &str, tenant_id: &str) -> String {
     let stem = ledger_base.strip_suffix(".jsonl").unwrap_or(ledger_base);
     let safe = sanitize_project_segment(tenant_id);
-    format!("{}__{}.jsonl", stem, safe)
+    let filename = format!("{}__{}.jsonl", stem, safe);
+
+    // Optional base directory override for deployments and tests.
+    // Applied only when `ledger_base` is a simple filename (no parent directory).
+    let has_parent_dir = std::path::Path::new(ledger_base)
+        .parent()
+        .is_some_and(|p| !p.as_os_str().is_empty() && p != std::path::Path::new("."));
+    if !has_parent_dir {
+        if let Ok(dir) = std::env::var("GOVAI_LEDGER_DIR") {
+            let dir = dir.trim();
+            if !dir.is_empty() {
+                return std::path::Path::new(dir)
+                    .join(filename)
+                    .to_string_lossy()
+                    .to_string();
+            }
+        }
+    }
+
+    filename
 }
 
 #[cfg(test)]
