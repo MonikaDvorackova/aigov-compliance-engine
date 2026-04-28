@@ -53,6 +53,8 @@ If you are using the Docker Compose quickstart, set `GOVAI_BASE_URL` in `docker-
 
 In hosted mode, enable authentication by setting `GOVAI_API_KEYS` on the server (recommended even for pilots).
 
+- For local pilot setups, you can use: `GOVAI_API_KEYS=test-key`
+
 - **Placeholder support contact**: `support@example.com` (replace before any public release).
 
 Minimal approach:
