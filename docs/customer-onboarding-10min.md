@@ -76,4 +76,7 @@ ls -la "govai-export-${GOVAI_RUN_ID}.json"
 - Add the GitHub Action compliance gate: see [github-action.md](github-action.md).
   - Your CI must submit evidence events for the same `GOVAI_RUN_ID` before the gate runs.
 
- 
+## Advanced usage
+
+For manual control over evidence submission (without the deterministic demo), see:
+[manual-evidence-flow.md](manual-evidence-flow.md)

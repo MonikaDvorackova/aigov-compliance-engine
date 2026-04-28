@@ -72,6 +72,9 @@ export default function Page() {
           <a className="govai_btn govai_btnPrimary" href={PRIVATE_PILOT_MAILTO}>
             Request private pilot
           </a>
+          <Link className="govai_btn govai_btnGhost" href="/onboarding">
+            Onboarding quickstart
+          </Link>
           <a className="govai_btn govai_btnGhost" href="#pricing">
             View pricing
           </a>

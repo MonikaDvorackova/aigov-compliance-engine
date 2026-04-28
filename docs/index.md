@@ -59,5 +59,6 @@ Pricing for the pilot is agreed directly (no self-serve checkout or automated bi
 
 ## More docs
 
+- [common-errors.md](common-errors.md)
 - [policy-contract.md](policy-contract.md)
 - [technical-documentation.md](technical-documentation.md)

@@ -11,10 +11,10 @@ use axum::extract::Request;
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
-use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use crate::api_error::{api_error, api_error_with};
 
 #[derive(Clone)]
 pub struct AuditApiKeyConfig {
@@ -116,17 +116,25 @@ pub async fn gate_audit_routes(
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
         let token = bearer_token(auth);
-        if !key_map.contains_key(token) {
-            return (
+        if token.is_empty() {
+            return api_error(
                 StatusCode::UNAUTHORIZED,
-                Json(json!({
-                    "ok": false,
-                    "error": "unauthorized",
-                    "code": "unauthorized",
-                    "message": "Missing or invalid Authorization bearer token."
-                })),
+                "MISSING_API_KEY",
+                "Missing API key.",
+                "Provide `Authorization: Bearer <api_key>`.",
+                None,
             )
-                .into_response();
+            .into_response();
+        }
+        if !key_map.contains_key(token) {
+            return api_error(
+                StatusCode::UNAUTHORIZED,
+                "INVALID_API_KEY",
+                "Invalid API key.",
+                "Verify you’re using the correct GovAI API key (and not a JWT). If you rotated keys, update your integration and retry.",
+                None,
+            )
+            .into_response();
         }
 
         let cap = key_map.get(token).copied().flatten();
@@ -138,13 +146,13 @@ pub async fn gate_audit_routes(
             };
             if let Err(e) = usage.try_increment(token, cap, ch).await {
                 return match e {
-                    api_usage::UsageError::QuotaExceeded { limit, current } => (
+                    api_usage::UsageError::QuotaExceeded { limit, current } => api_error_with(
                         StatusCode::TOO_MANY_REQUESTS,
-                        Json(json!({
-                            "ok": false,
-                            "error": "usage_limit_exceeded",
-                            "code": "usage_limit_exceeded",
-                            "message": "This API key has exceeded its request limit. Wait for the quota reset or use a key with a higher limit.",
+                        "USAGE_LIMIT_EXCEEDED",
+                        "This API key has exceeded its request limit.",
+                        "Wait for the quota reset or use an API key with a higher limit.",
+                        Some(serde_json::json!({ "limit": limit, "used": current })),
+                        Some(serde_json::json!({
                             "metering": "n/a",
                             "count_kind": "api_key_total_requests",
                             "operation": match ch {
@@ -156,21 +164,101 @@ pub async fn gate_audit_routes(
                             "current": current,
                         })),
                     )
-                        .into_response(),
-                    api_usage::UsageError::Database(d) => (
+                    .into_response(),
+                    api_usage::UsageError::Database(d) => api_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({
-                            "ok": false,
-                            "error": "usage_tracking_error",
-                            "code": "usage_tracking_error",
-                            "message": "We could not track API usage for this key. Please retry; if it persists, contact support.",
-                            "details": d
-                        })),
+                        "USAGE_TRACKING_ERROR",
+                        "We could not track API usage for this key.",
+                        "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                        Some(serde_json::Value::String(d)),
                     )
-                        .into_response(),
+                    .into_response(),
                 };
             }
         }
     }
     next.run(request).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use axum::routing::get;
+    use axum::{middleware, Router};
+    use serde_json::Value;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    fn usage_state_for_tests() -> ApiUsageState {
+        let pool = sqlx::PgPool::connect_lazy("postgres://postgres:postgres@localhost/postgres")
+            .expect("connect_lazy should not contact the database");
+        ApiUsageState::from_env(&pool).expect("usage state should initialize in memory mode")
+    }
+
+    #[tokio::test]
+    async fn missing_api_key_returns_standard_error() {
+        let usage = usage_state_for_tests();
+        let cfg = AuditApiKeyConfig {
+            keys: Some(Arc::new(HashMap::from([("good-key".to_string(), None)]))),
+        };
+
+        let app = Router::new()
+            .route("/bundle", get(|| async { "ok" }))
+            .layer(middleware::from_fn(move |req, next| {
+                let cfg = cfg.clone();
+                let usage = usage.clone();
+                async move { gate_audit_routes(cfg, usage, req, next).await }
+            }));
+
+        let resp = app
+            .oneshot(Request::builder().uri("/bundle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v.pointer("/error/code").and_then(Value::as_str), Some("MISSING_API_KEY"));
+    }
+
+    #[tokio::test]
+    async fn invalid_api_key_returns_standard_error() {
+        let usage = usage_state_for_tests();
+        let cfg = AuditApiKeyConfig {
+            keys: Some(Arc::new(HashMap::from([("good-key".to_string(), None)]))),
+        };
+
+        let app = Router::new()
+            .route("/bundle", get(|| async { "ok" }))
+            .layer(middleware::from_fn(move |req, next| {
+                let cfg = cfg.clone();
+                let usage = usage.clone();
+                async move { gate_audit_routes(cfg, usage, req, next).await }
+            }));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/bundle")
+                    .header("Authorization", "Bearer bad-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v.pointer("/error/code").and_then(Value::as_str), Some("INVALID_API_KEY"));
+    }
 }
