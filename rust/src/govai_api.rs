@@ -24,6 +24,8 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
+use std::cmp::Ordering;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::api_error::api_error_with;
@@ -922,6 +924,92 @@ async fn bundle_route(
     }
 }
 
+fn payload_get_str(p: &serde_json::Value, key: &str) -> Option<String> {
+    p.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+}
+
+fn payload_get_num(p: &serde_json::Value, key: &str) -> Option<f64> {
+    p.get(key).and_then(|v| v.as_f64())
+}
+
+fn sha256_hex_str(s: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    hex::encode(h.finalize())
+}
+
+#[derive(Debug, Clone)]
+struct DiscoveryFindingOut {
+    file_path: String,
+    detector: String,
+    confidence: f64,
+    matched_pattern: Option<String>,
+    hash: String,
+}
+
+fn extract_discovery_findings(events: &[EvidenceEvent]) -> Vec<DiscoveryFindingOut> {
+    // Derive only from already-submitted evidence. Never run a scan during export.
+    let Some(ev) = events.iter().rev().find(|e| e.event_type == "ai_discovery_reported") else {
+        return Vec::new();
+    };
+
+    let p = &ev.payload;
+    let Some(arr) = p.get("findings").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+
+    let mut out: Vec<DiscoveryFindingOut> = Vec::new();
+    for v in arr {
+        let Some(obj) = v.as_object() else { continue };
+        let v = serde_json::Value::Object(obj.clone());
+
+        let Some(file_path) = payload_get_str(&v, "file_path") else { continue };
+        let detector = payload_get_str(&v, "detector_type")
+            .or_else(|| payload_get_str(&v, "detector"))
+            .or_else(|| payload_get_str(&v, "detected_ai_usage"))
+            .unwrap_or_else(|| "unknown".to_string());
+        let Some(confidence) = payload_get_num(&v, "confidence") else { continue };
+
+        // Exact matched pattern is not currently stored (Python discovery uses high-level evidence),
+        // so keep it null unless explicitly present in the stored payload.
+        let matched_pattern = payload_get_str(&v, "matched_pattern");
+
+        // Stable, deterministic hash derived from stored fields only.
+        // (Avoid serializing maps where key order can differ.)
+        let hash_input = format!(
+            "file_path={}\ndetector={}\nconfidence={:.12}\nmatched_pattern={}",
+            file_path,
+            detector,
+            confidence,
+            matched_pattern.as_deref().unwrap_or("")
+        );
+        let hash = sha256_hex_str(&hash_input);
+
+        out.push(DiscoveryFindingOut {
+            file_path,
+            detector,
+            confidence,
+            matched_pattern,
+            hash,
+        });
+    }
+
+    // Deterministic ordering contract for auditors/consumers.
+    out.sort_by(|a, b| {
+        a.file_path
+            .cmp(&b.file_path)
+            .then_with(|| a.detector.cmp(&b.detector))
+            .then_with(|| {
+                a.confidence
+                    .partial_cmp(&b.confidence)
+                    .unwrap_or(Ordering::Equal)
+            })
+            .then_with(|| a.hash.cmp(&b.hash))
+    });
+
+    out
+}
+
 /// Machine-readable audit export: metadata, chain hashes, bundle digest, decision extracts, and timestamps.
 /// Uses `bundle::bundle_document_value` and `bundle::bundle_sha256` (same as `/bundle` and `/bundle-hash`).
 async fn export_run_route(
@@ -1077,6 +1165,19 @@ async fn export_run_route(
     let verdict = compliance_verdict_from_state(&derived);
     let blocked_reasons = blocked_reasons_from_state(&derived);
 
+    let discovery_findings = extract_discovery_findings(&events)
+        .into_iter()
+        .map(|f| {
+            json!({
+                "file_path": f.file_path,
+                "detector": f.detector,
+                "confidence": f.confidence,
+                "matched_pattern": f.matched_pattern,
+                "hash": f.hash,
+            })
+        })
+        .collect::<Vec<_>>();
+
     let out = json!({
         "ok": true,
         "schema_version": "aigov.audit_export.v1",
@@ -1099,6 +1200,9 @@ async fn export_run_route(
             "findings": derived.discovery,
             "required_evidence": derived.requirements.required,
         },
+        // Additive: file-level discovery evidence surfaced for auditors.
+        // Deterministic ordering; derived only from the stored `ai_discovery_reported` payload.
+        "discovery_findings": discovery_findings,
         "evidence_hashes": {
             "bundle_sha256": bundle_sha256,
             "chain_head_record_sha256": head_sha256,

@@ -48,6 +48,22 @@
         "required_evidence": { "type": "array", "items": { "type": "string" } }
       }
     },
+    "discovery_findings": {
+      "type": "array",
+      "description": "File-level AI discovery findings from submitted evidence (no new scan is performed during export). Deterministic ordering.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["file_path", "detector", "confidence", "matched_pattern", "hash"],
+        "properties": {
+          "file_path": { "type": "string" },
+          "detector": { "type": "string" },
+          "confidence": { "type": "number" },
+          "matched_pattern": { "type": ["string", "null"] },
+          "hash": { "type": "string" }
+        }
+      }
+    },
     "evidence_hashes": {
       "type": "object",
       "additionalProperties": true,

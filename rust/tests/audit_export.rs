@@ -244,3 +244,110 @@ async fn export_respects_tenant_isolation() {
     );
 }
 
+#[tokio::test]
+async fn export_includes_discovery_findings_with_deterministic_ordering() {
+    let _g = env_lock();
+    std::env::set_var("GOVAI_API_KEYS", "testkey");
+    let tmp = TempDir::new().unwrap();
+    std::env::set_var("GOVAI_LEDGER_DIR", tmp.path().to_string_lossy().to_string());
+
+    let run_id = "run-discovery-findings";
+    let tenant = "tenant-gamma";
+
+    // Intentionally out-of-order findings (export must sort deterministically).
+    append_event(
+        &tmp,
+        tenant,
+        EvidenceEvent {
+            event_id: "d1".to_string(),
+            event_type: "ai_discovery_reported".to_string(),
+            ts_utc: "2026-01-04T00:00:01Z".to_string(),
+            actor: "system".to_string(),
+            system: "govai".to_string(),
+            run_id: run_id.to_string(),
+            environment: None,
+            payload: serde_json::json!({
+              "openai": true,
+              "transformers": false,
+              "model_artifacts": false,
+              "findings": [
+                {
+                  "detected_ai_usage": "openai",
+                  "file_path": "z-last.py",
+                  "detector_type": "code_signature",
+                  "confidence": 0.75,
+                  "evidence": { "reason": "code", "signature": "openai_sdk" }
+                },
+                {
+                  "detected_ai_usage": "openai",
+                  "file_path": "a-first.json",
+                  "detector_type": "dependency_package_json",
+                  "confidence": 0.90,
+                  "evidence": { "reason": "package_json", "package": "openai" }
+                },
+                {
+                  "detected_ai_usage": "transformers",
+                  "file_path": "a-first.json",
+                  "detector_type": "dependency_package_json",
+                  "confidence": 0.80,
+                  "evidence": { "reason": "package_json", "package": "transformers" }
+                }
+              ]
+            }),
+        },
+    );
+
+    let pool = sqlx::PgPool::connect_lazy("postgres://localhost/does_not_exist").unwrap();
+    let app = build_app(pool);
+    let (status, json) = export_json(app, tenant, run_id).await;
+    assert_eq!(status, StatusCode::OK, "unexpected response: {}", json);
+
+    // Existing export fields must remain present (backward compatibility).
+    for k in [
+        "ok",
+        "schema_version",
+        "policy_version",
+        "environment",
+        "exported_at_utc",
+        "tenant",
+        "run",
+        "discovery",
+        "evidence_hashes",
+        "decision",
+        "evidence_requirements",
+        "evidence_events",
+        "timestamps",
+    ] {
+        assert!(json.get(k).is_some(), "missing top-level field: {k}");
+    }
+
+    let arr = json
+        .get("discovery_findings")
+        .and_then(|v| v.as_array())
+        .expect("discovery_findings must be an array");
+    assert_eq!(arr.len(), 3);
+
+    let keys: Vec<(String, String, f64, String)> = arr
+        .iter()
+        .map(|v| {
+            let fp = v.get("file_path").and_then(|x| x.as_str()).unwrap().to_string();
+            let det = v.get("detector").and_then(|x| x.as_str()).unwrap().to_string();
+            let conf = v.get("confidence").and_then(|x| x.as_f64()).unwrap();
+            let h = v.get("hash").and_then(|x| x.as_str()).unwrap().to_string();
+            // Matched pattern is not stored, so it must be null here.
+            assert!(v.get("matched_pattern").map(|m| m.is_null()).unwrap_or(false));
+            (fp, det, conf, h)
+        })
+        .collect();
+
+    // Verify deterministic sort: file_path, detector, confidence, hash.
+    let mut sorted = keys.clone();
+    sorted.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| a.2.partial_cmp(&b.2).unwrap())
+            .then_with(|| a.3.cmp(&b.3))
+    });
+    assert_eq!(keys, sorted, "discovery_findings ordering must be deterministic");
+}
+
