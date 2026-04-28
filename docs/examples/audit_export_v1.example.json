@@ -29,23 +29,6 @@
       "ai_discovery_completed",
       "model_registered",
       "usage_policy_defined"
-    ],
-    "required_requirements": [
-      {
-        "code": "ai_discovery_completed",
-        "source": "lifecycle",
-        "description": "AI discovery scan must be completed before compliance decision."
-      },
-      {
-        "code": "model_registered",
-        "source": "discovery",
-        "description": "Detected OpenAI usage requires model registration."
-      },
-      {
-        "code": "usage_policy_defined",
-        "source": "discovery",
-        "description": "Detected OpenAI usage requires usage policy definition."
-      }
     ]
   },
   "discovery_findings": [
@@ -100,42 +83,7 @@
       "model_registered",
       "usage_policy_defined"
     ],
-    "missing_evidence": [],
-    "required_requirements": [
-      {
-        "code": "ai_discovery_completed",
-        "source": "lifecycle",
-        "description": "AI discovery scan must be completed before compliance decision."
-      },
-      {
-        "code": "model_registered",
-        "source": "discovery",
-        "description": "Detected OpenAI usage requires model registration."
-      },
-      {
-        "code": "usage_policy_defined",
-        "source": "discovery",
-        "description": "Detected OpenAI usage requires usage policy definition."
-      }
-    ],
-    "provided_requirements": [
-      {
-        "code": "ai_discovery_completed",
-        "source": "lifecycle",
-        "description": "AI discovery scan must be completed before compliance decision."
-      },
-      {
-        "code": "model_registered",
-        "source": "discovery",
-        "description": "Detected OpenAI usage requires model registration."
-      },
-      {
-        "code": "usage_policy_defined",
-        "source": "discovery",
-        "description": "Detected OpenAI usage requires usage policy definition."
-      }
-    ],
-    "missing_requirements": []
+    "missing_evidence": []
   },
   "evidence_events": [
     {

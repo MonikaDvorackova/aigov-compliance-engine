@@ -6,16 +6,6 @@
   "additionalProperties": true,
   "required": ["ok", "schema_version", "policy_version", "environment", "exported_at_utc", "tenant", "run", "evidence_hashes", "decision", "evidence_requirements", "evidence_events", "timestamps"],
   "properties": {
-    "Requirement": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": ["code", "source", "description"],
-      "properties": {
-        "code": { "type": "string" },
-        "source": { "type": "string", "enum": ["policy", "discovery", "lifecycle"] },
-        "description": { "type": "string" }
-      }
-    },
     "ok": { "type": "boolean" },
     "schema_version": { "const": "aigov.audit_export.v1" },
     "policy_version": { "type": "string" },
@@ -55,8 +45,7 @@
             "model_artifacts": { "type": "boolean" }
           }
         },
-        "required_evidence": { "type": "array", "items": { "type": "string" } },
-        "required_requirements": { "type": "array", "items": { "$ref": "#/properties/Requirement" } }
+        "required_evidence": { "type": "array", "items": { "type": "string" } }
       }
     },
     "discovery_findings": {
@@ -129,10 +118,7 @@
       "properties": {
         "required_evidence": { "type": "array", "items": { "type": "string" } },
         "provided_evidence": { "type": "array", "items": { "type": "string" } },
-        "missing_evidence": { "type": "array", "items": { "type": "string" } },
-        "required_requirements": { "type": "array", "items": { "$ref": "#/properties/Requirement" } },
-        "provided_requirements": { "type": "array", "items": { "$ref": "#/properties/Requirement" } },
-        "missing_requirements": { "type": "array", "items": { "$ref": "#/properties/Requirement" } }
+        "missing_evidence": { "type": "array", "items": { "type": "string" } }
       }
     },
     "evidence_events": {
