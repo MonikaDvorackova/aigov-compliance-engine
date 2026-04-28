@@ -12,6 +12,7 @@
 
 use crate::db::DbPool;
 use chrono::{Datelike, NaiveDate, Utc};
+use sqlx::Row;
 
 pub const FREE_TIER_EVIDENCE_LIMIT: u64 = 1000;
 
@@ -84,6 +85,100 @@ pub async fn increment_evidence_usage(pool: &DbPool, tenant_id: &str) -> Result<
     .await
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+pub async fn increment_compliance_check_usage(pool: &DbPool, tenant_id: &str) -> Result<(), String> {
+    let period = current_period_start_utc();
+    sqlx::query(
+        r#"
+        INSERT INTO govai_usage_counters (tenant_id, period_start, compliance_checks_count)
+        VALUES ($1, $2, 1)
+        ON CONFLICT (tenant_id, period_start)
+        DO UPDATE SET
+            compliance_checks_count = govai_usage_counters.compliance_checks_count + 1,
+            last_updated_at = now()
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(period)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn increment_export_usage(pool: &DbPool, tenant_id: &str) -> Result<(), String> {
+    let period = current_period_start_utc();
+    sqlx::query(
+        r#"
+        INSERT INTO govai_usage_counters (tenant_id, period_start, exports_count)
+        VALUES ($1, $2, 1)
+        ON CONFLICT (tenant_id, period_start)
+        DO UPDATE SET
+            exports_count = govai_usage_counters.exports_count + 1,
+            last_updated_at = now()
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(period)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn increment_discovery_scan_usage(pool: &DbPool, tenant_id: &str) -> Result<(), String> {
+    let period = current_period_start_utc();
+    sqlx::query(
+        r#"
+        INSERT INTO govai_usage_counters (tenant_id, period_start, discovery_scans_count)
+        VALUES ($1, $2, 1)
+        ON CONFLICT (tenant_id, period_start)
+        DO UPDATE SET
+            discovery_scans_count = govai_usage_counters.discovery_scans_count + 1,
+            last_updated_at = now()
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(period)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn get_usage_counters(
+    pool: &DbPool,
+    tenant_id: &str,
+) -> Result<(i64, i64, i64, i64, NaiveDate), String> {
+    let period = current_period_start_utc();
+    let row = sqlx::query(
+        r#"
+        SELECT
+          evidence_events_count,
+          COALESCE(compliance_checks_count, 0) as compliance_checks_count,
+          COALESCE(exports_count, 0) as exports_count,
+          COALESCE(discovery_scans_count, 0) as discovery_scans_count
+        FROM govai_usage_counters
+        WHERE tenant_id = $1 AND period_start = $2
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(period)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    match row {
+        None => Ok((0, 0, 0, 0, period)),
+        Some(r) => {
+            let ev: i64 = r.try_get("evidence_events_count").unwrap_or(0);
+            let cc: i64 = r.try_get("compliance_checks_count").unwrap_or(0);
+            let ex: i64 = r.try_get("exports_count").unwrap_or(0);
+            let ds: i64 = r.try_get("discovery_scans_count").unwrap_or(0);
+            Ok((ev, cc, ex, ds, period))
+        }
+    }
 }
 
 pub async fn get_evidence_usage(

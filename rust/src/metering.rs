@@ -163,6 +163,78 @@ pub async fn load_monthly(
     }
 }
 
+/// Load non-billable operational counters (missing row => zeros).
+pub async fn load_monthly_ops(
+    pool: &DbPool,
+    team_id: Uuid,
+    year_month: i32,
+) -> Result<(i64, i64, i64), sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        select
+          coalesce(compliance_checks, 0) as compliance_checks,
+          coalesce(exports, 0) as exports,
+          coalesce(discovery_scans, 0) as discovery_scans
+        from public.govai_team_usage_monthly
+        where team_id = $1 and year_month = $2
+        "#,
+    )
+    .bind(team_id)
+    .bind(year_month)
+    .fetch_optional(pool)
+    .await?;
+    match row {
+        None => Ok((0, 0, 0)),
+        Some(r) => Ok((
+            r.get("compliance_checks"),
+            r.get("exports"),
+            r.get("discovery_scans"),
+        )),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TeamOpCounter {
+    ComplianceCheck,
+    Export,
+    DiscoveryScan,
+}
+
+/// Increment a single operational counter for the month (idempotency not attempted).
+pub async fn increment_team_op_counter(
+    pool: &DbPool,
+    team_id: Uuid,
+    year_month: i32,
+    counter: TeamOpCounter,
+) -> Result<(), String> {
+    let (cc, ex, ds) = match counter {
+        TeamOpCounter::ComplianceCheck => (1i64, 0i64, 0i64),
+        TeamOpCounter::Export => (0i64, 1i64, 0i64),
+        TeamOpCounter::DiscoveryScan => (0i64, 0i64, 1i64),
+    };
+    sqlx::query(
+        r#"
+        insert into public.govai_team_usage_monthly
+          (team_id, year_month, compliance_checks, exports, discovery_scans, updated_at)
+        values ($1, $2, $3, $4, $5, now())
+        on conflict (team_id, year_month) do update set
+          compliance_checks = public.govai_team_usage_monthly.compliance_checks + excluded.compliance_checks,
+          exports = public.govai_team_usage_monthly.exports + excluded.exports,
+          discovery_scans = public.govai_team_usage_monthly.discovery_scans + excluded.discovery_scans,
+          updated_at = now()
+        "#,
+    )
+    .bind(team_id)
+    .bind(year_month)
+    .bind(cc)
+    .bind(ex)
+    .bind(ds)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Plan-limit guard before append when `GOVAI_METERING=on`. Reads [`load_monthly`] + ledger-derived
 /// `next_count` / `is_new_run`; counters are persisted in [`record_successful_ingest`] after append.
 pub fn precheck_ingest(
