@@ -69,13 +69,13 @@ runs:
 
         if printf '%s\n' "${out}" | grep -Eq '^BLOCKED$'; then
           echo "::error::GovAI verdict: BLOCKED"
-          echo "::error::Required evidence is missing. See missing_evidence above."
+          echo "::error::Required evidence is missing — see missing_evidence and blocked_reasons in the govai check output above."
           exit 1
         fi
 
         if printf '%s\n' "${out}" | grep -Eq '^INVALID$'; then
           echo "::error::GovAI verdict: INVALID"
-          echo "::error::Compliance requirements were not satisfied."
+          echo "::error::Compliance requirements were not satisfied — details are in the govai check output above."
           exit 1
         fi
 

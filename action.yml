@@ -51,14 +51,41 @@ runs:
           exit 1
         fi
 
-        out="$(govai check --run-id "${{ inputs.run_id }}" 2>&1)" || {
-          echo "::error::GovAI check failed (cannot fetch verdict). Verify base_url, api_key, and run_id."
-          echo "${out}"
-          exit 1
-        }
+        # govai check exits non-zero for intentional non-VALID verdicts (BLOCKED/INVALID).
+        # Capture output + exit code so we can report the verdict accurately.
+        set +e
+        out="$(govai check --run-id "${{ inputs.run_id }}" 2>&1)"
+        code="$?"
+        set -e
 
-        verdict="$(printf '%s' "${out}" | tr -d '\r\n' | xargs)"
-        if [ "${verdict}" != "VALID" ]; then
-          echo "::error::GovAI compliance gate failed: verdict=${verdict}"
+        # Always print the govai check output (verdict or error details).
+        printf '%s\n' "${out}"
+
+        if [ "${code}" -eq 0 ] && printf '%s\n' "${out}" | grep -Eq '^VALID$'; then
+          echo "GovAI verdict: VALID"
+          echo "GovAI compliance gate passed."
+          exit 0
+        fi
+
+        if printf '%s\n' "${out}" | grep -Eq '^BLOCKED$'; then
+          echo "::error::GovAI verdict: BLOCKED"
+          echo "::error::Required evidence is missing — see missing_evidence and blocked_reasons in the govai check output above."
           exit 1
         fi
+
+        if printf '%s\n' "${out}" | grep -Eq '^INVALID$'; then
+          echo "::error::GovAI verdict: INVALID"
+          echo "::error::Compliance requirements were not satisfied — details are in the govai check output above."
+          exit 1
+        fi
+
+        # Otherwise, treat as failure to retrieve a verdict (backend/network/misconfiguration).
+        if printf '%s' "${out}" | grep -q "RUN_NOT_FOUND"; then
+          echo "::error::GovAI check could not retrieve a compliance verdict."
+          echo "::error::Likely causes: wrong run_id, missing evidence run initialization, wrong base_url, invalid API key."
+          exit 1
+        fi
+
+        echo "::error::GovAI check could not retrieve a compliance verdict."
+        echo "::error::Likely causes: wrong run_id, missing evidence run initialization, wrong base_url, invalid API key."
+        exit 1

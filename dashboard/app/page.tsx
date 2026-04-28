@@ -17,9 +17,9 @@ const PRIVATE_PILOT_MAILTO =
   "mailto:hello@govbase.dev?subject=" + encodeURIComponent("GovAI private pilot request");
 
 const DOCS_CUSTOMER_QUICKSTART =
-  "https://github.com/MonikaDvorackova/aigov-compliance-engine/blob/main/docs/customer-quickstart.md";
+  "https://github.com/Kovali/GovAI/blob/main/docs/customer-quickstart.md";
 const DOCS_GITHUB_ACTION =
-  "https://github.com/MonikaDvorackova/aigov-compliance-engine/blob/main/docs/github-action.md";
+  "https://github.com/Kovali/GovAI/blob/main/docs/github-action.md";
 
 const PROOF_ITEMS = [
   { label: "Compliance Summary", detail: "Deterministic verdict from evidence" },
@@ -305,7 +305,7 @@ export default function Page() {
             <LandingCopyBlock
               label="CI usage (GitHub Action)"
               code={[
-                "- uses: MonikaDvorackova/aigov-compliance-engine/.github/actions/govai-check@v1",
+                "- uses: Kovali/GovAI/.github/actions/govai-check@v1",
                 "  with:",
                 "    run_id: ${{ vars.GOVAI_RUN_ID }}",
                 "    base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}",
