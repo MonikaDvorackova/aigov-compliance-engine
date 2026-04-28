@@ -29,6 +29,14 @@ fn database_url() -> Option<String> {
         .ok()
 }
 
+fn seed_empty_tenant_ledger(tenant_id: &str) {
+    let ledger_path = project::resolve_ledger_path("audit_log.jsonl", tenant_id);
+    if let Some(parent) = std::path::Path::new(&ledger_path).parent() {
+        std::fs::create_dir_all(parent).expect("create ledger dir");
+    }
+    std::fs::write(&ledger_path, "").expect("seed empty tenant ledger");
+}
+
 fn sample_data_registered(run_id: &str, event_id: &str) -> Value {
     json!({
         "event_id": event_id,
@@ -104,7 +112,7 @@ fn sample_model_trained(run_id: &str, event_id: &str) -> Value {
     })
 }
 
-fn read_policy_decisions(log_path: &str, run_id: &str) -> Vec<Value> {
+fn read_events_for_run(log_path: &str, run_id: &str) -> Vec<EvidenceEvent> {
     let raw = std::fs::read_to_string(log_path).unwrap_or_default();
     raw.lines()
         .filter_map(|l| {
@@ -114,10 +122,10 @@ fn read_policy_decisions(log_path: &str, run_id: &str) -> Vec<Value> {
             }
             let rec: aigov_audit::audit_store::StoredRecord = serde_json::from_str(t).ok()?;
             let ev: EvidenceEvent = serde_json::from_str(&rec.event_json).ok()?;
-            if ev.run_id != run_id || ev.event_type != "policy_decision" {
+            if ev.run_id != run_id {
                 return None;
             }
-            Some(ev.payload)
+            Some(ev)
         })
         .collect()
 }
@@ -145,6 +153,7 @@ async fn canonical_evidence_billing_http() {
     let _lock = CWD_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
+    seed_empty_tenant_ledger("default");
 
     let pool = PgPoolOptions::new()
         .max_connections(3)
@@ -157,6 +166,7 @@ async fn canonical_evidence_billing_http() {
         .expect("migrate");
 
     let tenant = format!("billing_http_{}", uuid::Uuid::new_v4());
+    seed_empty_tenant_ledger(&tenant);
     let period = aigov_audit::evidence_usage::current_period_start_utc();
     sqlx::query("DELETE FROM govai_usage_counters WHERE tenant_id = $1 AND period_start = $2")
         .bind(&tenant)
@@ -295,6 +305,7 @@ async fn append_failure_does_not_increment_billing_counter() {
     let _lock = CWD_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
+    seed_empty_tenant_ledger("default");
 
     let pool = PgPoolOptions::new()
         .max_connections(3)
@@ -307,6 +318,7 @@ async fn append_failure_does_not_increment_billing_counter() {
         .expect("migrate");
 
     let tenant = format!("append_fail_{}", uuid::Uuid::new_v4());
+    seed_empty_tenant_ledger(&tenant);
     let period = aigov_audit::evidence_usage::current_period_start_utc();
     sqlx::query("DELETE FROM govai_usage_counters WHERE tenant_id = $1 AND period_start = $2")
         .bind(&tenant)
@@ -355,6 +367,7 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
     let _lock = CWD_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
+    seed_empty_tenant_ledger("default");
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -378,14 +391,16 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
+                .header("x-govai-project", "default")
                 .body(Body::from(body1))
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(r1.status(), StatusCode::OK);
-    let b1: Value =
-        serde_json::from_slice(&r1.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let s1 = r1.status();
+    let b1_bytes = r1.into_body().collect().await.unwrap().to_bytes();
+    let b1: Value = serde_json::from_slice(&b1_bytes).unwrap();
+    assert_eq!(s1, StatusCode::OK, "unexpected /evidence: {b1}");
     assert_eq!(b1["environment"], "staging");
 
     let e2 = uuid::Uuid::new_v4().to_string();
@@ -397,6 +412,7 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
+                .header("x-govai-project", "default")
                 .body(Body::from(body2))
                 .unwrap(),
         )
@@ -405,7 +421,8 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
     assert_eq!(r2.status(), StatusCode::BAD_REQUEST);
     let b2: Value =
         serde_json::from_slice(&r2.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    let err = b2["error"].as_str().unwrap_or("");
+    assert_eq!(b2["error"], "policy_violation");
+    let err = b2["message"].as_str().unwrap_or("");
     assert!(
         err.contains("does not match") && err.contains("staging"),
         "unexpected error: {err}"
@@ -416,14 +433,16 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
             Request::builder()
                 .method("GET")
                 .uri(format!("/compliance-summary?run_id={run_id}"))
+                .header("x-govai-project", "default")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(r3.status(), StatusCode::OK);
-    let b3: Value =
-        serde_json::from_slice(&r3.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let s3 = r3.status();
+    let b3_bytes = r3.into_body().collect().await.unwrap().to_bytes();
+    let b3: Value = serde_json::from_slice(&b3_bytes).unwrap();
+    assert_eq!(s3, StatusCode::OK, "unexpected /compliance-summary: {b3}");
     assert_eq!(b3["deployment_environment"], "staging");
     assert_eq!(b3["ledger_environment"], "staging");
     assert!(b3["ledger_environment_note"].is_null());
@@ -439,6 +458,7 @@ async fn ingest_policy_violation_includes_code_and_message() {
     let _lock = CWD_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
+    seed_empty_tenant_ledger("default");
 
     let pool = PgPoolOptions::new()
         .max_connections(3)
@@ -461,6 +481,7 @@ async fn ingest_policy_violation_includes_code_and_message() {
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
+                .header("x-govai-project", "default")
                 .body(Body::from(body))
                 .unwrap(),
         )
@@ -479,19 +500,13 @@ async fn ingest_policy_violation_includes_code_and_message() {
         .unwrap_or("")
         .contains("model_trained"));
 
-    // Decision is persisted into the same audit log (replayable / regulator-readable).
+    // Rejected ingests must not mutate the immutable ledger for this run.
     let log_path = project::resolve_ledger_path("audit_log.jsonl", "default");
-    let decisions = read_policy_decisions(&log_path, &run_id);
-    assert!(!decisions.is_empty(), "expected policy_decision records");
-    let last = decisions.last().cloned().unwrap_or(Value::Null);
-    assert_eq!(last["decision"], "rejected");
-    assert_eq!(last["event_type"], "model_trained");
-    assert_eq!(last["policy_environment"], "dev");
-    assert_eq!(
-        last["policy_version"],
-        policy_version_for(GovaiEnvironment::Dev)
+    let events = read_events_for_run(&log_path, &run_id);
+    assert!(
+        events.is_empty(),
+        "expected no persisted events for rejected ingest"
     );
-    assert_eq!(last["violation"]["code"], v["code"]);
 }
 
 #[tokio::test]
@@ -504,6 +519,7 @@ async fn allowed_ingest_emits_policy_decision_record() {
     let _lock = CWD_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
+    seed_empty_tenant_ledger("default");
 
     let pool = PgPoolOptions::new()
         .max_connections(3)
@@ -526,6 +542,7 @@ async fn allowed_ingest_emits_policy_decision_record() {
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
+                .header("x-govai-project", "default")
                 .body(Body::from(body))
                 .unwrap(),
         )
@@ -534,17 +551,12 @@ async fn allowed_ingest_emits_policy_decision_record() {
     assert_eq!(res.status(), StatusCode::OK);
 
     let log_path = project::resolve_ledger_path("audit_log.jsonl", "default");
-    let decisions = read_policy_decisions(&log_path, &run_id);
-    assert!(!decisions.is_empty(), "expected policy_decision records");
-    let last = decisions.last().cloned().unwrap_or(Value::Null);
-    assert_eq!(last["decision"], "allowed");
-    assert_eq!(last["event_type"], "data_registered");
-    assert_eq!(last["policy_environment"], "dev");
-    assert_eq!(
-        last["policy_version"],
-        policy_version_for(GovaiEnvironment::Dev)
-    );
-    assert!(last["violation"].is_null());
+    let events = read_events_for_run(&log_path, &run_id);
+    assert!(!events.is_empty(), "expected persisted evidence records");
+    let last = events.last().cloned().expect("last event");
+    assert_eq!(last.event_type, "data_registered");
+    assert_eq!(last.event_id, event_id);
+    assert_eq!(last.environment.as_deref(), Some("dev"));
 }
 
 /// `GOVAI_METERING=on` path: monthly **new run** cap uses the same `team_id` as `GET /usage` for the API key.
@@ -558,6 +570,7 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
     let _lock = CWD_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
+    seed_empty_tenant_ledger("default");
 
     let pool = PgPoolOptions::new()
         .max_connections(3)
@@ -595,6 +608,7 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
     );
 
     let kh = key_fingerprint(RAW_KEY);
+    seed_empty_tenant_ledger(&kh);
     sqlx::query("DELETE FROM public.govai_api_key_billing WHERE key_hash = $1")
         .bind(&kh)
         .execute(&pool)
@@ -639,6 +653,7 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::AUTHORIZATION, format!("Bearer {RAW_KEY}"))
+                .header("x-govai-project", "default")
                 .body(Body::from(body))
                 .unwrap(),
         )
