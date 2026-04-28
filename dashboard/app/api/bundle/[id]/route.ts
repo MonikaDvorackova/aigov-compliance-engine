@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireRunTeamAccess } from "@/lib/console/runAccess.server";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -28,7 +29,7 @@ function streamFile(filePath: string, downloadName: string) {
 
   const stream = fs.createReadStream(filePath);
 
-  return new NextResponse(stream as any, {
+  return new NextResponse(stream as unknown as BodyInit, {
     status: 200,
     headers: {
       "Content-Type": "application/zip",
@@ -53,26 +54,10 @@ export async function GET(
     );
   }
 
+  const authz = await requireRunTeamAccess(runId);
+  if (!authz.ok) return authz.response;
+
   const supabase = await createSupabaseServerClient();
-
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-
-  if (userErr) {
-    return NextResponse.json(
-      { ok: false, error: "auth_error", message: userErr.message },
-      { status: 401 }
-    );
-  }
-
-  if (!user) {
-    return NextResponse.json(
-      { ok: false, error: "unauthorized", message: "Not signed in." },
-      { status: 401 }
-    );
-  }
 
   const name = filenameFor(runId);
 
