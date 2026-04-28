@@ -1,3 +1,11 @@
+## Customer quickstart (legacy)
+
+This document is kept for backwards compatibility.
+
+For the canonical hosted onboarding flow, start here:
+
+- [customer-onboarding-10min.md](customer-onboarding-10min.md)
+
 ## What is GovAI
 
 GovAI is a CI gate that returns a compliance verdict for a given **GovAI evidence run id** (`GOVAI_RUN_ID`). Your pipeline submits audit evidence events with that id, then CI calls `govai check` with the **same** id and blocks merges or deploys unless the verdict is `VALID`.

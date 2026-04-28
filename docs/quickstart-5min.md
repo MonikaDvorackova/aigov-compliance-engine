@@ -1,4 +1,8 @@
-# GovAI quickstart (≤5 minutes)
+# Local developer quickstart (≤5 minutes)
+
+If you are integrating with a hosted GovAI backend, start here instead (canonical):
+
+- [customer-onboarding-10min.md](customer-onboarding-10min.md)
 
 Goal: create an API key, send your first evidence event, run a compliance check, and interpret the result.
 
@@ -47,10 +51,10 @@ curl -sS http://127.0.0.1:8088/status
 
 ## 3) Send your first evidence event (HTTP)
 
-Pick a `run_id`, then append one `data_registered` event.
+Pick a `run_id` (`GOVAI_RUN_ID`), then append one `data_registered` event.
 
 ```bash
-export RUN_ID="$(python3 - <<'PY'
+export GOVAI_RUN_ID="$(python3 - <<'PY'
 import uuid
 print(uuid.uuid4())
 PY
@@ -74,7 +78,7 @@ print(json.dumps({
   "ts_utc": datetime.now(timezone.utc).isoformat().replace("+00:00","Z"),
   "actor": "quickstart",
   "system": "quickstart",
-  "run_id": os.environ["RUN_ID"],
+  "run_id": os.environ["GOVAI_RUN_ID"],
   "payload": {
     "ai_system_id": "expense-ai",
     "dataset_id": "expense_dataset_v1",
@@ -101,7 +105,7 @@ Expected: HTTP 200 and a body with at least `{"ok":true, "record_hash":"...", "p
 ### Read the authoritative decision (HTTP)
 
 ```bash
-curl -sS "http://127.0.0.1:8088/compliance-summary?run_id=$RUN_ID" \
+curl -sS "http://127.0.0.1:8088/compliance-summary?run_id=$GOVAI_RUN_ID" \
   -H "authorization: Bearer $GOVAI_API_KEY"
 ```
 
@@ -113,7 +117,7 @@ At this point (only 1 event), the expected verdict is **`BLOCKED`**.
 You can also confirm the CLI gating behavior on this same run:
 
 ```bash
-govai check --audit-base-url "http://127.0.0.1:8088" --api-key "$GOVAI_API_KEY" --run-id "$RUN_ID"
+govai check --audit-base-url "http://127.0.0.1:8088" --api-key "$GOVAI_API_KEY" --run-id "$GOVAI_RUN_ID"
 echo $?
 ```
 
@@ -139,11 +143,11 @@ Expected stdout:
 VALID
 ```
 
-Note: `govai run demo` generates its **own** `run_id` internally. It is a separate path from the API-only steps above (which use your `$RUN_ID`).
+Note: `govai run demo` generates its **own** `run_id` internally. It is a separate path from the API-only steps above (which use your `$GOVAI_RUN_ID`).
 
 ## Optional: minimal VALID evidence sequence (API-only)
 
-If you want to reach `VALID` **using only the HTTP API**, append the remaining required evidence for the same `$RUN_ID` (in this order):
+If you want to reach `VALID` **using only the HTTP API**, append the remaining required evidence for the same `$GOVAI_RUN_ID` (in this order):
 
 1. `model_trained`
 2. `evaluation_reported` (with `"passed": true`)
@@ -153,13 +157,13 @@ If you want to reach `VALID` **using only the HTTP API**, append the remaining r
 6. `human_approved` (with `"scope":"model_promoted"` and `"decision":"approve"`)
 7. `model_promoted`
 
-Copy/paste (uses deterministic IDs derived from `$RUN_ID`):
+Copy/paste (uses deterministic IDs derived from `$GOVAI_RUN_ID`):
 
 ```bash
-export MODEL_VERSION_ID="mv_$RUN_ID"
-export ASSESSMENT_ID="asmt_$RUN_ID"
-export RISK_ID="risk_$RUN_ID"
-export ARTIFACT_PATH="python/artifacts/model_${RUN_ID}.joblib"
+export MODEL_VERSION_ID="mv_$GOVAI_RUN_ID"
+export ASSESSMENT_ID="asmt_$GOVAI_RUN_ID"
+export RISK_ID="risk_$GOVAI_RUN_ID"
+export ARTIFACT_PATH="python/artifacts/model_${GOVAI_RUN_ID}.joblib"
 
 post_ev () {
   local event_type="$1"
@@ -170,7 +174,7 @@ post_ev () {
 import json, os, sys
 from datetime import datetime, timezone
 event_type = sys.argv[1]
-run_id = os.environ["RUN_ID"]
+run_id = os.environ["GOVAI_RUN_ID"]
 now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 def base(payload):
@@ -287,10 +291,10 @@ post_ev model_promoted
 Now the expected verdict is `VALID`:
 
 ```bash
-curl -sS "http://127.0.0.1:8088/compliance-summary?run_id=$RUN_ID" \
+curl -sS "http://127.0.0.1:8088/compliance-summary?run_id=$GOVAI_RUN_ID" \
   -H "authorization: Bearer $GOVAI_API_KEY"
 
-govai check --audit-base-url "http://127.0.0.1:8088" --api-key "$GOVAI_API_KEY" --run-id "$RUN_ID"
+govai check --audit-base-url "http://127.0.0.1:8088" --api-key "$GOVAI_API_KEY" --run-id "$GOVAI_RUN_ID"
 echo $?
 ```
 
@@ -310,7 +314,7 @@ Expected:
 Minimal, machine-friendly check (exit code 0 only if `VALID`):
 
 ```bash
-govai check --audit-base-url "http://127.0.0.1:8088" --api-key "$GOVAI_API_KEY" --run-id "$RUN_ID"
+govai check --audit-base-url "http://127.0.0.1:8088" --api-key "$GOVAI_API_KEY" --run-id "$GOVAI_RUN_ID"
 ```
 
 ## 6) Export the run (machine-readable JSON)
@@ -326,13 +330,13 @@ CLI:
 govai export-run \
   --audit-base-url "http://127.0.0.1:8088" \
   --api-key "$GOVAI_API_KEY" \
-  --run-id "$RUN_ID"
+  --run-id "$GOVAI_RUN_ID"
 ```
 
 HTTP:
 
 ```bash
-curl -sS "http://127.0.0.1:8088/api/export/$RUN_ID" \
+curl -sS "http://127.0.0.1:8088/api/export/$GOVAI_RUN_ID" \
   -H "authorization: Bearer $GOVAI_API_KEY"
 ```
 
@@ -342,7 +346,7 @@ curl -sS "http://127.0.0.1:8088/api/export/$RUN_ID" \
 govai compliance-summary \
   --audit-base-url "http://127.0.0.1:8088" \
   --api-key "$GOVAI_API_KEY" \
-  --run-id "$RUN_ID" \
+  --run-id "$GOVAI_RUN_ID" \
   --compact-json
 ```
 
