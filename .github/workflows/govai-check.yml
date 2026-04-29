@@ -103,33 +103,23 @@ jobs:
             exit 1
           fi
 
-          ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-          event_id="evt_ci_${GOVAI_RUN_ID}_${GITHUB_RUN_ID:-unknown}_${GITHUB_RUN_ATTEMPT:-0}"
-
-          body="$(cat <<EOF
-          {
-            "event_id": "${event_id}",
-            "event_type": "ai_discovery_reported",
-            "ts_utc": "${ts}",
-            "actor": "ci",
-            "system": "github_actions",
-            "run_id": "${GOVAI_RUN_ID}",
-            "payload": {
-              "openai": false,
-              "transformers": false,
-              "model_artifacts": false
-            }
-          }
-          EOF
+          echo "Posting minimal evidence to initialize run_id=${GOVAI_RUN_ID}"
+          response="$(mktemp)"
+          status="$(
+            curl -sS -o "$response" -w "%{http_code}" \
+              -X POST "${GOVAI_AUDIT_BASE_URL}/evidence" \
+              -H "Authorization: Bearer ${GOVAI_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "{\"event_id\":\"evt_ci_${GOVAI_RUN_ID}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}\",\"event_type\":\"ai_discovery_reported\",\"ts_utc\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"actor\":\"ci\",\"system\":\"github_actions\",\"run_id\":\"${GOVAI_RUN_ID}\",\"payload\":{\"openai\":false,\"transformers\":false,\"model_artifacts\":false}}"
           )"
 
-          echo "Posting minimal evidence to initialize run_id=${GOVAI_RUN_ID}"
-          # Use the same backend credentials/base URL that govai check will use.
-          curl --fail-with-body -sS \
-            -X POST "${GOVAI_AUDIT_BASE_URL%/}/evidence" \
-            -H "Authorization: Bearer ${GOVAI_API_KEY}" \
-            -H "Content-Type: application/json" \
-            --data "${body}" >/dev/null
+          echo "Evidence POST response:"
+          cat "$response"
+
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "::error::Evidence POST failed with HTTP ${status}"
+            exit 1
+          fi
 
       - name: GovAI check (must be VALID)
         env:
