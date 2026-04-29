@@ -72,6 +72,14 @@ def _api_key(ns: argparse.Namespace) -> str | None:
     )
 
 
+def _resolve_project(ns: argparse.Namespace) -> str | None:
+    flag = (getattr(ns, "project", None) or "").strip()
+    if flag:
+        return flag
+    env = (os.environ.get("GOVAI_PROJECT") or os.environ.get("X_GOVAI_PROJECT") or "").strip()
+    return env if env else None
+
+
 def _resolve_run_id(ns: argparse.Namespace) -> str | None:
     rid = (getattr(ns, "run_id", None) or "").strip()
     if rid:
@@ -273,7 +281,7 @@ def run_demo_deterministic(*, timeout_sec: float) -> int:
     risk_id = risk_id_for_run(run_id)
     human_event_id = approved_human_event_id_for_run(run_id)
 
-    client = GovAIClient(base_url.rstrip("/"), api_key=api_key)
+    client = GovAIClient(base_url.rstrip("/"), api_key=api_key, default_project=os.environ.get("GOVAI_PROJECT"))
 
     # (2) Submit incomplete evidence.
     incomplete_seq: list[dict[str, Any]] = [
@@ -697,7 +705,7 @@ def run_demo(audit_url: str, api_key: str | None) -> int:
         },
     ]
 
-    client = GovAIClient(audit_url, api_key=api_key)
+    client = GovAIClient(audit_url, api_key=api_key, default_project=os.environ.get("GOVAI_PROJECT"))
     try:
         for ev in seq:
             submit_event(client, ev)
@@ -746,6 +754,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--api-key",
         default=None,
         help="Bearer token for the audit API (or GOVAI_API_KEY / config).",
+    )
+    p.add_argument(
+        "--project",
+        default=None,
+        help="Optional tenant/project context for requests via X-GovAI-Project header (or GOVAI_PROJECT / X_GOVAI_PROJECT).",
     )
     p.add_argument(
         "--timeout",
@@ -967,6 +980,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     audit_url = _audit_url(args)
     api_key = _api_key(args)
+    project = _resolve_project(args)
 
     if args.cmd == "verify":
         run_id = _resolve_run_id(args)
@@ -1022,7 +1036,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
             return cli_exit.EX_INVALID
         try:
-            client = GovAIClient(audit_url, api_key=api_key)
+            client = GovAIClient(audit_url, api_key=api_key, default_project=project)
             out = client.request_json(
                 "GET",
                 "/compliance-summary",
@@ -1043,7 +1057,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("run id required", file=sys.stderr)
             return cli_exit.EX_INVALID
         try:
-            client = GovAIClient(audit_url, api_key=api_key)
+            client = GovAIClient(audit_url, api_key=api_key, default_project=project)
             summary = get_compliance_summary(client, run_id, timeout=args.timeout)
         except Exception as e:
             print(str(e), file=sys.stderr)
@@ -1103,7 +1117,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
 
         try:
-            client = GovAIClient(audit_url, api_key=api_key)
+            client = GovAIClient(audit_url, api_key=api_key, default_project=project)
             out = submit_event(client, ev)
         except Exception as e:
             print(str(e), file=sys.stderr)
@@ -1207,7 +1221,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
 
         try:
-            client = GovAIClient(audit_url, api_key=api_key)
+            client = GovAIClient(audit_url, api_key=api_key, default_project=project)
             out = submit_event(client, ev)
         except Exception as e:
             print(str(e), file=sys.stderr)
@@ -1288,7 +1302,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
 
         try:
-            client = GovAIClient(audit_url, api_key=api_key)
+            client = GovAIClient(audit_url, api_key=api_key, default_project=project)
             out = submit_event(client, ev)
         except Exception as e:
             print(str(e), file=sys.stderr)
@@ -1304,7 +1318,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cli_exit.EX_INVALID
 
         try:
-            client = GovAIClient(audit_url, api_key=api_key)
+            client = GovAIClient(audit_url, api_key=api_key, default_project=project)
             summary = get_compliance_summary(client, run_id, timeout=args.timeout)
         except Exception as e:
             print(str(e), file=sys.stderr)
@@ -1409,7 +1423,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
             return cli_exit.EX_INVALID
         try:
-            client = GovAIClient(audit_url, api_key=api_key)
+            client = GovAIClient(audit_url, api_key=api_key, default_project=project)
             out = export_run(client, run_id, project=getattr(args, "project", None))
         except Exception as e:
             print(json.dumps({"error": str(e)}, ensure_ascii=False), file=sys.stderr)
@@ -1419,7 +1433,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.cmd == "usage":
         try:
-            client = GovAIClient(audit_url, api_key=api_key)
+            client = GovAIClient(audit_url, api_key=api_key, default_project=project)
             out = get_usage(client, project=getattr(args, "project", None))
         except Exception as e:
             print(json.dumps({"error": str(e)}, ensure_ascii=False), file=sys.stderr)
