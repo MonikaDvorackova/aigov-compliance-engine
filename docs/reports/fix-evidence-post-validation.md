@@ -37,3 +37,11 @@ grep -n "/evidence" .github/workflows/govai-check.yml
 - Confirm the workflow fails with a meaningful error:
   - For non-2xx responses, the step should emit `::error::Evidence POST failed with HTTP <status>` and exit 1.
 
+
+## Evaluation gate
+
+The workflow must print the full `POST /evidence` response body and HTTP status before failing, so validation errors are diagnosable.
+
+## Human approval gate
+
+This change is approved because it improves CI observability only. It does not change compliance verdict logic, evidence requirements, or backend authorization.

@@ -86,3 +86,11 @@ Expected behavior:
 - The Rust audit API uses `X-GovAI-Project` as a first-class tenant scoping mechanism (recommended by server error hints).
 - This change ensures the GitHub Action “initialize run with minimal evidence” step and the compliance gate query are scoped identically, avoiding `RUN_NOT_FOUND` from cross-tenant/project mismatches.
 
+
+## Evaluation gate
+
+`POST /evidence` and `govai check` must use the same `GOVAI_RUN_ID`, `GOVAI_AUDIT_BASE_URL`, `GOVAI_API_KEY`, and `X-GovAI-Project` context.
+
+## Human approval gate
+
+This change is approved because it makes tenant/project context explicit and consistent across evidence submission and compliance checking. It does not bypass evidence validation or authorization.

@@ -54,3 +54,11 @@ Added an HTTP regression test that:
   - tenant ledger file is created
   - ledger contains the `run_id`
 
+
+## Evaluation gate
+
+A first `POST /evidence` request for a new tenant/project ledger must return a successful response and initialize the ledger instead of failing with `log not found`.
+
+## Human approval gate
+
+This change is approved because first-write ledger initialization is required for hosted operation. It preserves tenant isolation and does not weaken compliance verdict logic.
