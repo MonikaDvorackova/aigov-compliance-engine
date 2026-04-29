@@ -2,6 +2,47 @@
 
 GovAI is a CI compliance gate for AI systems with audit evidence export.
 
+[![Join Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/sRBSafRtE)
+
+## Quickstart (5 minutes)
+
+1. Clone the repo
+
+```bash
+git clone https://github.com/MonikaDvorackova/aigov-compliance-engine.git
+cd aigov-compliance-engine
+```
+
+2. Run GovAI (Docker)
+
+```bash
+docker compose up -d --build
+```
+
+3. Check health
+
+```bash
+curl http://127.0.0.1:8088/health
+```
+
+Expected output:
+HTTP 200
+`{"ok":true}`
+
+4. What you just did
+- started the audit service
+- exposed the API on port `8088`
+- ready to receive evidence and run checks
+
+## Coming from Discord?
+
+Join the community:
+https://discord.gg/sRBSafRtE
+
+If you joined from Discord:
+- ask questions in `#govai-help`
+- share your use case in `#use-cases`
+
 ## Product Scope
 
 It:
