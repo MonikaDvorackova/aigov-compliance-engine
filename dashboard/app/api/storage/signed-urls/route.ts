@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireRunTeamAccess } from "@/lib/console/runAccess.server";
 
 export const dynamic = "force-dynamic";
 
@@ -31,26 +32,10 @@ export async function GET(req: Request) {
     );
   }
 
+  const authz = await requireRunTeamAccess(runId);
+  if (!authz.ok) return authz.response;
+
   const supabase = await createSupabaseServerClient();
-
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-
-  if (userErr) {
-    return NextResponse.json<SignedUrlsResponse>(
-      { ok: false, error: "auth_error", message: userErr.message },
-      { status: 401 }
-    );
-  }
-
-  if (!user) {
-    return NextResponse.json<SignedUrlsResponse>(
-      { ok: false, error: "unauthorized", message: "Not signed in." },
-      { status: 401 }
-    );
-  }
 
   // 10 minutes
   const expiresIn = 600;

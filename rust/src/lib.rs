@@ -51,10 +51,21 @@ pub async fn run() -> Result<(), String> {
         Ok(p) => p,
         Err(e) => {
             eprintln!("DB init failed: {}", e);
-            eprintln!("Set DATABASE_URL env var to a Postgres connection string");
+            eprintln!("Set GOVAI_DATABASE_URL (preferred) or DATABASE_URL to a Postgres connection string");
             return Err(e);
         }
     };
+
+    let auto_migrate = std::env::var("GOVAI_AUTO_MIGRATE")
+        .ok()
+        .map(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes"))
+        .unwrap_or(false);
+    if auto_migrate {
+        if let Err(e) = sqlx::migrate!("./migrations").run(&pool).await {
+            eprintln!("DB migration failed: {}", e);
+            return Err(format!("DB migration failed: {e}"));
+        }
+    }
 
     let metering = crate::metering::MeteringConfig::from_env();
     if metering.enabled {

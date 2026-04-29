@@ -24,3 +24,6 @@ hex = "0.4"
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
+base64 = "0.22"
+rand = "0.8"
+rsa = "0.9"

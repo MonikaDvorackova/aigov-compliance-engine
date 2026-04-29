@@ -57,6 +57,26 @@ fn sample_data_registered(run_id: &str, event_id: &str) -> Value {
     })
 }
 
+fn sample_ai_discovery_reported(run_id: &str, event_id: &str) -> Value {
+    json!({
+        "event_id": event_id,
+        "event_type": "ai_discovery_reported",
+        "ts_utc": "2026-04-21T12:00:00Z",
+        "actor": "test",
+        "system": "usage-ops-test",
+        "run_id": run_id,
+        "payload": {
+            "schema_version": "aigov.ai_discovery_reported.v2",
+            "openai": false,
+            "transformers": false,
+            "model_artifacts": false,
+            "scanned_path": "/tmp/repo",
+            "findings": [],
+            "findings_count": 0
+        }
+    })
+}
+
 async fn test_router(pool: sqlx::PgPool) -> Router {
     let api_usage = ApiUsageState::from_env(&pool).expect("api usage");
     let metering = MeteringConfig {
@@ -129,6 +149,8 @@ async fn usage_increments_on_evidence_and_check_and_is_tenant_scoped() {
     assert_eq!(before_a["compliance_checks_count"].as_i64().unwrap_or(-1), 0);
     assert_eq!(before_b["evidence_events_count"].as_i64().unwrap_or(-1), 0);
     assert_eq!(before_b["compliance_checks_count"].as_i64().unwrap_or(-1), 0);
+    assert_eq!(before_a["discovery_scans_count"].as_i64().unwrap_or(-1), 0);
+    assert_eq!(before_b["discovery_scans_count"].as_i64().unwrap_or(-1), 0);
 
     let run_id = uuid::Uuid::new_v4().to_string();
     let ev_id = uuid::Uuid::new_v4().to_string();
@@ -154,6 +176,35 @@ async fn usage_increments_on_evidence_and_check_and_is_tenant_scoped() {
     let ingest_v: Value = serde_json::from_slice(&ingest_bytes).unwrap();
     assert_eq!(ingest_status, StatusCode::OK, "unexpected ingest: {ingest_v}");
 
+    // Unrelated evidence types must not increment discovery scan usage.
+    let mid_a = get_usage(&app, KEY, &tenant_a).await;
+    let mid_b = get_usage(&app, KEY, &tenant_b).await;
+    assert_eq!(mid_a["discovery_scans_count"].as_i64().unwrap_or(-1), 0);
+    assert_eq!(mid_b["discovery_scans_count"].as_i64().unwrap_or(-1), 0);
+
+    // Discovery evidence increments discovery_scans_count only for tenant A.
+    let disc_event_id = uuid::Uuid::new_v4().to_string();
+    let disc_body =
+        serde_json::to_string(&sample_ai_discovery_reported(&run_id, &disc_event_id)).unwrap();
+    let disc_ingest = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evidence")
+                .header(header::AUTHORIZATION, format!("Bearer {KEY}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-govai-project", &tenant_a)
+                .body(Body::from(disc_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let disc_status = disc_ingest.status();
+    let disc_bytes = disc_ingest.into_body().collect().await.unwrap().to_bytes();
+    let disc_v: Value = serde_json::from_slice(&disc_bytes).unwrap();
+    assert_eq!(disc_status, StatusCode::OK, "unexpected discovery ingest: {disc_v}");
+
     // Compliance check increments compliance_checks only for tenant A.
     let summary = app
         .clone()
@@ -173,10 +224,12 @@ async fn usage_increments_on_evidence_and_check_and_is_tenant_scoped() {
     let after_a = get_usage(&app, KEY, &tenant_a).await;
     let after_b = get_usage(&app, KEY, &tenant_b).await;
 
-    assert_eq!(after_a["evidence_events_count"].as_i64().unwrap_or(-1), 1);
+    assert_eq!(after_a["evidence_events_count"].as_i64().unwrap_or(-1), 2);
     assert_eq!(after_a["compliance_checks_count"].as_i64().unwrap_or(-1), 1);
     assert_eq!(after_b["evidence_events_count"].as_i64().unwrap_or(-1), 0);
     assert_eq!(after_b["compliance_checks_count"].as_i64().unwrap_or(-1), 0);
+    assert_eq!(after_a["discovery_scans_count"].as_i64().unwrap_or(-1), 1);
+    assert_eq!(after_b["discovery_scans_count"].as_i64().unwrap_or(-1), 0);
 
     std::env::remove_var("GOVAI_API_KEYS");
 }

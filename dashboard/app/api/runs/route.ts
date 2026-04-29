@@ -17,6 +17,8 @@ type RunRow = {
   environment: string | null;
 };
 
+type TeamMembershipRow = { team_id: string };
+
 export async function GET(_request: Request) {
   const supabase = await createSupabaseServerClient();
 
@@ -39,11 +41,33 @@ export async function GET(_request: Request) {
     );
   }
 
+  // Resolve caller's teams (RLS should allow selecting own memberships only).
+  const { data: memberships, error: memberErr } = await supabase
+    .from("team_members")
+    .select("team_id")
+    .eq("user_id", user.id);
+
+  if (memberErr) {
+    return NextResponse.json(
+      { ok: false, error: "db_error", message: memberErr.message },
+      { status: 500 }
+    );
+  }
+
+  const teamIds = ((memberships ?? []) as TeamMembershipRow[])
+    .map((m) => m.team_id)
+    .filter((x): x is string => typeof x === "string" && x.length > 0);
+
+  if (teamIds.length === 0) {
+    return NextResponse.json({ ok: true, runs: [] as RunRow[] }, { status: 200 });
+  }
+
   const { data, error } = await supabase
     .from("runs")
     .select(
       "id,created_at,mode,status,policy_version,bundle_sha256,evidence_sha256,report_sha256,evidence_source,closed_at,environment"
     )
+    .in("team_id", teamIds)
     .order("created_at", { ascending: false })
     .limit(50);
 

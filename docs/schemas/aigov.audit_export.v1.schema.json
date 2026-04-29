@@ -6,6 +6,16 @@
   "additionalProperties": true,
   "required": ["ok", "schema_version", "policy_version", "environment", "exported_at_utc", "tenant", "run", "evidence_hashes", "decision", "evidence_requirements", "evidence_events", "timestamps"],
   "properties": {
+    "Requirement": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["code", "source", "description"],
+      "properties": {
+        "code": { "type": "string" },
+        "source": { "type": "string", "enum": ["policy", "discovery", "lifecycle"] },
+        "description": { "type": "string" }
+      }
+    },
     "ok": { "type": "boolean" },
     "schema_version": { "const": "aigov.audit_export.v1" },
     "policy_version": { "type": "string" },
@@ -45,7 +55,24 @@
             "model_artifacts": { "type": "boolean" }
           }
         },
-        "required_evidence": { "type": "array", "items": { "type": "string" } }
+        "required_evidence": { "type": "array", "items": { "type": "string" } },
+        "required_requirements": { "type": "array", "items": { "$ref": "#/properties/Requirement" } }
+      }
+    },
+    "discovery_findings": {
+      "type": "array",
+      "description": "File-level AI discovery findings from submitted evidence (no new scan is performed during export). Deterministic ordering.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["file_path", "detector", "confidence", "matched_pattern", "hash"],
+        "properties": {
+          "file_path": { "type": "string" },
+          "detector": { "type": "string" },
+          "confidence": { "type": "number" },
+          "matched_pattern": { "type": ["string", "null"] },
+          "hash": { "type": "string" }
+        }
       }
     },
     "evidence_hashes": {
@@ -102,7 +129,10 @@
       "properties": {
         "required_evidence": { "type": "array", "items": { "type": "string" } },
         "provided_evidence": { "type": "array", "items": { "type": "string" } },
-        "missing_evidence": { "type": "array", "items": { "type": "string" } }
+        "missing_evidence": { "type": "array", "items": { "type": "string" } },
+        "required_requirements": { "type": "array", "items": { "$ref": "#/properties/Requirement" } },
+        "provided_requirements": { "type": "array", "items": { "$ref": "#/properties/Requirement" } },
+        "missing_requirements": { "type": "array", "items": { "$ref": "#/properties/Requirement" } }
       }
     },
     "evidence_events": {

@@ -24,7 +24,7 @@ Use **one** value for `GOVAI_RUN_ID` end-to-end: evidence submission → `govai 
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.1.0"
+python -m pip install "aigov-py==0.1.1"
 govai --help >/dev/null && echo "GovAI CLI OK"
 ```
 
@@ -147,7 +147,7 @@ Output: one JSON file with the run decision and hashes.
 ## Troubleshooting
 
 - **`govai: command not found`**
-  - Re-run `python -m pip install "aigov-py==0.1.0"` and ensure the directory shown by `python3 -m site --user-base`/bin is on `PATH`, or use `python3 -m pip install --user "aigov-py==0.1.0"`.
+  - Re-run `python -m pip install "aigov-py==0.1.1"` and ensure the directory shown by `python3 -m site --user-base`/bin is on `PATH`, or use `python3 -m pip install --user "aigov-py==0.1.1"`.
 
 - **Network errors (timeout / connection refused / DNS failure)**
   - Verify `GOVAI_AUDIT_BASE_URL` is correct and reachable from your network or CI runner.

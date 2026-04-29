@@ -17,9 +17,9 @@ const PRIVATE_PILOT_MAILTO =
   "mailto:hello@govbase.dev?subject=" + encodeURIComponent("GovAI private pilot request");
 
 const DOCS_CUSTOMER_QUICKSTART =
-  "https://github.com/MonikaDvorackova/aigov-compliance-engine/blob/main/docs/customer-quickstart.md";
+  "https://github.com/Kovali/GovAI/blob/main/docs/customer-quickstart.md";
 const DOCS_GITHUB_ACTION =
-  "https://github.com/MonikaDvorackova/aigov-compliance-engine/blob/main/docs/github-action.md";
+  "https://github.com/Kovali/GovAI/blob/main/docs/github-action.md";
 
 const PROOF_ITEMS = [
   { label: "Compliance Summary", detail: "Deterministic verdict from evidence" },
@@ -69,12 +69,12 @@ export default function Page() {
             marginTop: 18,
           }}
         >
-          <a className="govai_btn govai_btnPrimary" href={PRIVATE_PILOT_MAILTO}>
+          <Link className="govai_btn govai_btnPrimary" href="/onboarding">
+            Start hosted onboarding
+          </Link>
+          <a className="govai_btn govai_btnGhost" href={PRIVATE_PILOT_MAILTO}>
             Request private pilot
           </a>
-          <Link className="govai_btn govai_btnGhost" href="/onboarding">
-            Onboarding quickstart
-          </Link>
           <a className="govai_btn govai_btnGhost" href="#pricing">
             View pricing
           </a>
@@ -279,12 +279,12 @@ export default function Page() {
             Run AI compliance checks in CI
           </div>
           <div style={{ marginTop: 4, fontSize: 12.5, lineHeight: 1.45, color: "var(--govai-text-secondary)" }}>
-            Official package <span style={{ fontFamily: "ui-monospace, monospace" }}>aigov-py==0.1.0</span> on PyPI. One{" "}
+            Official package <span style={{ fontFamily: "ui-monospace, monospace" }}>aigov-py==0.1.1</span> on PyPI. One{" "}
             <span style={{ fontFamily: "ui-monospace, monospace" }}>GOVAI_RUN_ID</span> for evidence, check, and export.
           </div>
 
           <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-            <LandingCopyBlock label="Install" code={"pip install aigov-py==0.1.0"} />
+            <LandingCopyBlock label="Install" code={"pip install aigov-py==0.1.1"} />
             <LandingCopyBlock
               label="Quick usage"
               code={[
@@ -305,7 +305,7 @@ export default function Page() {
             <LandingCopyBlock
               label="CI usage (GitHub Action)"
               code={[
-                "- uses: MonikaDvorackova/aigov-compliance-engine/.github/actions/govai-check@v1",
+                "- uses: Kovali/GovAI/.github/actions/govai-check@v1",
                 "  with:",
                 "    run_id: ${{ vars.GOVAI_RUN_ID }}",
                 "    base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}",
