@@ -7,6 +7,7 @@ Constraints:
 - Reverse proxy only (no app logic changes)
 - No extra services beyond the existing audit backend
 - HTTPS termination at the proxy
+- The audit backend works with plain Postgres providers (for example Railway); it does not require Supabase `auth.users`.
 
 ---
 

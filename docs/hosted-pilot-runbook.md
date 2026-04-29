@@ -15,6 +15,7 @@ It assumes **hosted pilots with manual or semi-automated onboarding**:
 - A machine that can run Docker (single VM is enough for a pilot).
 - A stable public HTTPS URL that maps to the audit service (your **audit base URL**).
 - A Postgres database (for the simplest pilot, use the included `docker-compose.yml`).
+  - Plain Postgres providers (for example Railway) are supported; you do not need to manually create `auth` schema or `auth.users`.
 
 Reference: `docs/hosted-backend-deployment.md`.
 

@@ -30,6 +30,4 @@ COPY --from=builder /app/target/release/aigov_audit /app/aigov_audit
 
 EXPOSE 8088
 
-ENV AIGOV_BIND=0.0.0.0:8088
-
 CMD ["/app/aigov_audit"]
