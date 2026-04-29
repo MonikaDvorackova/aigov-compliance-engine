@@ -84,8 +84,8 @@
     "verdict": "BLOCKED",
     "blocked_reasons": [
       {
-        "code": "awaiting_risk_review",
-        "message": "Run is not yet promotable: missing approval/promotion prerequisites."
+        "code": "awaiting_approval_or_promotion",
+        "message": "Run is not yet promotable: approval/promotion prerequisites are not satisfied."
       }
     ]
   },

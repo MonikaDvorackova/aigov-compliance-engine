@@ -32,14 +32,15 @@ Operational meaning: a CI gate that blocks on non-`VALID` can proceed.
 
 `BLOCKED` means:
 
-- the server cannot declare the run `VALID` because **required evidence is missing** for this `run_id`.
+- the run is **not eligible for promotion** under the current policy (so the server cannot declare it `VALID`).
 
 Typical symptoms in `GET /compliance-summary`:
 
 - `missing_evidence` is non-empty (structured), and/or
+- `blocked_reasons` explains unmet approval/promotion prerequisites (even when `missing_evidence` is `[]`), and/or
 - legacy `missing` fields indicate missing items.
 
-Operational meaning: deployment is halted until the missing evidence is appended (and accepted) for the same run.
+Operational meaning: deployment is halted until the run becomes eligible (missing evidence and/or approval/promotion prerequisites are satisfied for the same run).
 
 ### `INVALID`
 
