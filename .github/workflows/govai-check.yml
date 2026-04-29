@@ -4,7 +4,6 @@
 # Required configuration (Settings → Secrets and variables → Actions):
 # - Variables:
 #   - GOVAI_AUDIT_BASE_URL — audit / ledger base URL (required; without it the gate cannot call the audit API)
-#   - GOVAI_RUN_ID — GovAI evidence run UUID (same value for POST /evidence, govai check, export)
 # - Secrets:
 #   - GOVAI_API_KEY — Bearer token for the audit API (required for the customer-facing gate)
 #
@@ -65,14 +64,72 @@ jobs:
             EFFECTIVE="${UPSTREAM}"
           elif [ -n "${DISPATCH_GOVAI_RUN_ID}" ]; then
             EFFECTIVE="${DISPATCH_GOVAI_RUN_ID}"
-          elif [ -n "${VAR_GOVAI_RUN_ID}" ]; then
+          elif [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ] && [ -n "${VAR_GOVAI_RUN_ID}" ]; then
+            # Keep the historical repository-variable fallback only for manual debugging.
             EFFECTIVE="${VAR_GOVAI_RUN_ID}"
+          else
+            # Self-contained default for PR/push: generate a deterministic per-workflow-run id.
+            # (Do NOT use repository variable GOVAI_RUN_ID for PR checks; it can be stale after backend resets.)
+            seed="${GITHUB_REPOSITORY:-}:${GITHUB_RUN_ID:-}:${GITHUB_RUN_ATTEMPT:-}:${GITHUB_SHA:-}"
+            EFFECTIVE="$(printf '%s' "${seed}" | sha256sum | cut -d' ' -f1)"
           fi
+          echo "Effective GOVAI_RUN_ID=${EFFECTIVE}"
           {
             echo "effective<<__GOVAI_RUN_ID__"
             printf '%s\n' "${EFFECTIVE}"
             echo "__GOVAI_RUN_ID__"
           } >> "${GITHUB_OUTPUT}"
+
+      - name: Submit minimal evidence (initialize run)
+        env:
+          GOVAI_AUDIT_BASE_URL: ${{ vars.GOVAI_AUDIT_BASE_URL }}
+          GOVAI_API_KEY: ${{ secrets.GOVAI_API_KEY }}
+          GOVAI_RUN_ID: ${{ steps.run.outputs.effective }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GOVAI_AUDIT_BASE_URL:-}" ]; then
+            echo "::error::Missing required configuration: GOVAI_AUDIT_BASE_URL"
+            echo "::error::Fix: Set repository Variable GOVAI_AUDIT_BASE_URL (Settings → Secrets and variables → Actions → Variables)."
+            exit 1
+          fi
+          if [ -z "${GOVAI_API_KEY:-}" ]; then
+            echo "::error::Missing required configuration: GOVAI_API_KEY"
+            echo "::error::Fix: Set repository Secret GOVAI_API_KEY (Settings → Secrets and variables → Actions → Secrets)."
+            exit 1
+          fi
+          if [ -z "${GOVAI_RUN_ID:-}" ]; then
+            echo "::error::Missing GOVAI_RUN_ID (internal error: run id resolution produced empty string)"
+            exit 1
+          fi
+
+          ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          event_id="evt_ci_${GOVAI_RUN_ID}_${GITHUB_RUN_ID:-unknown}_${GITHUB_RUN_ATTEMPT:-0}"
+
+          body="$(cat <<EOF
+          {
+            "event_id": "${event_id}",
+            "event_type": "ai_discovery_reported",
+            "ts_utc": "${ts}",
+            "actor": "ci",
+            "system": "github_actions",
+            "run_id": "${GOVAI_RUN_ID}",
+            "payload": {
+              "openai": false,
+              "transformers": false,
+              "model_artifacts": false
+            }
+          }
+          EOF
+          )"
+
+          echo "Posting minimal evidence to initialize run_id=${GOVAI_RUN_ID}"
+          # Use the same backend credentials/base URL that govai check will use.
+          curl --fail-with-body -sS \
+            -X POST "${GOVAI_AUDIT_BASE_URL%/}/evidence" \
+            -H "Authorization: Bearer ${GOVAI_API_KEY}" \
+            -H "Content-Type: application/json" \
+            --data "${body}" >/dev/null
 
       - name: GovAI check (must be VALID)
         env:
@@ -97,7 +154,8 @@ jobs:
           if [ -z "${GOVAI_RUN_ID:-}" ]; then
             echo "::error::Missing required configuration: GOVAI_RUN_ID"
             echo "::error::GovAI compliance gate cannot run because it needs the evidence run id to query the compliance verdict."
-            echo "::error::Fix: Set repository Variable GOVAI_RUN_ID, or pass workflow_dispatch input govai_run_id, or set job env UPSTREAM_GOVAI_RUN_ID from an upstream job output."
+            echo "::error::Fix: Set job env UPSTREAM_GOVAI_RUN_ID from an upstream evidence job output, or pass workflow_dispatch input govai_run_id for manual debugging."
+            echo "::error::Note: for pull_request/push, this workflow normally auto-generates a run id; reaching this error usually indicates an internal workflow bug."
             exit 1
           fi
           set +e
