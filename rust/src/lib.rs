@@ -27,10 +27,24 @@ use std::net::SocketAddr;
 
 const LOG_PATH: &str = "audit_log.jsonl";
 
+fn default_bind() -> SocketAddr {
+    SocketAddr::from(([127, 0, 0, 1], 8088))
+}
+
 fn bind_addr_from_env() -> SocketAddr {
-    let s = std::env::var("AIGOV_BIND").unwrap_or_else(|_| "127.0.0.1:8088".to_string());
-    s.parse()
-        .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 8088)))
+    if let Ok(s) = std::env::var("AIGOV_BIND") {
+        if let Ok(addr) = s.parse::<SocketAddr>() {
+            return addr;
+        }
+    }
+
+    if let Ok(port_s) = std::env::var("PORT") {
+        if let Ok(port) = port_s.parse::<u16>() {
+            return SocketAddr::from(([0, 0, 0, 0], port));
+        }
+    }
+
+    default_bind()
 }
 
 /// Run the HTTP server (same as the `aigov_audit` binary).
@@ -115,4 +129,71 @@ pub async fn run() -> Result<(), String> {
     };
 
     axum::serve(listener, app).await.map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn clear_env_keys() {
+        std::env::remove_var("AIGOV_BIND");
+        std::env::remove_var("PORT");
+    }
+
+    #[test]
+    fn bind_addr_uses_aigov_bind_when_valid() {
+        let _g = env_lock().lock().unwrap();
+        clear_env_keys();
+
+        std::env::set_var("AIGOV_BIND", "127.0.0.1:5555");
+        std::env::set_var("PORT", "9999");
+
+        assert_eq!(
+            bind_addr_from_env(),
+            SocketAddr::from(([127, 0, 0, 1], 5555))
+        );
+        clear_env_keys();
+    }
+
+    #[test]
+    fn bind_addr_falls_back_to_port_when_aigov_bind_missing() {
+        let _g = env_lock().lock().unwrap();
+        clear_env_keys();
+
+        std::env::set_var("PORT", "3000");
+        assert_eq!(bind_addr_from_env(), SocketAddr::from(([0, 0, 0, 0], 3000)));
+
+        clear_env_keys();
+    }
+
+    #[test]
+    fn bind_addr_falls_back_to_port_when_aigov_bind_invalid() {
+        let _g = env_lock().lock().unwrap();
+        clear_env_keys();
+
+        std::env::set_var("AIGOV_BIND", "not-a-socket-addr");
+        std::env::set_var("PORT", "3001");
+
+        assert_eq!(bind_addr_from_env(), SocketAddr::from(([0, 0, 0, 0], 3001)));
+        clear_env_keys();
+    }
+
+    #[test]
+    fn bind_addr_defaults_when_no_env_or_invalid_port() {
+        let _g = env_lock().lock().unwrap();
+        clear_env_keys();
+
+        assert_eq!(bind_addr_from_env(), default_bind());
+
+        std::env::set_var("PORT", "not-a-number");
+        assert_eq!(bind_addr_from_env(), default_bind());
+
+        clear_env_keys();
+    }
 }
