@@ -52,6 +52,7 @@ And they do consistently state:
 
 ## Remaining risks (if any)
 
+- **CI reruns**: hosted evidence `event_id` values now include a per-run-attempt suffix derived from `GOVAI_RUN_ID`, `GITHUB_RUN_ID`, and `GITHUB_RUN_ATTEMPT`, preventing `DUPLICATE_EVENT_ID` collisions on reruns.
 - **Log surface area**: the action consumes and prints CLI output; if future CLI output formats change substantially, the action may need an explicit compatibility note (or an explicit machine-readable output mode). This audit did not change runtime behavior, only clarified messaging.
 - **First-time mental model**: users may still reflexively interpret “CI failed” as a connectivity issue. The action distinguishes verdict retrieval failures, but Marketplace documentation should continue to emphasize that `BLOCKED`/`INVALID` are *successful* verdict retrievals (policy outcomes), not request failures.
 

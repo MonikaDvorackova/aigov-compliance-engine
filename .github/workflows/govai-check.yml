@@ -122,7 +122,9 @@ jobs:
           risk_id="risk_${GOVAI_RUN_ID}"
           artifact_path="artifacts/model_${GOVAI_RUN_ID}.joblib"
 
-          human_event_id="evt_ci_human_approved_${GOVAI_RUN_ID}"
+          EVENT_SUFFIX="${GOVAI_RUN_ID}_${GITHUB_RUN_ID:-0}_${GITHUB_RUN_ATTEMPT:-0}"
+
+          human_event_id="evt_ci_human_approved_${EVENT_SUFFIX}"
 
           post_ev () {
             local name="$1"
@@ -168,7 +170,7 @@ jobs:
 
           post_ev "ai_discovery_reported" "$(cat <<EOF
           {
-            "event_id": "evt_ci_ai_discovery_reported_${GOVAI_RUN_ID}",
+            "event_id": "evt_ci_ai_discovery_reported_${EVENT_SUFFIX}",
             "event_type": "ai_discovery_reported",
             "ts_utc": "${ts}",
             "actor": "ci",
@@ -185,7 +187,7 @@ jobs:
 
           post_ev "evaluation_reported" "$(cat <<EOF
           {
-            "event_id": "evt_ci_evaluation_reported_${GOVAI_RUN_ID}",
+            "event_id": "evt_ci_evaluation_reported_${EVENT_SUFFIX}",
             "event_type": "evaluation_reported",
             "ts_utc": "${ts}",
             "actor": "ci",
@@ -206,7 +208,7 @@ jobs:
 
           post_ev "risk_reviewed" "$(cat <<EOF
           {
-            "event_id": "evt_ci_risk_reviewed_${GOVAI_RUN_ID}",
+            "event_id": "evt_ci_risk_reviewed_${EVENT_SUFFIX}",
             "event_type": "risk_reviewed",
             "ts_utc": "${ts}",
             "actor": "ci",
@@ -253,7 +255,7 @@ jobs:
 
           post_ev "model_promoted" "$(cat <<EOF
           {
-            "event_id": "evt_ci_model_promoted_${GOVAI_RUN_ID}",
+            "event_id": "evt_ci_model_promoted_${EVENT_SUFFIX}",
             "event_type": "model_promoted",
             "ts_utc": "${ts}",
             "actor": "ci",
