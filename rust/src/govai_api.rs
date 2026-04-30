@@ -1689,6 +1689,61 @@ fn blocked_reasons_from_state(state: &projection::ComplianceCurrentState) -> Vec
             });
         }
     }
+
+    // Additive: lifecycle / promotion gates.
+    //
+    // `compliance_verdict_from_state` can return BLOCKED even when discovery-driven evidence is
+    // complete (missing is empty). In that case we must surface why the run is blocked.
+    //
+    // Stable order contract:
+    // evaluation → risk review → human approval → promotion execution.
+    if compliance_verdict_from_state(state) == "BLOCKED" && missing.is_empty() {
+        if state.model.evaluation_passed.is_none() {
+            out.push(BlockedReason {
+                code: "evaluation_required".to_string(),
+                message: "Evaluation must be reported (passed=true) before promotion readiness.".to_string(),
+            });
+        }
+
+        if state.approval.risk_review_decision.as_deref() != Some("approve") {
+            out.push(BlockedReason {
+                code: "awaiting_risk_review".to_string(),
+                message: "Risk assessment review must be approved before promotion readiness.".to_string(),
+            });
+        }
+
+        if state.approval.human_approval_decision.as_deref() != Some("approve") {
+            out.push(BlockedReason {
+                code: "approval_required".to_string(),
+                message: "Human approval is required before promotion readiness.".to_string(),
+            });
+        }
+
+        if !(state.model.promotion.model_promoted_present && state.model.promotion.state == "promoted")
+        {
+            let code = match state.model.promotion.state.as_str() {
+                "awaiting_risk_review" => "awaiting_risk_review",
+                "awaiting_human_approval" => "approval_required",
+                "awaiting_evaluation_passed" => "evaluation_required",
+                "awaiting_promotion_execution" => "awaiting_promotion_execution",
+                _ => "promotion_not_ready",
+            };
+            let message = match state.model.promotion.state.as_str() {
+                "awaiting_promotion_execution" => {
+                    "Promotion evidence (model_promoted) has not been recorded yet.".to_string()
+                }
+                "promoted" => "Promotion has been executed.".to_string(),
+                other => format!("Promotion is not complete: state={other}."),
+            };
+            // Avoid duplicating the same code when earlier gates already emitted it.
+            if !out.iter().any(|r| r.code == code) {
+                out.push(BlockedReason {
+                    code: code.to_string(),
+                    message,
+                });
+            }
+        }
+    }
     out
 }
 
@@ -1782,6 +1837,33 @@ mod discovery_enforcement_tests {
                 }),
             ),
         ]
+    }
+
+    #[test]
+    fn discovery_only_run_never_returns_blocked_without_reasons() {
+        let run_id = "run_discovery_only";
+        let events = vec![ev(
+            run_id,
+            "ai_discovery_reported",
+            "d1",
+            json!({ "openai": false, "transformers": false, "model_artifacts": false }),
+        )];
+
+        let state =
+            projection::derive_current_state_from_events_with_context(run_id, &events, None, None);
+        assert!(state.requirements.missing.is_empty());
+
+        let verdict = compliance_verdict_from_state(&state);
+        let reasons = blocked_reasons_from_state(&state);
+
+        assert!(
+            verdict == "VALID" || !reasons.is_empty(),
+            "discovery-only run must be VALID or BLOCKED with explicit reasons"
+        );
+        assert!(
+            !(verdict == "BLOCKED" && state.requirements.missing.is_empty() && reasons.is_empty()),
+            "invariant: never BLOCKED with empty missing and empty blocked_reasons"
+        );
     }
 
     #[test]
