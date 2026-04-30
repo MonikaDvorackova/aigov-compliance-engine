@@ -225,7 +225,7 @@ fn prepare_event_for_ingest(
     event: &mut EvidenceEvent,
     deployment: GovaiEnvironment,
     log_path: &str,
-) -> Result<(), String> {
+) -> Result<Vec<EvidenceEvent>, String> {
     let canon = deployment.as_str();
     if let Some(ref claimed) = event.environment {
         let norm = normalize_env_label(claimed)
@@ -256,7 +256,7 @@ fn prepare_event_for_ingest(
     }
 
     event.environment = Some(canon.to_string());
-    Ok(())
+    Ok(existing)
 }
 
 fn canonicalize_events(mut events: Vec<EvidenceEvent>) -> Vec<EvidenceEvent> {
@@ -322,17 +322,20 @@ async fn ingest(
         }
     };
 
-    if let Err(e) = prepare_event_for_ingest(&mut event, audit.deployment_env, &log_path) {
-        return api_err(
-            StatusCode::BAD_REQUEST,
-            "POLICY_VIOLATION",
-            clean_policy_prefix(&e),
-            "Fix the request payload to satisfy the environment/policy constraints and retry.",
-            Some(json!({ "raw": e, "policy_code": "environment_policy" })),
-            Some(audit.policy_version),
-            None,
-        );
-    }
+    let existing = match prepare_event_for_ingest(&mut event, audit.deployment_env, &log_path) {
+        Ok(x) => x,
+        Err(e) => {
+            return api_err(
+                StatusCode::BAD_REQUEST,
+                "POLICY_VIOLATION",
+                clean_policy_prefix(&e),
+                "Fix the request payload to satisfy the environment/policy constraints and retry.",
+                Some(json!({ "raw": e, "policy_code": "environment_policy" })),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
 
     if let Err(e) = policy::enforce(&event, &log_path, &audit.policy) {
         return api_err(
@@ -357,20 +360,6 @@ async fn ingest(
     };
 
     let run_id = event.run_id.clone();
-    let existing = match bundle::collect_events_for_run(&log_path, &run_id) {
-        Ok(e) => e,
-        Err(e) => {
-            return api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "READ_LOG_ERROR",
-                "We could not read existing evidence events for this run.",
-                "Retry in a moment. If this persists, contact support (this is a server-side issue).",
-                Some(json!({ "raw": e })),
-                Some(audit.policy_version),
-                None,
-            );
-        }
-    };
 
     // Used for metering/quota prechecks (append remains authoritative and atomic).
     let pre_count = existing.len() as u64;

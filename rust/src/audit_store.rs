@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 /// Integration / manual tests only: when `AIGOV_TEST_APPEND_FAIL=1`, [`append_record`] errors before I/O.
 fn append_fail_test_hook_active() -> bool {
@@ -118,8 +119,26 @@ pub fn append_record_atomic_with_run_count(
     // a not-yet-created path (common in CI/container environments).
     ensure_parent_dir_exists(log_path)?;
 
+    // Temporary structured diagnostics (Railway 15s timeout investigation).
+    // Do not log secrets; run_id/event_id are identifiers, not credentials.
+    let t0 = Instant::now();
+    eprintln!(
+        "audit_append phase=begin log_path={} run_id={} event_id={}",
+        log_path, event.run_id, event.event_id
+    );
+    eprintln!(
+        "audit_append phase=before_lock log_path={} elapsed_ms={}",
+        log_path,
+        t0.elapsed().as_millis()
+    );
+
     let lock = lock_for_ledger(log_path)?;
     let _guard = lock.lock().map_err(|_| "ledger lock poisoned".to_string())?;
+    eprintln!(
+        "audit_append phase=after_lock log_path={} elapsed_ms={}",
+        log_path,
+        t0.elapsed().as_millis()
+    );
 
     // Critical section (single-writer per ledger):
     // 1) read existing events for the run
@@ -128,17 +147,24 @@ pub fn append_record_atomic_with_run_count(
     // 4) write record
     // 5) flush/sync
     // If a crash happened mid-append, a trailing partial JSONL line can remain.
-    // Repair it deterministically under the same ledger lock before scanning hashes.
-    let repaired = repair_trailing_partial_record(log_path)?;
-    if repaired {
-        eprintln!(
-            "ledger_repair: truncated recoverable trailing partial record for {}",
-            log_path
-        );
-    }
-
-    let (prev_hash, pre_count) =
-        scan_run_and_last_hash_and_reject_duplicate(log_path, &event.run_id, &event.event_id)?;
+    // Detect + repair it under the same ledger lock, but avoid multiple full-file scans.
+    eprintln!(
+        "audit_append phase=before_scan log_path={} elapsed_ms={}",
+        log_path,
+        t0.elapsed().as_millis()
+    );
+    let (prev_hash, pre_count, repaired_tail) = scan_run_and_last_hash_and_reject_duplicate_repair_tail(
+        log_path,
+        &event.run_id,
+        &event.event_id,
+    )?;
+    eprintln!(
+        "audit_append phase=after_scan log_path={} repaired_tail={} pre_count={} elapsed_ms={}",
+        log_path,
+        repaired_tail,
+        pre_count,
+        t0.elapsed().as_millis()
+    );
 
     let event_json = serde_json::to_string(&event).map_err(|e| e.to_string())?;
     let record_hash = compute_record_hash(&prev_hash, &event_json);
@@ -149,6 +175,11 @@ pub fn append_record_atomic_with_run_count(
         event_json,
     };
 
+    eprintln!(
+        "audit_append phase=before_write log_path={} elapsed_ms={}",
+        log_path,
+        t0.elapsed().as_millis()
+    );
     let mut f = OpenOptions::new()
         .create(true)
         .append(true)
@@ -158,12 +189,42 @@ pub fn append_record_atomic_with_run_count(
     let line = serde_json::to_string(&rec).map_err(|e| e.to_string())?;
     f.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
     f.write_all(b"\n").map_err(|e| e.to_string())?;
+    eprintln!(
+        "audit_append phase=after_write log_path={} elapsed_ms={}",
+        log_path,
+        t0.elapsed().as_millis()
+    );
 
+    eprintln!(
+        "audit_append phase=before_flush log_path={} elapsed_ms={}",
+        log_path,
+        t0.elapsed().as_millis()
+    );
     f.flush().map_err(|e| e.to_string())?;
+    eprintln!(
+        "audit_append phase=after_flush log_path={} elapsed_ms={}",
+        log_path,
+        t0.elapsed().as_millis()
+    );
     // Best-effort durable semantics: sync file data and metadata as supported.
     // If sync fails, surface the error (do not silently continue).
+    eprintln!(
+        "audit_append phase=before_sync_data log_path={} elapsed_ms={}",
+        log_path,
+        t0.elapsed().as_millis()
+    );
     f.sync_data().map_err(|e| e.to_string())?;
+    eprintln!(
+        "audit_append phase=after_sync_data log_path={} elapsed_ms={}",
+        log_path,
+        t0.elapsed().as_millis()
+    );
 
+    eprintln!(
+        "audit_append phase=done log_path={} elapsed_ms={}",
+        log_path,
+        t0.elapsed().as_millis()
+    );
     Ok((rec, pre_count))
 }
 
@@ -312,16 +373,16 @@ pub fn repair_trailing_partial_record(log_path: &str) -> Result<bool, String> {
     Ok(true)
 }
 
-fn scan_run_and_last_hash_and_reject_duplicate(
+fn scan_run_and_last_hash_and_reject_duplicate_repair_tail(
     log_path: &str,
     run_id: &str,
     event_id: &str,
-) -> Result<(String, usize), String> {
+) -> Result<(String, usize, bool), String> {
     let scan = scan_ledger_records_tolerant(log_path)?;
+
     let mut last: Option<String> = None;
     let mut pre_count: usize = 0;
-
-    for rec in scan.records {
+    for rec in &scan.records {
         last = Some(rec.record_hash.clone());
 
         let ev: EvidenceEvent = serde_json::from_str(&rec.event_json).map_err(|e| e.to_string())?;
@@ -336,7 +397,26 @@ fn scan_run_and_last_hash_and_reject_duplicate(
         }
     }
 
-    Ok((last.unwrap_or_else(|| GENESIS.to_string()), pre_count))
+    let repaired = scan.diagnostics.trailing_corruption.is_some();
+    if repaired {
+        eprintln!(
+            "audit_append phase=before_repair log_path={} new_len={}",
+            log_path, scan.last_valid_byte_end
+        );
+        let mut f = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(log_path)
+            .map_err(|e| e.to_string())?;
+        f.set_len(scan.last_valid_byte_end)
+            .map_err(|e| e.to_string())?;
+        f.seek(SeekFrom::End(0)).map_err(|e| e.to_string())?;
+        f.flush().map_err(|e| e.to_string())?;
+        f.sync_data().map_err(|e| e.to_string())?;
+        eprintln!("audit_append phase=after_repair log_path={}", log_path);
+    }
+
+    Ok((last.unwrap_or_else(|| GENESIS.to_string()), pre_count, repaired))
 }
 
 pub fn verify_chain(log_path: &str) -> Result<(), String> {
