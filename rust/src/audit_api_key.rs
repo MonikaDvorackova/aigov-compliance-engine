@@ -6,6 +6,7 @@
 //! Billable run/event enforcement is in [`crate::metering`] when `GOVAI_METERING=on`.
 
 use crate::api_usage::{self, ApiUsageState, UsageChannel};
+use crate::govai_environment::GovaiEnvironment;
 
 use axum::extract::Request;
 use axum::http::{header, HeaderMap, Method, StatusCode};
@@ -15,6 +16,85 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::api_error::{api_error, api_error_with};
+use once_cell::sync::OnceCell;
+
+static API_KEY_TENANT_MAP: OnceCell<Arc<HashMap<String, String>>> = OnceCell::new();
+
+pub fn api_key_tenant_map_is_initialized() -> bool {
+    API_KEY_TENANT_MAP.get().is_some()
+}
+
+/// Initialize `GOVAI_API_KEYS_JSON` (api_key -> tenant_id) mapping once at startup.
+///
+/// - **Dev**: missing/empty config is allowed (ledger tenant defaults to `"default"`).
+/// - **Staging/Prod**: missing/invalid/empty config fails startup.
+pub fn init_api_key_tenant_map(deployment_env: GovaiEnvironment) -> Result<(), String> {
+    let raw = std::env::var("GOVAI_API_KEYS_JSON").ok();
+    let raw = raw.as_deref().unwrap_or("").trim();
+
+    if raw.is_empty() {
+        return match deployment_env {
+            GovaiEnvironment::Dev => Ok(()),
+            GovaiEnvironment::Staging | GovaiEnvironment::Prod => Err(
+                "GOVAI_API_KEYS_JSON is required in staging/prod (JSON object mapping api_key -> tenant_id)"
+                    .to_string(),
+            ),
+        };
+    }
+
+    let parsed: HashMap<String, String> = serde_json::from_str(raw).map_err(|e| {
+        format!(
+            "Invalid GOVAI_API_KEYS_JSON (expected JSON object mapping api_key -> tenant_id): {e}"
+        )
+    })?;
+
+    let mut cleaned: HashMap<String, String> = HashMap::new();
+    for (k, v) in parsed.into_iter() {
+        let k = k.trim().to_string();
+        let v = v.trim().to_string();
+        if k.is_empty() || v.is_empty() {
+            continue;
+        }
+        cleaned.insert(k, v);
+    }
+
+    if cleaned.is_empty() {
+        return match deployment_env {
+            GovaiEnvironment::Dev => Ok(()),
+            GovaiEnvironment::Staging | GovaiEnvironment::Prod => Err(
+                "GOVAI_API_KEYS_JSON must contain at least one api_key -> tenant_id entry"
+                    .to_string(),
+            ),
+        };
+    }
+
+    API_KEY_TENANT_MAP
+        .set(Arc::new(cleaned))
+        .map_err(|_| "GOVAI_API_KEYS_JSON was initialized more than once".to_string())?;
+    Ok(())
+}
+
+/// Server-controlled tenant id for the tenant-isolated ledger.
+///
+/// Tenant identity is derived **only** from the API key (never from headers like `x-govai-project`).
+pub fn require_tenant_id_from_api_key_for_ledger(
+    headers: &HeaderMap,
+    deployment_env: GovaiEnvironment,
+) -> Result<String, String> {
+    let Some(map) = API_KEY_TENANT_MAP.get() else {
+        return match deployment_env {
+            GovaiEnvironment::Dev => Ok("default".to_string()),
+            GovaiEnvironment::Staging | GovaiEnvironment::Prod => {
+                Err("missing_api_key_tenant_map".to_string())
+            }
+        };
+    };
+
+    let token = raw_bearer_token(headers).ok_or_else(|| "missing_api_key".to_string())?;
+    map.get(token)
+        .cloned()
+        .ok_or_else(|| "unknown_api_key".to_string())
+}
 
 #[derive(Clone)]
 pub struct AuditApiKeyConfig {
@@ -109,13 +189,40 @@ pub async fn gate_audit_routes(
     request: Request,
     next: Next,
 ) -> Response {
+    let auth = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let token = bearer_token(auth);
+
+    // Primary allowlist for audit routes: server-controlled key -> tenant mapping.
+    // When present, all audit routes require an API key and it must exist in the mapping.
+    if let Some(tenant_map) = API_KEY_TENANT_MAP.get() {
+        if token.is_empty() {
+            return api_error(
+                StatusCode::UNAUTHORIZED,
+                "MISSING_API_KEY",
+                "Missing API key.",
+                "Provide `Authorization: Bearer <api_key>`.",
+                None,
+            )
+            .into_response();
+        }
+        if !tenant_map.contains_key(token) {
+            return api_error(
+                StatusCode::UNAUTHORIZED,
+                "INVALID_API_KEY",
+                "Invalid API key.",
+                "Verify you’re using the correct GovAI API key (and not a JWT). If you rotated keys, update your integration and retry.",
+                None,
+            )
+            .into_response();
+        }
+    }
+
     if let Some(key_map) = &cfg.keys {
-        let auth = request
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        let token = bearer_token(auth);
+        // Optional per-key usage caps: when configured, require token to be present and allowlisted.
         if token.is_empty() {
             return api_error(
                 StatusCode::UNAUTHORIZED,

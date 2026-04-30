@@ -15,6 +15,7 @@ use std::sync::Mutex;
 use tower::ServiceExt;
 
 use aigov_audit::api_usage::ApiUsageState;
+use aigov_audit::audit_api_key;
 use aigov_audit::govai_api;
 use aigov_audit::govai_environment::{policy_version_for, GovaiEnvironment};
 use aigov_audit::metering::{GovaiPlan, MeteringConfig};
@@ -22,6 +23,23 @@ use aigov_audit::policy_config::ResolvedPolicyConfig;
 use aigov_audit::project;
 
 static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+fn ensure_test_tenant_map() {
+    if audit_api_key::api_key_tenant_map_is_initialized() {
+        return;
+    }
+    std::env::set_var(
+        "GOVAI_API_KEYS_JSON",
+        r#"{
+          "key_default": "default",
+          "key_github_actions": "github-actions",
+          "key_tenant_a": "tenant-a",
+          "key_tenant_b": "tenant-b"
+        }"#,
+    );
+    // Ignore errors if another test raced to init first.
+    let _ = audit_api_key::init_api_key_tenant_map(GovaiEnvironment::Dev);
+}
 
 fn database_url() -> Option<String> {
     std::env::var("TEST_DATABASE_URL")
@@ -92,7 +110,7 @@ async fn test_router(pool: sqlx::PgPool, env: GovaiEnvironment) -> Router {
 }
 
 #[tokio::test]
-async fn first_evidence_event_creates_tenant_ledger_with_x_govai_project() {
+async fn first_evidence_event_creates_tenant_ledger_from_api_key_mapping() {
     let Some(url) = database_url() else {
         eprintln!("skip tenant_isolation_http: set DATABASE_URL or TEST_DATABASE_URL");
         return;
@@ -101,6 +119,8 @@ async fn first_evidence_event_creates_tenant_ledger_with_x_govai_project() {
     let _lock = CWD_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
+
+    ensure_test_tenant_map();
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -111,10 +131,6 @@ async fn first_evidence_event_creates_tenant_ledger_with_x_govai_project() {
         .run(&pool)
         .await
         .expect("migrate");
-
-    // Require auth to match the expected production-ish client request shape.
-    const KEY: &str = "evidence_first_write_key";
-    std::env::set_var("GOVAI_API_KEYS", KEY);
 
     let app = test_router(pool, GovaiEnvironment::Dev).await;
 
@@ -134,9 +150,9 @@ async fn first_evidence_event_creates_tenant_ledger_with_x_govai_project() {
             Request::builder()
                 .method("POST")
                 .uri("/evidence")
-                .header(header::AUTHORIZATION, format!("Bearer {KEY}"))
+                .header(header::AUTHORIZATION, "Bearer key_github_actions")
                 .header(header::CONTENT_TYPE, "application/json")
-                .header("x-govai-project", tenant)
+                .header("x-govai-project", "spoofed-does-not-matter")
                 .body(Body::from(body))
                 .unwrap(),
         )
@@ -153,8 +169,6 @@ async fn first_evidence_event_creates_tenant_ledger_with_x_govai_project() {
     );
     let raw = std::fs::read_to_string(&ledger_path).unwrap_or_default();
     assert!(raw.contains(run_id), "tenant ledger should contain run_id");
-
-    std::env::remove_var("GOVAI_API_KEYS");
 }
 
 #[tokio::test]
@@ -168,6 +182,8 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
 
+    ensure_test_tenant_map();
+
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(&url)
@@ -180,8 +196,8 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
 
     let app = test_router(pool, GovaiEnvironment::Dev).await;
 
-    let tenant_a = format!("tenant_a_{}", uuid::Uuid::new_v4());
-    let tenant_b = format!("tenant_b_{}", uuid::Uuid::new_v4());
+    let tenant_a = "tenant-a".to_string();
+    let tenant_b = "tenant-b".to_string();
     seed_empty_tenant_ledger(&tenant_a);
     seed_empty_tenant_ledger(&tenant_b);
 
@@ -189,7 +205,7 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
     let ev_id = uuid::Uuid::new_v4().to_string();
     let body = serde_json::to_string(&sample_data_registered(&run_id, &ev_id)).unwrap();
 
-    // Write to tenant A
+    // Write to tenant A (derived from API key mapping)
     let r = app
         .clone()
         .oneshot(
@@ -197,7 +213,7 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
-                .header("x-govai-project", &tenant_a)
+                .header(header::AUTHORIZATION, "Bearer key_tenant_a")
                 .body(Body::from(body))
                 .unwrap(),
         )
@@ -229,7 +245,7 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
             Request::builder()
                 .method("GET")
                 .uri(format!("/bundle?run_id={run_id}"))
-                .header("x-govai-project", &tenant_b)
+                .header(header::AUTHORIZATION, "Bearer key_tenant_b")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -250,7 +266,7 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
             Request::builder()
                 .method("GET")
                 .uri(format!("/compliance-summary?run_id={run_id}"))
-                .header("x-govai-project", &tenant_b)
+                .header(header::AUTHORIZATION, "Bearer key_tenant_b")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -269,7 +285,7 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
             Request::builder()
                 .method("GET")
                 .uri(format!("/api/export/{run_id}"))
-                .header("x-govai-project", &tenant_b)
+                .header(header::AUTHORIZATION, "Bearer key_tenant_b")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -288,6 +304,8 @@ async fn missing_tenant_context_is_rejected_in_prod() {
     let _lock = CWD_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
+
+    ensure_test_tenant_map();
 
     let pool = PgPoolOptions::new()
         .max_connections(1)
@@ -312,17 +330,17 @@ async fn missing_tenant_context_is_rejected_in_prod() {
         )
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     let v: Value =
         serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(v["ok"], false);
-    assert_eq!(v["error"]["code"], "MISSING_TENANT_CONTEXT");
+    assert_eq!(v["error"]["code"], "MISSING_API_KEY");
     assert!(v["error"]["message"].as_str().unwrap_or("").trim().len() > 0);
     assert!(v["error"]["hint"].as_str().unwrap_or("").trim().len() > 0);
 }
 
 #[tokio::test]
-async fn bearer_fingerprint_fallback_selects_tenant_ledger_at_route_level() {
+async fn spoofing_x_govai_project_has_no_effect_on_ledger_tenant() {
     let Some(url) = database_url() else {
         eprintln!("skip tenant_isolation_http: set DATABASE_URL or TEST_DATABASE_URL");
         return;
@@ -331,6 +349,8 @@ async fn bearer_fingerprint_fallback_selects_tenant_ledger_at_route_level() {
     let _lock = CWD_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
+
+    ensure_test_tenant_map();
 
     let pool = PgPoolOptions::new()
         .max_connections(1)
@@ -342,23 +362,23 @@ async fn bearer_fingerprint_fallback_selects_tenant_ledger_at_route_level() {
         .await
         .expect("migrate");
 
-    // Use prod to ensure missing-tenant enforcement is active; bearer provides tenant context via fingerprint fallback.
     let app = test_router(pool, GovaiEnvironment::Prod).await;
-    let token = "mysecret";
-    let tenant = aigov_audit::api_usage::key_fingerprint(token);
-    seed_empty_tenant_ledger(&tenant);
+    seed_empty_tenant_ledger("tenant-a");
+    seed_empty_tenant_ledger("tenant-b");
 
     let run_id = uuid::Uuid::new_v4().to_string();
     let ev_id = uuid::Uuid::new_v4().to_string();
     let body = serde_json::to_string(&sample_data_registered(&run_id, &ev_id)).unwrap();
 
+    // Attempt to spoof the header to "tenant-b", but use key mapped to tenant-a.
     let r = app
         .oneshot(
             Request::builder()
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {}", token))
+                .header(header::AUTHORIZATION, "Bearer key_tenant_a")
+                .header("x-govai-project", "tenant-b")
                 .body(Body::from(body))
                 .unwrap(),
         )
@@ -369,11 +389,17 @@ async fn bearer_fingerprint_fallback_selects_tenant_ledger_at_route_level() {
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(s, StatusCode::OK, "unexpected /evidence response: {v}");
 
-    let lp = project::resolve_ledger_path("audit_log.jsonl", &tenant);
-    let raw = std::fs::read_to_string(&lp).unwrap_or_default();
+    let raw_a = std::fs::read_to_string(project::resolve_ledger_path("audit_log.jsonl", "tenant-a"))
+        .unwrap_or_default();
+    let raw_b = std::fs::read_to_string(project::resolve_ledger_path("audit_log.jsonl", "tenant-b"))
+        .unwrap_or_default();
     assert!(
-        raw.contains(&run_id),
-        "fingerprint tenant ledger should contain run_id"
+        raw_a.contains(&run_id),
+        "tenant-a ledger should contain run_id"
+    );
+    assert!(
+        !raw_b.contains(&run_id),
+        "tenant-b ledger must not contain tenant-a run_id (spoofed header ignored)"
     );
 }
 
@@ -388,6 +414,8 @@ async fn dev_defaults_to_default_tenant_ledger_without_headers() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
     seed_empty_tenant_ledger("default");
+
+    ensure_test_tenant_map();
 
     let pool = PgPoolOptions::new()
         .max_connections(1)
@@ -411,6 +439,7 @@ async fn dev_defaults_to_default_tenant_ledger_without_headers() {
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, "Bearer key_default")
                 .body(Body::from(body))
                 .unwrap(),
         )
@@ -440,6 +469,8 @@ async fn verify_log_missing_tenant_context_is_rejected_in_prod() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
 
+    ensure_test_tenant_map();
+
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .connect(&url)
@@ -462,11 +493,11 @@ async fn verify_log_missing_tenant_context_is_rejected_in_prod() {
         )
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["ok"], false);
-    assert_eq!(v["error"]["code"], "MISSING_TENANT_CONTEXT");
+    assert_eq!(v["error"]["code"], "MISSING_API_KEY");
     assert!(v["error"]["message"].as_str().unwrap_or("").trim().len() > 0);
     assert!(v["error"]["hint"].as_str().unwrap_or("").trim().len() > 0);
 }
