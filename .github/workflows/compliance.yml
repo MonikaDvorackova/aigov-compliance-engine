@@ -233,7 +233,8 @@ jobs:
 
           sqlx migrate run --source "${GITHUB_WORKSPACE}/.aigov_ci_migrations" --database-url "${DATABASE_URL}"
 
-      - name: Start audit service
+      - id: start_audit_service
+        name: Start audit service
         if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
         env:
           GOVAI_LEDGER_DIR: ${{ runner.temp }}/govai-ledger
@@ -246,6 +247,7 @@ jobs:
           mkdir -p "${GOVAI_LEDGER_DIR}"
 
           pwd
+          echo "AUDIT_URL=${AUDIT_URL}"
           echo "GOVAI_LEDGER_DIR=$GOVAI_LEDGER_DIR"
           echo "AIGOV_ENVIRONMENT=${AIGOV_ENVIRONMENT}"
           echo "AIGOV_BIND=${AIGOV_BIND}"
@@ -279,6 +281,8 @@ jobs:
             cat "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" || true
             exit 1
           fi
+
+          echo "ready=true" >> "${GITHUB_OUTPUT}"
 
       - id: govai_emit_run_id
         if: success()
@@ -325,13 +329,66 @@ jobs:
           echo "run_id=${only}" >> "${OUT}"
 
       - name: Build evidence packs
-        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
+        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' && steps.start_audit_service.outputs.ready == 'true' }}
         env:
           EMITTED_RUN_ID: ${{ steps.govai_emit_run_id.outputs.run_id }}
         run: |
           set -euo pipefail
           mkdir -p docs/audit docs/evidence docs/packs
           mkdir -p "${GITHUB_WORKSPACE}/.aigov_ci_artifacts"
+
+          echo "Local audit base URL: ${AUDIT_URL}"
+
+          preflight_local () {
+            echo ""
+            echo "============================================================"
+            echo "Local audit service preflight"
+            echo "AUDIT_URL=${AUDIT_URL}"
+            echo "------------------------------------------------------------"
+            curl -v "${AUDIT_URL%/}/health" || true
+            curl -v "${AUDIT_URL%/}/status" || true
+            echo "------------------------------------------------------------"
+            echo "Audit service log:"
+            cat "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" || true
+            echo "============================================================"
+            echo ""
+          }
+
+          post_local_ev () {
+            local name="$1"
+            local body="$2"
+            local response
+            response="$(mktemp)"
+            local status
+
+            echo ""
+            echo "============================================================"
+            echo "Posting evidence (local): ${name}"
+            echo "AUDIT_URL=${AUDIT_URL}"
+            echo "------------------------------------------------------------"
+            echo "Body:"
+            printf '%s\n' "${body}"
+            echo "------------------------------------------------------------"
+
+            status="$(
+              curl -sS -o "${response}" -w "%{http_code}" \
+                -X POST "${AUDIT_URL%/}/evidence" \
+                -H "Authorization: Bearer ci-test-api-key" \
+                -H "X-GovAI-Project: github-actions" \
+                -H "Content-Type: application/json" \
+                --data "${body}" \
+                || echo "000"
+            )"
+
+            echo "Response (HTTP ${status}):"
+            cat "${response}" || true
+
+            if [ "${status}" = "000" ] || [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
+              echo "::error::Evidence POST (local) failed with HTTP ${status}"
+              preflight_local
+              exit 1
+            fi
+          }
 
           if [[ "${EMITTED_RUN_ID}" == release-promotion-* ]]; then
             RUN_ID="${EMITTED_RUN_ID}"
@@ -343,11 +400,7 @@ jobs:
             make run RUN_ID="${RUN_ID}"
 
             ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            curl -sS -X POST "${AUDIT_URL}/evidence" \
-              -H "Authorization: Bearer ci-test-api-key" \
-              -H "X-GovAI-Project: github-actions" \
-              -H "Content-Type: application/json" \
-              -d "{\"event_id\":\"evt_ai_discovery_${RUN_ID}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}\",\"event_type\":\"ai_discovery_reported\",\"ts_utc\":\"${ts}\",\"actor\":\"ci\",\"system\":\"github_actions\",\"run_id\":\"${RUN_ID}\",\"payload\":{\"openai\":false,\"transformers\":false,\"model_artifacts\":false}}"
+            post_local_ev "ai_discovery_reported" "{\"event_id\":\"evt_ai_discovery_${RUN_ID}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}\",\"event_type\":\"ai_discovery_reported\",\"ts_utc\":\"${ts}\",\"actor\":\"ci\",\"system\":\"github_actions\",\"run_id\":\"${RUN_ID}\",\"payload\":{\"openai\":false,\"transformers\":false,\"model_artifacts\":false}}"
 
             make approve RUN_ID="${RUN_ID}"
             make promote RUN_ID="${RUN_ID}"
@@ -375,11 +428,7 @@ jobs:
             make run RUN_ID="${RUN_ID}"
 
             ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            curl -sS -X POST "${AUDIT_URL}/evidence" \
-              -H "Authorization: Bearer ci-test-api-key" \
-              -H "X-GovAI-Project: github-actions" \
-              -H "Content-Type: application/json" \
-              -d "{\"event_id\":\"evt_ai_discovery_${RUN_ID}_${GITHUB_RUN_ID}\",\"event_type\":\"ai_discovery_reported\",\"ts_utc\":\"${ts}\",\"actor\":\"ci\",\"system\":\"github_actions\",\"run_id\":\"${RUN_ID}\",\"payload\":{\"openai\":false,\"transformers\":false,\"model_artifacts\":false}}"
+            post_local_ev "ai_discovery_reported" "{\"event_id\":\"evt_ai_discovery_${RUN_ID}_${GITHUB_RUN_ID}\",\"event_type\":\"ai_discovery_reported\",\"ts_utc\":\"${ts}\",\"actor\":\"ci\",\"system\":\"github_actions\",\"run_id\":\"${RUN_ID}\",\"payload\":{\"openai\":false,\"transformers\":false,\"model_artifacts\":false}}"
 
             make approve RUN_ID="${RUN_ID}"
             make promote RUN_ID="${RUN_ID}"
