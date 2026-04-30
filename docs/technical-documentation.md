@@ -52,7 +52,7 @@ INVALID:
 Evidence present but fails policy. Deployment rejected.
 
 BLOCKED:  
-Required evidence missing. Deployment halted.
+Not eligible for promotion (missing evidence and/or unmet approval/promotion prerequisites). Deployment halted.
 
 ## Pricing
 
