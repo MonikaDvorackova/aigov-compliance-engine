@@ -281,9 +281,8 @@ jobs:
           if [ "${c}" -gt 1 ]; then
             if [ "${is_release_promotion}" = "true" ]; then
               # staging -> main promotions aggregate multiple already-reviewed reports.
-              # Keep downstream jobs working by emitting a deterministic single run_id.
-              only="$(printf '%s\n' "${SORTED_UNIQ}" | awk 'NF{print; exit}')"
-              echo "run_id=${only}" >> "${OUT}"
+              # Use a unique hosted CI run id to avoid duplicate event ids across reruns.
+              echo "run_id=release-promotion-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "${OUT}"
               exit 0
             fi
             joined="$(printf '%s\n' "${SORTED_UNIQ}" | awk 'NF' | paste -sd ',' - | sed 's/,/, /g')"
