@@ -25,7 +25,9 @@ GovAI does **not** generate missing evidence and is **not** a legal certificatio
 
 - **`VALID`**: required evidence present and policy satisfied (deployment allowed)
 - **`INVALID`**: evidence present but fails policy (deployment rejected)
-- **`BLOCKED`**: required evidence missing (deployment halted)
+- **`BLOCKED`**: not eligible for promotion yet (deployment halted)
+
+`BLOCKED` can be caused by missing required evidence (`missing_evidence` is non-empty) and/or unmet approval/promotion prerequisites (`blocked_reasons` explains why), even when `missing_evidence: []`.
 
 ## Trust and explainability (minimal)
 
