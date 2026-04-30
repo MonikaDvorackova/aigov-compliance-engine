@@ -294,10 +294,40 @@ jobs:
 
       - name: Build evidence packs
         if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
+        env:
+          EMITTED_RUN_ID: ${{ steps.govai_emit_run_id.outputs.run_id }}
         run: |
           set -euo pipefail
           mkdir -p docs/audit docs/evidence docs/packs
           mkdir -p "${GITHUB_WORKSPACE}/.aigov_ci_artifacts"
+
+          if [[ "${EMITTED_RUN_ID}" == release-promotion-* ]]; then
+            RUN_ID="${EMITTED_RUN_ID}"
+
+            cd python
+            . .venv/bin/activate
+            cd "${GITHUB_WORKSPACE}"
+
+            make run RUN_ID="${RUN_ID}"
+
+            ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            curl -sS -X POST "${AUDIT_URL}/evidence" \
+              -H "Content-Type: application/json" \
+              -d "{\"event_id\":\"evt_ai_discovery_${RUN_ID}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}\",\"event_type\":\"ai_discovery_reported\",\"ts_utc\":\"${ts}\",\"actor\":\"ci\",\"system\":\"github_actions\",\"run_id\":\"${RUN_ID}\",\"payload\":{\"openai\":false,\"transformers\":false,\"model_artifacts\":false}}"
+
+            make approve RUN_ID="${RUN_ID}"
+            make promote RUN_ID="${RUN_ID}"
+
+            make report_prepare RUN_ID="${RUN_ID}"
+            make evidence_pack RUN_ID="${RUN_ID}"
+
+            cp "docs/reports/${RUN_ID}.md" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
+            cp "docs/audit/${RUN_ID}.json" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
+            cp "docs/evidence/${RUN_ID}.json" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
+            cp "docs/packs/${RUN_ID}.zip" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
+
+            exit 0
+          fi
 
           REPORTS_CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           printf '%s\n' "${REPORTS_CHANGED}" | while IFS= read -r report; do
