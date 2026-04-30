@@ -1,100 +1,64 @@
 ## Summary
 
-`.github/workflows/govai-check.yml` is restored as a strict compliance gate: it **passes only on `VALID`**.
-To make the self-contained run eligible for `VALID`, the workflow now submits the supported evidence
-events required by the policy and verdict rules (instead of initializing the run with only discovery evidence).
+On branch `fix/restore-self-contained-govai-check`, `.github/workflows/govai-check.yml` is a strict compliance gate:
+it **passes only when `govai check` prints `VALID`**.
 
-## Root cause
-
-The workflow previously initialized the run with only a minimal `ai_discovery_reported` event. Under the
-current policy/verdict rules, that produces a real run but an expected verdict of `BLOCKED` because the run
-is missing promotion prerequisites (passed evaluation, risk approval, human approval, and promotion).
-
-A temporary change allowed `BLOCKED` to pass, which is incorrect for this workflow’s intended behavior.
-
-## Fix
-
-- Reverted the `BLOCKED`-as-pass behavior so the gate is `VALID`-only again.
-- Added a dedicated “Submit required evidence” step that posts the supported event types and payloads
-  required for `VALID`, using the same `run_id` and the same `X-GovAI-Project: github-actions` context
-  as the initialization step and `govai check`.
-
-Event types used (all supported by policy enforcement and docs):
-
-- `ai_discovery_reported` (no findings; satisfies `ai_discovery_completed` requirement)
-- `data_registered`
-- `model_trained`
-- `evaluation_reported` (`passed: true`)
-- `risk_reviewed` (`decision: approve`)
-- `human_approved` (`decision: approve`, `approver: compliance_officer`)
-- `model_promoted` (references `approved_human_event_id`)
+To make the workflow self-contained (no external pipelines required), the job posts the **full lifecycle evidence**
+required for a `VALID` verdict, then runs `govai check` against the same `run_id` and the same `X-GovAI-Project`
+tenant context.
 
 ## Evaluation gate
 
-This workflow is a real compliance gate:
+Per the server verdict logic, a run can only be `VALID` if:
 
-- `VALID` → pass (exit 0)
-- `BLOCKED` → fail
-- `INVALID` → fail
-- `RUN_NOT_FOUND` / HTTP errors / auth / connectivity failures → fail
+- `evaluation_reported` exists with `"passed": true`
+- `risk_reviewed` exists with `"decision": "approve"`
+- `human_approved` exists with `"scope": "model_promoted"` and `"decision": "approve"`
+- `model_promoted` exists and references the specific approval event via `approved_human_event_id`
 
-## Human approval gate
-
-Human review should confirm:
-
-- the workflow remains `VALID`-only (no special-case pass for `BLOCKED`)
-- evidence events posted in CI match the supported schema/policy in `rust/src/policy.rs` and `docs/manual-evidence-flow.md`
-- the same project context (`X-GovAI-Project: github-actions`) is used consistently for all evidence posts and `govai check`
-
-
-## Summary
-
-We observed inconsistent `GET /compliance-summary` responses where:
-
-- `verdict` was `BLOCKED`
-- `requirements.missing` and `requirements.missing_requirements` were empty
-- `blocked_reasons` was empty
-- `current_state.model.promotion.state` indicated a lifecycle gate such as `"awaiting_risk_review"`
-
-This is confusing for consumers: a `BLOCKED` verdict must always be accompanied by an explicit explanation in `blocked_reasons` and/or unmet evidence requirements.
-
-This change makes `blocked_reasons` additive: it continues to expose **discovery-derived evidence blockers**, and now also exposes **lifecycle / promotion gate blockers** when evidence requirements are already satisfied.
-
-## Evaluation gate
-
-`verdict` can be `BLOCKED` even when discovery requirements are satisfied because promotion readiness requires more than discovery completion.
-
-We now emit:
-
-- `evaluation_required`: when `current_state.model.evaluation_passed` is `null` (no evaluation evidence yet)
-
-Note: `evaluation_passed=false` remains an `INVALID` verdict (not a `BLOCKED` verdict).
+If any of these gates is missing, the verdict is `BLOCKED` and the server must report explicit `blocked_reasons`.
 
 ## Human approval gate
 
-Promotion readiness may require explicit human approval. We now emit:
+The CI workflow posts a `human_approved` event with:
 
-- `approval_required`: when `current_state.approval.human_approval_decision != "approve"`
+- `"scope": "model_promoted"`
+- `"decision": "approve"`
+- a stable `event_id` (derived from `GOVAI_RUN_ID`) that is referenced by the later `model_promoted` event
 
 ## Risk assessment
 
-Promotion readiness may require an approved risk review. We now emit:
+The CI workflow posts a `risk_reviewed` event with:
 
-- `awaiting_risk_review`: when `current_state.approval.risk_review_decision != "approve"`
+- `"decision": "approve"` (note: **not** `"approved"`)
+- required linkage fields (`assessment_id`, `risk_id`, `dataset_governance_commitment`, and identifiers)
 
 ## Verification
 
-- Add regression test: discovery-only run must be either `VALID`, or `BLOCKED` with non-empty `blocked_reasons`.
-- Add invariant: there must never be `BLOCKED` with both empty `requirements.missing` and empty `blocked_reasons`.
+### Evidence sequence (CI)
 
-Local commands:
+The workflow posts these events **in this exact order**, using the **same** `GOVAI_RUN_ID` and the **same**
+`X-GovAI-Project: github-actions` context:
 
-```bash
-cargo test -p aigov_audit --tests
-cargo test -p aigov_audit
-```
+1. `ai_discovery_reported`
+2. `evaluation_reported` (`passed=true`)
+3. `risk_reviewed` (`decision=approve`)
+4. `human_approved` (`decision=approve`)
+5. `model_promoted` (must reference `approved_human_event_id`)
 
-Manual API check:
+Each POST prints:
 
-- `curl` `GET /compliance-summary?run_id=<discovery-only-run>` must not return `BLOCKED` with both `requirements.missing=[]` and `blocked_reasons=[]`.
+- the full JSON request body
+- the full HTTP response body
+
+and **fails immediately** if the HTTP status is not 2xx.
+
+### Debugging output on failure
+
+If `govai check` fails, the workflow prints:
+
+- `govai explain`
+- full `/compliance-summary` JSON for the run
+
+This makes remaining `BLOCKED` verdicts actionable (it shows exactly which lifecycle gate is still missing).
 
