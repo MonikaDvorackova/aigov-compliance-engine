@@ -37,10 +37,10 @@ Configure in **Settings → Secrets and variables → Actions**:
 | Name | Type | Required | Purpose |
 |------|------|----------|---------|
 | `GOVAI_AUDIT_BASE_URL` | Variable | Yes | Base URL of the GovAI audit API |
-| `GOVAI_RUN_ID` | Variable | Yes* | Evidence run id shared across evidence submission, `govai check`, and export |
+| `GOVAI_RUN_ID` | Variable | No* | Optional fallback run id (recommended only for **manual debugging**, not PR/push checks) |
 | `GOVAI_API_KEY` | Secret | Yes (for the customer-facing CI gate) | Bearer token for the audit API |
 
-\*Or supply `run_id` from another step/job output instead of `vars.GOVAI_RUN_ID`.
+\*Preferred: supply `run_id` from another step/job output (`UPSTREAM_GOVAI_RUN_ID`) or (for standalone checks) generate a fresh run id in the workflow and initialize it via `POST /evidence` before calling `govai check`.
 
 Use **one** `GOVAI_RUN_ID` value for the whole release pipeline: every `POST /evidence` for that deployment, the `govai check` step, and `govai export-run` must refer to the **same** id.
 
@@ -51,7 +51,8 @@ The repository’s customer-facing workflow gate (`.github/workflows/govai-check
 - If any of these are missing, the job **fails immediately** (non-zero exit code):
   - `GOVAI_AUDIT_BASE_URL`
   - `GOVAI_API_KEY`
-  - `GOVAI_RUN_ID`
+- For PR/push usage, the workflow is **self-contained**: it generates a fresh `run_id` (unless an upstream run id is provided) and posts a minimal evidence event before running `govai check`.
+- The job still fails unless the verdict is `VALID` — with minimal evidence only, the expected outcome is typically `BLOCKED` rather than `RUN_NOT_FOUND`.
 - This is intentional so a misconfigured gate cannot “skip green” and accidentally allow merges.
 
 The composite action is intentionally strict: missing `base_url`, `run_id`, or `api_key` fails immediately so a misconfigured gate cannot “skip green”.
@@ -91,18 +92,18 @@ If the gate is enabled but not configured, you’ll see errors like:
 ::error::Fix: Set repository Secret GOVAI_API_KEY (Settings → Secrets and variables → Actions → Secrets).
 ```
 
-## Example BLOCKED failure output (missing evidence)
+## Example BLOCKED failure output (not eligible for promotion)
 
-When the backend returns `BLOCKED`, the job fails (strict gate) and prints the verdict as a **compliance verdict** (not a fetch/connectivity failure):
+When the backend returns `BLOCKED`, the job fails (strict gate) and prints the verdict as a **compliance verdict** (not a fetch/connectivity failure). `BLOCKED` can happen due to missing required evidence and/or unmet approval/promotion prerequisites (in that case `missing_evidence` can be `[]`; see `blocked_reasons`):
 
 ```text
 BLOCKED
 missing_evidence:
   - evaluation_reported (policy)
 blocked_reasons:
-  - …
+  - ...
 ::error::GovAI verdict: BLOCKED
-::error::Required evidence is missing — see missing_evidence and blocked_reasons in the govai check output above.
+::error::Run is not eligible for promotion yet — see missing_evidence and blocked_reasons in the govai check output above.
 ```
 
 ## Local usage in this repository

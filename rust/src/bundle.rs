@@ -34,13 +34,15 @@ fn sort_json_value(v: serde_json::Value) -> serde_json::Value {
 }
 
 pub fn collect_events_for_run(log_path: &str, run_id: &str) -> Result<Vec<EvidenceEvent>, String> {
-    let f = File::open(log_path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            format!("log not found: {}", log_path)
-        } else {
-            e.to_string()
+    let f = match File::open(log_path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // First-write initialization: missing tenant ledger means "no events yet".
+            // (Ledger file is created on first successful append.)
+            return Ok(Vec::new());
         }
-    })?;
+        Err(e) => return Err(e.to_string()),
+    };
 
     let reader = BufReader::new(f);
     let mut out: Vec<EvidenceEvent> = Vec::new();

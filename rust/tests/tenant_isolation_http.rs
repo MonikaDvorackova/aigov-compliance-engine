@@ -62,6 +62,18 @@ fn sample_data_registered(run_id: &str, event_id: &str) -> Value {
     })
 }
 
+fn sample_ai_discovery_reported_minimal(run_id: &str, event_id: &str) -> Value {
+    json!({
+        "event_id": event_id,
+        "event_type": "ai_discovery_reported",
+        "ts_utc": "2026-04-21T12:00:00Z",
+        "actor": "test",
+        "system": "tenant-isolation-test",
+        "run_id": run_id,
+        "payload": { "openai": false, "transformers": false, "model_artifacts": false }
+    })
+}
+
 async fn test_router(pool: sqlx::PgPool, env: GovaiEnvironment) -> Router {
     let api_usage = ApiUsageState::from_env(&pool).expect("api usage");
     let metering = MeteringConfig {
@@ -77,6 +89,72 @@ async fn test_router(pool: sqlx::PgPool, env: GovaiEnvironment) -> Router {
         pool,
         metering,
     )
+}
+
+#[tokio::test]
+async fn first_evidence_event_creates_tenant_ledger_with_x_govai_project() {
+    let Some(url) = database_url() else {
+        eprintln!("skip tenant_isolation_http: set DATABASE_URL or TEST_DATABASE_URL");
+        return;
+    };
+
+    let _lock = CWD_LOCK.lock().expect("lock");
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::env::set_current_dir(dir.path()).expect("chdir");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect db");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrate");
+
+    // Require auth to match the expected production-ish client request shape.
+    const KEY: &str = "evidence_first_write_key";
+    std::env::set_var("GOVAI_API_KEYS", KEY);
+
+    let app = test_router(pool, GovaiEnvironment::Dev).await;
+
+    let tenant = "github-actions";
+    let ledger_path = project::resolve_ledger_path("audit_log.jsonl", tenant);
+    assert!(
+        !std::path::Path::new(&ledger_path).exists(),
+        "precondition: tenant ledger must not exist"
+    );
+
+    let run_id = "test_project_context_1";
+    let ev_id = uuid::Uuid::new_v4().to_string();
+    let body = serde_json::to_string(&sample_ai_discovery_reported_minimal(run_id, &ev_id)).unwrap();
+
+    let r = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evidence")
+                .header(header::AUTHORIZATION, format!("Bearer {KEY}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-govai-project", tenant)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let s = r.status();
+    let bytes = r.into_body().collect().await.unwrap().to_bytes();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(s, StatusCode::OK, "unexpected /evidence response: {v}");
+
+    assert!(
+        std::path::Path::new(&ledger_path).exists(),
+        "tenant ledger should be created on first append"
+    );
+    let raw = std::fs::read_to_string(&ledger_path).unwrap_or_default();
+    assert!(raw.contains(run_id), "tenant ledger should contain run_id");
+
+    std::env::remove_var("GOVAI_API_KEYS");
 }
 
 #[tokio::test]

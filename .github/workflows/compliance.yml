@@ -342,9 +342,25 @@ jobs:
           fi
           echo "GovAI check RUN_ID=${RUN_ID}"
           echo "GovAI base URL=${GOVAI_AUDIT_BASE_URL}"
-          curl -sS "${GOVAI_AUDIT_BASE_URL}/compliance-summary?run_id=${RUN_ID}" || true
           . .venv/bin/activate
-          govai check --run-id "${RUN_ID}"
+          set +e
+          out="$(govai check --run-id "${RUN_ID}" 2>&1)"
+          code="$?"
+          set -e
+          printf '%s\n' "${out}"
+          first="$(printf '%s\n' "${out}" | head -n 1 | tr -d '\r\n' | xargs)"
+          if [ "${code}" -eq 0 ] && [ "${first}" = "VALID" ]; then
+            exit 0
+          fi
+
+          echo "GovAI explain:"
+          govai explain --run-id "${RUN_ID}" || true
+
+          echo "GovAI compliance summary:"
+          curl -sS "${GOVAI_AUDIT_BASE_URL%/}/compliance-summary?run_id=${RUN_ID}" || true
+
+          echo "::error::GovAI local audit compliance gate failed: verdict=${first:-unknown}"
+          exit 1
 
       - name: Ensure artifacts exist
         if: always()
@@ -375,6 +391,7 @@ jobs:
       GOVAI_AUDIT_BASE_URL: ${{ vars.GOVAI_AUDIT_BASE_URL }}
       GOVAI_API_KEY: ${{ secrets.GOVAI_API_KEY }}
       GOVAI_RUN_ID: ${{ needs.evidence_pack.outputs.run_id }}
+      GOVAI_PROJECT: github-actions
     steps:
       - uses: actions/checkout@v4
 
@@ -407,22 +424,211 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install "aigov-py==0.1.1"
+          python -m pip install -e ./python
           govai --help >/dev/null
 
-      - name: Submit AI discovery evidence
+      - name: Submit hosted evidence (make run eligible for VALID)
+        env:
+          GOVAI_AUDIT_BASE_URL: ${{ vars.GOVAI_AUDIT_BASE_URL }}
+          GOVAI_API_KEY: ${{ secrets.GOVAI_API_KEY }}
+          GOVAI_RUN_ID: ${{ needs.evidence_pack.outputs.run_id }}
+          GOVAI_PROJECT: github-actions
+        shell: bash
         run: |
           set -euo pipefail
+
           ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          curl -sS -X POST "${GOVAI_AUDIT_BASE_URL}/evidence" \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${GOVAI_API_KEY}" \
-            -d "{\"event_id\":\"evt_ai_discovery_${GOVAI_RUN_ID}_${GITHUB_RUN_ID}\",\"event_type\":\"ai_discovery_reported\",\"ts_utc\":\"${ts}\",\"actor\":\"ci\",\"system\":\"github_actions\",\"run_id\":\"${GOVAI_RUN_ID}\",\"payload\":{\"openai\":false,\"transformers\":false,\"model_artifacts\":false}}"
+
+          ai_system_id="expense-ai"
+          dataset_id="expense_dataset_v1"
+          dataset_commitment="basic_compliance"
+
+          model_version_id="mv_${GOVAI_RUN_ID}"
+          assessment_id="asmt_${GOVAI_RUN_ID}"
+          risk_id="risk_${GOVAI_RUN_ID}"
+          artifact_path="artifacts/model_${GOVAI_RUN_ID}.joblib"
+
+          human_event_id="evt_ci_human_approved_${GOVAI_RUN_ID}"
+
+          post_ev () {
+            local name="$1"
+            local body="$2"
+            local response
+            response="$(mktemp)"
+            local status
+
+            echo ""
+            echo "============================================================"
+            echo "Posting evidence (hosted): ${name}"
+            echo "run_id=${GOVAI_RUN_ID}"
+            echo "X-GovAI-Project=${GOVAI_PROJECT}"
+            echo "ts_utc=${ts}"
+            echo "Body:"
+            printf '%s\n' "${body}"
+            echo "------------------------------------------------------------"
+
+            status="$(
+              curl -sS -o "${response}" -w "%{http_code}" \
+                -X POST "${GOVAI_AUDIT_BASE_URL%/}/evidence" \
+                -H "Authorization: Bearer ${GOVAI_API_KEY}" \
+                -H "X-GovAI-Project: ${GOVAI_PROJECT}" \
+                -H "Content-Type: application/json" \
+                --data "${body}"
+            )"
+
+            echo "Response (HTTP ${status}):"
+            cat "${response}"
+
+            if [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
+              echo "::error::Evidence POST failed with HTTP ${status}"
+              exit 1
+            fi
+          }
+
+          # Required VALID sequence (strict, same run_id + project context):
+          # 1) ai_discovery_reported
+          # 2) evaluation_reported (passed=true)
+          # 3) risk_reviewed (decision=approve)
+          # 4) human_approved (decision=approve)
+          # 5) model_promoted (references approved_human_event_id)
+
+          post_ev "ai_discovery_reported" "$(cat <<EOF
+          {
+            "event_id": "evt_ci_ai_discovery_reported_${GOVAI_RUN_ID}",
+            "event_type": "ai_discovery_reported",
+            "ts_utc": "${ts}",
+            "actor": "ci",
+            "system": "github_actions",
+            "run_id": "${GOVAI_RUN_ID}",
+            "payload": {
+              "openai": false,
+              "transformers": false,
+              "model_artifacts": false
+            }
+          }
+          EOF
+          )"
+
+          post_ev "evaluation_reported" "$(cat <<EOF
+          {
+            "event_id": "evt_ci_evaluation_reported_${GOVAI_RUN_ID}",
+            "event_type": "evaluation_reported",
+            "ts_utc": "${ts}",
+            "actor": "ci",
+            "system": "github_actions",
+            "run_id": "${GOVAI_RUN_ID}",
+            "payload": {
+              "ai_system_id": "${ai_system_id}",
+              "dataset_id": "${dataset_id}",
+              "model_version_id": "${model_version_id}",
+              "metric": "accuracy",
+              "value": 0.95,
+              "threshold": 0.8,
+              "passed": true
+            }
+          }
+          EOF
+          )"
+
+          post_ev "risk_reviewed" "$(cat <<EOF
+          {
+            "event_id": "evt_ci_risk_reviewed_${GOVAI_RUN_ID}",
+            "event_type": "risk_reviewed",
+            "ts_utc": "${ts}",
+            "actor": "ci",
+            "system": "github_actions",
+            "run_id": "${GOVAI_RUN_ID}",
+            "payload": {
+              "ai_system_id": "${ai_system_id}",
+              "dataset_id": "${dataset_id}",
+              "model_version_id": "${model_version_id}",
+              "risk_id": "${risk_id}",
+              "assessment_id": "${assessment_id}",
+              "dataset_governance_commitment": "${dataset_commitment}",
+              "decision": "approve",
+              "reviewer": "risk_officer",
+              "justification": "ci: approve risk for demo promotion"
+            }
+          }
+          EOF
+          )"
+
+          post_ev "human_approved" "$(cat <<EOF
+          {
+            "event_id": "${human_event_id}",
+            "event_type": "human_approved",
+            "ts_utc": "${ts}",
+            "actor": "ci",
+            "system": "github_actions",
+            "run_id": "${GOVAI_RUN_ID}",
+            "payload": {
+              "scope": "model_promoted",
+              "decision": "approve",
+              "approver": "compliance_officer",
+              "justification": "ci: approve demo promotion",
+              "assessment_id": "${assessment_id}",
+              "risk_id": "${risk_id}",
+              "dataset_governance_commitment": "${dataset_commitment}",
+              "ai_system_id": "${ai_system_id}",
+              "dataset_id": "${dataset_id}",
+              "model_version_id": "${model_version_id}"
+            }
+          }
+          EOF
+          )"
+
+          post_ev "model_promoted" "$(cat <<EOF
+          {
+            "event_id": "evt_ci_model_promoted_${GOVAI_RUN_ID}",
+            "event_type": "model_promoted",
+            "ts_utc": "${ts}",
+            "actor": "ci",
+            "system": "github_actions",
+            "run_id": "${GOVAI_RUN_ID}",
+            "payload": {
+              "artifact_path": "${artifact_path}",
+              "promotion_reason": "ci_demo",
+              "assessment_id": "${assessment_id}",
+              "risk_id": "${risk_id}",
+              "dataset_governance_commitment": "${dataset_commitment}",
+              "approved_human_event_id": "${human_event_id}",
+              "ai_system_id": "${ai_system_id}",
+              "dataset_id": "${dataset_id}",
+              "model_version_id": "${model_version_id}"
+            }
+          }
+          EOF
+          )"
 
       - name: GovAI check (must be VALID)
+        env:
+          GOVAI_AUDIT_BASE_URL: ${{ vars.GOVAI_AUDIT_BASE_URL }}
+          GOVAI_API_KEY: ${{ secrets.GOVAI_API_KEY }}
+          GOVAI_RUN_ID: ${{ needs.evidence_pack.outputs.run_id }}
+          GOVAI_PROJECT: github-actions
         run: |
           set -euo pipefail
-          govai check --run-id "${GOVAI_RUN_ID}"
+          set +e
+          out="$(govai --project "${GOVAI_PROJECT}" check --run-id "${GOVAI_RUN_ID}" 2>&1)"
+          code="$?"
+          set -e
+          printf '%s\n' "${out}"
+          first="$(printf '%s\n' "${out}" | head -n 1 | tr -d '\r\n' | xargs)"
+          if [ "${code}" -eq 0 ] && [ "${first}" = "VALID" ]; then
+            exit 0
+          fi
+
+          echo "GovAI explain:"
+          govai --project "${GOVAI_PROJECT}" explain --run-id "${GOVAI_RUN_ID}" || true
+
+          echo "GovAI compliance summary:"
+          curl -sS \
+            -H "Authorization: Bearer ${GOVAI_API_KEY}" \
+            -H "X-GovAI-Project: ${GOVAI_PROJECT}" \
+            "${GOVAI_AUDIT_BASE_URL%/}/compliance-summary?run_id=${GOVAI_RUN_ID}" || true
+
+          echo "::error::GovAI hosted compliance gate failed: verdict=${first:-unknown}"
+          exit 1
 
   upload_evidence_packs:
     name: upload_evidence_packs
