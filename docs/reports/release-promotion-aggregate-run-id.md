@@ -43,3 +43,15 @@ For normal PRs (including PRs into `staging`, and non-staging→main PRs into `m
 - The run id continues to map to the **changed report basename** (exactly as before).
 - The workflow keeps the existing per-report loop over changed `docs/reports/*.md` files and builds evidence per basename.
 
+
+## Evaluation gate
+
+The release-promotion compliance flow preserves the existing evaluation requirement. The aggregate run id is used only to align evidence creation and validation across the release workflow. It does not weaken the evaluation gate or convert missing evidence into success.
+
+Expected result: the compliance check must still evaluate the release-promotion run as VALID before promotion to main can proceed.
+
+## Human approval gate
+
+The release-promotion compliance flow preserves the existing human approval requirement. Approval evidence must be generated for the same aggregate run id that is later checked by the local and hosted compliance gates.
+
+Expected result: promotion remains blocked unless the aggregate run contains the required human approval evidence.
