@@ -154,6 +154,188 @@ jobs:
             exit 1
           fi
 
+      - name: Submit required evidence (make run eligible for VALID)
+        env:
+          GOVAI_AUDIT_BASE_URL: ${{ vars.GOVAI_AUDIT_BASE_URL }}
+          GOVAI_API_KEY: ${{ secrets.GOVAI_API_KEY }}
+          GOVAI_RUN_ID: ${{ steps.run.outputs.effective }}
+          GOVAI_PROJECT: github-actions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          ai_system_id="expense-ai"
+          dataset_id="expense_dataset_v1"
+          dataset_commitment="basic_compliance"
+
+          model_version_id="mv_${GOVAI_RUN_ID}"
+          assessment_id="asmt_${GOVAI_RUN_ID}"
+          risk_id="risk_${GOVAI_RUN_ID}"
+          artifact_path="artifacts/model_${GOVAI_RUN_ID}.joblib"
+
+          human_event_id="evt_ci_human_approved_${GOVAI_RUN_ID}"
+
+          post_ev () {
+            local body="$1"
+            local response
+            response="$(mktemp)"
+            local status
+            status="$(
+              curl -sS -o "${response}" -w "%{http_code}" \
+                -X POST "${GOVAI_AUDIT_BASE_URL%/}/evidence" \
+                -H "Authorization: Bearer ${GOVAI_API_KEY}" \
+                -H "X-GovAI-Project: ${GOVAI_PROJECT}" \
+                -H "Content-Type: application/json" \
+                --data "${body}"
+            )"
+
+            if [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
+              echo "Evidence POST response:"
+              cat "${response}"
+              echo "::error::Evidence POST failed with HTTP ${status}"
+              exit 1
+            fi
+          }
+
+          post_ev "$(cat <<EOF
+          {
+            "event_id": "evt_ci_data_registered_${GOVAI_RUN_ID}",
+            "event_type": "data_registered",
+            "ts_utc": "${ts}",
+            "actor": "ci",
+            "system": "github_actions",
+            "run_id": "${GOVAI_RUN_ID}",
+            "payload": {
+              "ai_system_id": "${ai_system_id}",
+              "dataset_id": "${dataset_id}",
+              "dataset": "customer_expense_records",
+              "dataset_version": "v1",
+              "dataset_fingerprint": "sha256:ci",
+              "dataset_governance_id": "gov_expense_v1",
+              "dataset_governance_commitment": "${dataset_commitment}",
+              "source": "internal",
+              "intended_use": "expense classification",
+              "limitations": "ci demo dataset",
+              "quality_summary": "ci synthetic example",
+              "governance_status": "registered"
+            }
+          }
+          EOF
+          )"
+
+          post_ev "$(cat <<EOF
+          {
+            "event_id": "evt_ci_model_trained_${GOVAI_RUN_ID}",
+            "event_type": "model_trained",
+            "ts_utc": "${ts}",
+            "actor": "ci",
+            "system": "github_actions",
+            "run_id": "${GOVAI_RUN_ID}",
+            "payload": {
+              "ai_system_id": "${ai_system_id}",
+              "dataset_id": "${dataset_id}",
+              "model_version_id": "${model_version_id}",
+              "model_type": "LogisticRegression",
+              "artifact_path": "${artifact_path}",
+              "artifact_sha256": "ci_placeholder"
+            }
+          }
+          EOF
+          )"
+
+          post_ev "$(cat <<EOF
+          {
+            "event_id": "evt_ci_evaluation_reported_${GOVAI_RUN_ID}",
+            "event_type": "evaluation_reported",
+            "ts_utc": "${ts}",
+            "actor": "ci",
+            "system": "github_actions",
+            "run_id": "${GOVAI_RUN_ID}",
+            "payload": {
+              "ai_system_id": "${ai_system_id}",
+              "dataset_id": "${dataset_id}",
+              "model_version_id": "${model_version_id}",
+              "metric": "accuracy",
+              "value": 0.95,
+              "threshold": 0.8,
+              "passed": true
+            }
+          }
+          EOF
+          )"
+
+          post_ev "$(cat <<EOF
+          {
+            "event_id": "evt_ci_risk_reviewed_${GOVAI_RUN_ID}",
+            "event_type": "risk_reviewed",
+            "ts_utc": "${ts}",
+            "actor": "ci",
+            "system": "github_actions",
+            "run_id": "${GOVAI_RUN_ID}",
+            "payload": {
+              "ai_system_id": "${ai_system_id}",
+              "dataset_id": "${dataset_id}",
+              "model_version_id": "${model_version_id}",
+              "risk_id": "${risk_id}",
+              "assessment_id": "${assessment_id}",
+              "dataset_governance_commitment": "${dataset_commitment}",
+              "decision": "approve",
+              "reviewer": "risk_officer",
+              "justification": "ci: approve risk for demo promotion"
+            }
+          }
+          EOF
+          )"
+
+          post_ev "$(cat <<EOF
+          {
+            "event_id": "${human_event_id}",
+            "event_type": "human_approved",
+            "ts_utc": "${ts}",
+            "actor": "ci",
+            "system": "github_actions",
+            "run_id": "${GOVAI_RUN_ID}",
+            "payload": {
+              "scope": "model_promoted",
+              "decision": "approve",
+              "approver": "compliance_officer",
+              "justification": "ci: approve demo promotion",
+              "assessment_id": "${assessment_id}",
+              "risk_id": "${risk_id}",
+              "dataset_governance_commitment": "${dataset_commitment}",
+              "ai_system_id": "${ai_system_id}",
+              "dataset_id": "${dataset_id}",
+              "model_version_id": "${model_version_id}"
+            }
+          }
+          EOF
+          )"
+
+          post_ev "$(cat <<EOF
+          {
+            "event_id": "evt_ci_model_promoted_${GOVAI_RUN_ID}",
+            "event_type": "model_promoted",
+            "ts_utc": "${ts}",
+            "actor": "ci",
+            "system": "github_actions",
+            "run_id": "${GOVAI_RUN_ID}",
+            "payload": {
+              "artifact_path": "${artifact_path}",
+              "promotion_reason": "ci_demo",
+              "assessment_id": "${assessment_id}",
+              "risk_id": "${risk_id}",
+              "dataset_governance_commitment": "${dataset_commitment}",
+              "approved_human_event_id": "${human_event_id}",
+              "ai_system_id": "${ai_system_id}",
+              "dataset_id": "${dataset_id}",
+              "model_version_id": "${model_version_id}"
+            }
+          }
+          EOF
+          )"
+
       - name: GovAI check (must be VALID)
         env:
           GOVAI_AUDIT_BASE_URL: ${{ vars.GOVAI_AUDIT_BASE_URL }}
