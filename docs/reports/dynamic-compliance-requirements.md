@@ -35,9 +35,9 @@ Legacy fields are preserved:
 The compliance verdict is now derived as follows:
 
 1. `INVALID` if evaluation explicitly failed.
-2. `BLOCKED` if `missing_evidence` is non-empty.
-3. `VALID` if required evidence is present and evaluation passed.
-4. `BLOCKED` otherwise.
+2. `BLOCKED` if the run is not eligible for promotion yet (for example because `missing_evidence` is non-empty and/or an approval/promotion prerequisite is unmet and explained via `blocked_reasons`).
+3. `VALID` if required evidence is present, prerequisites are satisfied, and evaluation passed.
+4. `BLOCKED` otherwise (still “not eligible for promotion”, not an error).
 
 ## API compatibility
 
