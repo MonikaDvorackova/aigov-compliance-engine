@@ -328,7 +328,7 @@ async fn ingest(
                 StatusCode::BAD_REQUEST,
                 "MISSING_TENANT_CONTEXT",
                 "Missing tenant context.",
-                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                "Provide `Authorization: Bearer <api_key>`.",
                 Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
                 None,
@@ -887,7 +887,7 @@ async fn verify(
                 StatusCode::BAD_REQUEST,
                 "MISSING_TENANT_CONTEXT",
                 "Missing tenant context.",
-                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                "Provide `Authorization: Bearer <api_key>`.",
                 Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
                 None,
@@ -923,7 +923,7 @@ async fn bundle_route(
                 StatusCode::BAD_REQUEST,
                 "MISSING_TENANT_CONTEXT",
                 "Missing tenant context.",
-                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                "Provide `Authorization: Bearer <api_key>`.",
                 Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
                 None,
@@ -1073,7 +1073,7 @@ async fn export_run_route(
                 StatusCode::BAD_REQUEST,
                 "MISSING_TENANT_CONTEXT",
                 "Missing tenant context.",
-                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                "Provide `Authorization: Bearer <api_key>`.",
                 Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
                 None,
@@ -1087,7 +1087,7 @@ async fn export_run_route(
                 StatusCode::BAD_REQUEST,
                 "MISSING_TENANT_CONTEXT",
                 "Missing tenant context.",
-                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                "Provide `Authorization: Bearer <api_key>`.",
                 Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
                 None,
@@ -1328,7 +1328,7 @@ async fn bundle_hash_route(
                 StatusCode::BAD_REQUEST,
                 "MISSING_TENANT_CONTEXT",
                 "Missing tenant context.",
-                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                "Provide `Authorization: Bearer <api_key>`.",
                 Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
                 None,
@@ -1393,7 +1393,7 @@ async fn verify_log(
                 StatusCode::BAD_REQUEST,
                 "MISSING_TENANT_CONTEXT",
                 "Missing tenant context.",
-                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                "Provide `Authorization: Bearer <api_key>`.",
                 Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
                 None,
@@ -1444,17 +1444,14 @@ pub fn audit_router(
         .route("/usage", get(usage_route))
         .route("/verify", get(verify))
         .route("/bundle", get(bundle_route))
+        .route("/bundle-hash", get(bundle_hash_route))
+        .route("/verify-log", get(verify_log))
         .route("/compliance-summary", get(compliance_summary_route))
         .route("/api/export/:run_id", get(export_run_route))
         .layer(audit_key_layer)
         .with_state(state.clone());
 
-    let open = Router::new()
-        .route("/bundle-hash", get(bundle_hash_route))
-        .route("/verify-log", get(verify_log))
-        .with_state(state);
-
-    Router::new().merge(gated).merge(open)
+    Router::new().merge(gated)
 }
 
 #[derive(Deserialize)]
@@ -1474,7 +1471,7 @@ async fn compliance_summary_route(
                 StatusCode::BAD_REQUEST,
                 "MISSING_TENANT_CONTEXT",
                 "Missing tenant context.",
-                "Provide `X-GovAI-Project` header (recommended) or `Authorization: Bearer <api_key>`.",
+                "Provide `Authorization: Bearer <api_key>`.",
                 Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
                 Some(json!({

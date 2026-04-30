@@ -3,6 +3,7 @@
 pub mod audit_store;
 pub mod bundle;
 pub mod govai_environment;
+pub mod ledger_storage;
 pub mod policy;
 pub mod policy_config;
 pub mod schema;
@@ -58,6 +59,17 @@ pub async fn run() -> Result<(), String> {
             return Err(e);
         }
     };
+
+    if let Err(e) = crate::audit_api_key::init_api_key_tenant_map(deployment_env) {
+        eprintln!("{e}");
+        return Err(e);
+    }
+
+    if let Err(e) = crate::ledger_storage::validate_startup(deployment_env) {
+        eprintln!("{e}");
+        return Err(e);
+    }
+
     let policy_version = govai_environment::policy_version_for(deployment_env);
     let resolved_policy = policy_config::load_with_env(deployment_env.as_str());
 
