@@ -490,6 +490,27 @@ mod tests {
     }
 
     #[test]
+    fn append_creates_missing_parent_dir_before_canonicalization_and_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let nested = dir.path().join("missing_parent").join("ledger.jsonl");
+        assert!(
+            !nested.parent().unwrap().exists(),
+            "precondition: parent dir should not exist"
+        );
+
+        let log_path = nested.to_string_lossy().to_string();
+        let ev = mk_event("r_parent", "e1", "2026-01-01T00:00:00Z");
+        append_record(&log_path, ev).expect("append should create parent dir and succeed");
+
+        assert!(
+            nested.parent().unwrap().exists(),
+            "append should create missing parent directory"
+        );
+        assert!(nested.exists(), "append should create ledger file");
+        verify_chain(&log_path).expect("chain valid");
+    }
+
+    #[test]
     fn trailing_partial_line_is_repaired_and_append_succeeds() {
         let dir = tempfile::tempdir().expect("tempdir");
         let log_path = dir.path().join("ledger.jsonl");

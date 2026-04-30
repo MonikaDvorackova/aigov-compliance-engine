@@ -241,7 +241,13 @@ jobs:
           set -euo pipefail
           test -n "${DATABASE_URL:-}" || { echo "DATABASE_URL is missing"; exit 1; }
           mkdir -p "${GOVAI_LEDGER_DIR}"
-          nohup bash -lc 'cd rust && cargo run --locked' > "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" 2>&1 &
+
+          pwd
+          echo "GOVAI_LEDGER_DIR=$GOVAI_LEDGER_DIR"
+          ls -ld "$GOVAI_LEDGER_DIR"
+
+          # Ensure GOVAI_LEDGER_DIR is present for the backgrounded server process.
+          nohup env GOVAI_LEDGER_DIR="${GOVAI_LEDGER_DIR}" bash -lc 'cd rust && cargo run --locked' > "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" 2>&1 &
           for i in {1..240}; do
             if curl -fsS "${AUDIT_URL}/status" >/dev/null; then
               exit 0
