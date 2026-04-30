@@ -259,20 +259,6 @@ fn prepare_event_for_ingest(
     Ok(())
 }
 
-fn collect_existing_and_reject_duplicate(
-    log_path: &str,
-    event: &EvidenceEvent,
-) -> Result<Vec<EvidenceEvent>, String> {
-    let existing = bundle::collect_events_for_run(log_path, &event.run_id)?;
-    if existing.iter().any(|e| e.event_id == event.event_id) {
-        return Err(format!(
-            "duplicate event_id for run_id: event_id={} run_id={}",
-            event.event_id, event.run_id
-        ));
-    }
-    Ok(existing)
-}
-
 fn canonicalize_events(mut events: Vec<EvidenceEvent>) -> Vec<EvidenceEvent> {
     let mut seen: HashSet<String> = HashSet::new();
     events.sort_by(|a, b| a.ts_utc.cmp(&b.ts_utc));
@@ -360,21 +346,6 @@ async fn ingest(
         );
     }
 
-    let existing = match collect_existing_and_reject_duplicate(&log_path, &event) {
-        Ok(e) => e,
-        Err(e) => {
-            return api_err(
-                StatusCode::CONFLICT,
-                "DUPLICATE_EVENT_ID",
-                "This event_id already exists for this run_id.",
-                "Use a new `event_id`, or treat this request as an idempotent retry and stop sending duplicates.",
-                Some(json!({ "raw": e })),
-                Some(audit.policy_version),
-                None,
-            );
-        }
-    };
-
     // Used for usage counters after a successful append (avoid double counting on rejected ingests).
     let is_discovery_scan = event.event_type == "ai_discovery_reported";
 
@@ -385,10 +356,26 @@ async fn ingest(
         None
     };
 
+    let run_id = event.run_id.clone();
+    let existing = match bundle::collect_events_for_run(&log_path, &run_id) {
+        Ok(e) => e,
+        Err(e) => {
+            return api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "READ_LOG_ERROR",
+                "We could not read existing evidence events for this run.",
+                "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                Some(json!({ "raw": e })),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+
+    // Used for metering/quota prechecks (append remains authoritative and atomic).
     let pre_count = existing.len() as u64;
     let next_count = pre_count + 1;
     let is_new_run = pre_count == 0;
-    let run_id = event.run_id.clone();
 
     let metering_team = if audit.metering.enabled {
         let key_hash = match audit_api_key::raw_bearer_token(&headers) {
@@ -567,8 +554,11 @@ async fn ingest(
         }
     }
 
-    match crate::audit_store::append_record(&log_path, event) {
-        Ok(rec) => {
+    match crate::audit_store::append_record_atomic_with_run_count(&log_path, event) {
+        Ok((rec, pre_count_usize)) => {
+            let pre_count = pre_count_usize as u64;
+            let next_count = pre_count + 1;
+            let is_new_run = pre_count == 0;
             if let Some((team_id, plan, ym, limits, new_run_ids, evidence_events)) = metering_team {
                 if let Err(e) = metering::record_successful_ingest(
                     &audit.pool,
@@ -667,15 +657,29 @@ async fn ingest(
                 )
             }
         }
-        Err(e) => api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "APPEND_ERROR",
-            "We could not append this evidence event.",
-            "Retry in a moment. If this persists, contact support (this is a server-side issue).",
-            Some(json!({ "raw": e })),
-            Some(audit.policy_version),
-            None,
-        ),
+        Err(e) => {
+            if e.contains("duplicate event_id for run_id") {
+                api_err(
+                    StatusCode::CONFLICT,
+                    "DUPLICATE_EVENT_ID",
+                    "This event_id already exists for this run_id.",
+                    "Use a new `event_id`, or treat this request as an idempotent retry and stop sending duplicates.",
+                    Some(json!({ "raw": e })),
+                    Some(audit.policy_version),
+                    None,
+                )
+            } else {
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "APPEND_ERROR",
+                    "We could not append this evidence event.",
+                    "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                    Some(json!({ "raw": e })),
+                    Some(audit.policy_version),
+                    None,
+                )
+            }
+        }
     }
 }
 
