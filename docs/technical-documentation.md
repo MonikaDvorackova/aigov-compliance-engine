@@ -95,7 +95,9 @@ Limits are exposed via GET /usage.
 - **Chain:** `GET /verify`, `GET /verify-log`
 - **Bundle:** `GET /bundle?run_id=…`, `GET /bundle-hash?run_id=…`
 - **Summary:** `GET /compliance-summary?run_id=…` — `ok`, `schema_version` (`aigov.compliance_summary.v2`), `policy_version`, `run_id`; when `ok` is true — `verdict` (`VALID` / `INVALID` / `BLOCKED`) and `current_state` (inner `schema_version`: `aigov.compliance_current_state.v2`, same projection as bundle `identifiers` for canonical fields).
-- **Storage:** append-only `audit_log.jsonl` (relative to process cwd when running from `rust/`).
+- **Storage:** append-only JSONL ledger files.
+  - Dev default: relative to process cwd (local-friendly).
+  - Staging/prod: requires `GOVAI_LEDGER_DIR` pointing to a **persistent** directory (service fails fast otherwise).
 - **Other:** `GET /status` (`ok`, `policy_version`, `environment`); `GET /`, `/health` — service metadata (`GET /` is **internal** per OpenAPI).
 
 Authenticated routes (Supabase JWT; **stable** enterprise surface): `GET /api/me`, `POST /api/assessments`, `/api/compliance-workflow*` — see OpenAPI.

@@ -45,6 +45,14 @@ Goal for “hosted mode”: customers call your hosted URL and **do not run Rust
   - Postgres connection string for the hosted service.
   - If neither is set, the service fails fast on startup with an explicit error.
 
+### Required in staging / production (durable audit evidence)
+
+- **`GOVAI_LEDGER_DIR`**
+  - Example: `GOVAI_LEDGER_DIR=/var/lib/govai/ledger`
+  - This directory **must be backed by persistent storage** (durable volume / durable disk).
+  - The service will **fail startup in staging/prod** if this is missing, not creatable, or not writable.
+  - Warning: **ephemeral container filesystems are unsafe** for audit evidence; do not rely on the process working directory.
+
 ### Strongly recommended for hosted mode
 
 - **`GOVAI_API_KEYS`**
@@ -108,6 +116,7 @@ In the Python terminal SDK, they configure:
 ```bash
 export AIGOV_BIND="0.0.0.0:8088"
 export GOVAI_DATABASE_URL="postgres://USER:PASSWORD@HOST:5432/DBNAME"
+export GOVAI_LEDGER_DIR="/var/lib/govai/ledger"
 export GOVAI_API_KEYS="replace_with_real_secret"
 export GOVAI_BASE_URL="https://audit.example.com"
 
