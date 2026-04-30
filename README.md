@@ -92,7 +92,9 @@ INVALID:
 Evidence present but fails policy. Deployment rejected.
 
 BLOCKED:  
-Required evidence missing. Deployment halted.
+Not eligible for promotion. Deployment halted.
+
+`BLOCKED` can occur when required evidence is missing **or** when approval/promotion prerequisites are not satisfied (in that case `missing_evidence` can be `[]`; see `blocked_reasons`).
 
 ## Install
 
@@ -154,7 +156,7 @@ Canonical customer flow:
 
 1. **Discovery finds AI usage** (signals are recorded as evidence for a specific `run_id`).
 2. **GovAI derives requirements** from the current policy and any discovery signals (required evidence can increase when discovery indicates AI usage).
-3. **The run is `BLOCKED` while evidence is missing** (the summary reports `verdict: BLOCKED` and lists missing required evidence items).
+3. **The run is `BLOCKED` while it is not eligible for promotion** (the summary reports `verdict: BLOCKED` and explains why, via `missing_evidence` and/or `blocked_reasons`).
 4. **The customer submits the missing evidence** for the same `run_id` (additional events are appended via `POST /evidence`).
 5. **The run becomes `VALID`** once the required evidence is present and policy rules pass (the authoritative source is still `GET /compliance-summary`).
 6. **The customer exports audit JSON** for archiving and review (`govai export-run` or `GET /api/export/<run_id>`).
@@ -214,7 +216,7 @@ Because:
 Non-happy paths:
 
 - INVALID → evaluation or risk conditions not met
-- BLOCKED → missing human approval or promotion prerequisites
+- BLOCKED → not eligible for promotion (missing evidence and/or missing approval/promotion prerequisites)
 
 ## CI Integration
 
@@ -283,7 +285,7 @@ govai check --run-id "$GOVAI_RUN_ID"
 
 Expected behavior:
 
-- First, the run reports `verdict: BLOCKED` and lists missing required evidence.
+- First, the run reports `verdict: BLOCKED` and explains why it is not eligible for promotion (missing evidence and/or `blocked_reasons`).
 - After the demo appends the remaining evidence for the same `run_id`, the run becomes `verdict: VALID`.
 - The CI gate passes only when the server verdict is `VALID`.
 
@@ -313,6 +315,8 @@ To export a run into a **stable JSON** document that includes the **decision** f
 HTTP equivalent:
 
     curl -sS "http://127.0.0.1:8088/api/export/$GOVAI_RUN_ID"
+
+Note: a run can be `BLOCKED` even when `missing_evidence: []` if approval/promotion prerequisites are not satisfied; the export explains this via `decision.blocked_reasons`. See `docs/examples/audit_export_v1.example.json`.
 
 ## Core vs Non-Core
 
@@ -371,6 +375,6 @@ It is **not yet billing-ready** (no self-serve checkout and no automated billing
 - **root action exists**: `action.yml` exists at the repository root.
 - **strict gate fails on missing config**: missing `run_id`, `base_url`, or `api_key` fails fast.
 - **gate passes only on VALID**: the action exits 0 only when the backend verdict is `VALID`.
-- **BLOCKED output shows missing evidence**: `BLOCKED` is surfaced as a compliance failure, not a silent skip.
+- **BLOCKED output explains why promotion is blocked**: `BLOCKED` is surfaced as a compliance failure, not a silent skip (it may be missing evidence and/or missing approval/promotion prerequisites).
 - **hosted base URL and API key are required**: customers must configure `GOVAI_AUDIT_BASE_URL` and `GOVAI_API_KEY`.
 - **support contact is listed**: support contact for Marketplace users is `support@govbase.dev`.

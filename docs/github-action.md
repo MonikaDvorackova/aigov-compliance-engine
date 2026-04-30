@@ -29,6 +29,7 @@ Use the GovAI GitHub Action (pin a semver tag such as `@v1`):
 - **`run_id`** (required): **GovAI evidence run id** — the same string you use as `run_id` when posting events to `POST /evidence`, in `govai check`, and in `govai export-run`. This is **not** GitHub’s numeric `github.run_id`; store your UUID (or other server-accepted id) in a repository variable such as `GOVAI_RUN_ID` and pass it here.
 - **`base_url`** (required): GovAI audit service base URL (e.g. `https://govai.example.com`). Maps to env `GOVAI_AUDIT_BASE_URL` for the CLI.
 - **`api_key`** (required): GovAI API key (Bearer token). Maps to env `GOVAI_API_KEY` for the CLI.
+- **`project`** (optional, default: `github-actions`): Tenant/project context sent as `X-GovAI-Project` by the CLI. Set this if your hosted GovAI admin provided a specific project identifier.
 
 ## Required repository variables / secrets
 
@@ -87,9 +88,7 @@ jobs:
 If the gate is enabled but not configured, you’ll see errors like:
 
 ```text
-::error::Missing required configuration: GOVAI_API_KEY
-::error::GovAI compliance gate cannot run because it must authenticate to the GovAI audit API to fetch the compliance verdict.
-::error::Fix: Set repository Secret GOVAI_API_KEY (Settings → Secrets and variables → Actions → Secrets).
+::error::Missing required input: api_key (set GOVAI_API_KEY as a GitHub Actions secret and pass it to the action)
 ```
 
 ## Example BLOCKED failure output (not eligible for promotion)
@@ -98,13 +97,13 @@ When the backend returns `BLOCKED`, the job fails (strict gate) and prints the v
 
 ```text
 BLOCKED
-missing_evidence:
-  - evaluation_reported (policy)
 blocked_reasons:
-  - ...
+  - awaiting_approval_or_promotion: Run is not yet promotable: approval/promotion prerequisites are not satisfied.
 ::error::GovAI verdict: BLOCKED
 ::error::Run is not eligible for promotion yet — see missing_evidence and blocked_reasons in the govai check output above.
 ```
+
+Note: a run can be `BLOCKED` even if all required evidence is present (`missing_evidence: []`). In that case, the backend is enforcing an approval/promotion prerequisite and explains it via `blocked_reasons`. See `docs/examples/audit_export_v1.example.json`.
 
 ## Local usage in this repository
 

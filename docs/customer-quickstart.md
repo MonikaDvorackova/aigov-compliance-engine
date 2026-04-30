@@ -107,13 +107,13 @@ If your endpoint does not require an API key, remove the authorization header.
 govai check --run-id "$GOVAI_RUN_ID"
 ```
 
-Expected stdout (one line) and exit codes:
+Expected stdout and exit codes (the **first line** is always the verdict; additional lines may explain `missing_evidence` and/or `blocked_reasons`):
 
 | Verdict | Meaning | Exit code |
 |---------|---------|-----------|
 | `VALID` | Required evidence satisfied; deploy allowed | `0` |
 | `INVALID` | Evidence present but policy rejects the run | non-zero |
-| `BLOCKED` | Required evidence missing for this `GOVAI_RUN_ID` | non-zero |
+| `BLOCKED` | Not eligible for promotion (missing evidence and/or unmet approval/promotion prerequisites) | non-zero |
 
 After only the single minimal event above, you will usually see:
 
@@ -156,7 +156,7 @@ Output: one JSON file with the run decision and hashes.
   - Set `GOVAI_API_KEY` correctly, or ask your GovAI admin for a valid key.
 
 - **`govai check` prints `BLOCKED`**
-  - Required evidence is missing for this `GOVAI_RUN_ID`. Submit all required events for the **same** id, then re-run `govai check`.
+  - The run is not eligible for promotion yet. Either required evidence is missing **or** approval/promotion prerequisites are not satisfied. Submit the missing prerequisite events for the **same** `GOVAI_RUN_ID`, then re-run `govai check`.
 
 - **`govai check` prints `VALID` locally but fails in CI**
   - Use the same `GOVAI_RUN_ID`, `GOVAI_AUDIT_BASE_URL`, and `GOVAI_API_KEY` in CI as in your local test.
