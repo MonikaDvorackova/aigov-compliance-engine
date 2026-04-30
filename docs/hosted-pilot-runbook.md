@@ -138,7 +138,7 @@ govai run demo-deterministic
 
 Expected:
 
-- first verdict: `BLOCKED` with missing required evidence reported
+- first verdict: `BLOCKED` with an explanation reported via `missing_evidence` and/or `blocked_reasons`
 - later verdict: `VALID` after the demo appends the remaining evidence for the same `run_id`
 
 Verify explicitly:
