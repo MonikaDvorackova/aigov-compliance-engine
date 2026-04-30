@@ -1,6 +1,10 @@
 name: "GovAI Compliance Check"
 description: "Fails CI unless the GovAI compliance verdict is VALID"
 
+branding:
+  icon: activity
+  color: blue
+
 inputs:
   run_id:
     description: "GovAI evidence run id (same as GOVAI_RUN_ID for evidence, check, and export)"
