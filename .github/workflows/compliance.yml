@@ -235,9 +235,12 @@ jobs:
 
       - name: Start audit service
         if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
+        env:
+          GOVAI_LEDGER_DIR: ${{ runner.temp }}/govai-ledger
         run: |
           set -euo pipefail
           test -n "${DATABASE_URL:-}" || { echo "DATABASE_URL is missing"; exit 1; }
+          mkdir -p "${GOVAI_LEDGER_DIR}"
           nohup bash -lc 'cd rust && cargo run --locked' > "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" 2>&1 &
           for i in {1..240}; do
             if curl -fsS "${AUDIT_URL}/status" >/dev/null; then

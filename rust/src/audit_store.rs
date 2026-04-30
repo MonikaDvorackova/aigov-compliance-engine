@@ -84,6 +84,21 @@ fn lock_for_ledger(log_path: &str) -> Result<Arc<Mutex<()>>, String> {
         .clone())
 }
 
+fn ensure_parent_dir_exists(path: &str) -> Result<(), String> {
+    let p = Path::new(path);
+    let parent = match p.parent() {
+        Some(pp) if !pp.as_os_str().is_empty() && pp != Path::new(".") => pp,
+        _ => return Ok(()),
+    };
+    std::fs::create_dir_all(parent).map_err(|e| {
+        format!(
+            "Failed to create ledger parent directory {}: {e}",
+            parent.display()
+        )
+    })?;
+    Ok(())
+}
+
 pub fn append_record(log_path: &str, event: EvidenceEvent) -> Result<StoredRecord, String> {
     Ok(append_record_atomic_with_run_count(log_path, event)?.0)
 }
@@ -97,6 +112,11 @@ pub fn append_record_atomic_with_run_count(
     if append_fail_test_hook_active() {
         return Err("test_simulated_append_failure".to_string());
     }
+
+    // Ensure the ledger directory exists *before* we canonicalize for locking or open the file.
+    // This avoids surprising "No such file or directory" failures when GOVAI_LEDGER_DIR points to
+    // a not-yet-created path (common in CI/container environments).
+    ensure_parent_dir_exists(log_path)?;
 
     let lock = lock_for_ledger(log_path)?;
     let _guard = lock.lock().map_err(|_| "ledger lock poisoned".to_string())?;
