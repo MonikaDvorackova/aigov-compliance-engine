@@ -237,6 +237,9 @@ jobs:
         if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
         env:
           GOVAI_LEDGER_DIR: ${{ runner.temp }}/govai-ledger
+          GOVAI_API_KEYS_JSON: '{"ci-test-api-key":"github-actions"}'
+          AIGOV_ENVIRONMENT: dev
+          AIGOV_BIND: 127.0.0.1:8088
         run: |
           set -euo pipefail
           test -n "${DATABASE_URL:-}" || { echo "DATABASE_URL is missing"; exit 1; }
@@ -244,18 +247,38 @@ jobs:
 
           pwd
           echo "GOVAI_LEDGER_DIR=$GOVAI_LEDGER_DIR"
+          echo "AIGOV_ENVIRONMENT=${AIGOV_ENVIRONMENT}"
+          echo "AIGOV_BIND=${AIGOV_BIND}"
           ls -ld "$GOVAI_LEDGER_DIR"
 
-          # Ensure GOVAI_LEDGER_DIR is present for the backgrounded server process.
-          nohup env GOVAI_LEDGER_DIR="${GOVAI_LEDGER_DIR}" bash -lc 'cd rust && cargo run --locked' > "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" 2>&1 &
+          # Start server in background with required env.
+          # NOTE: do NOT weaken tenant isolation; ledger tenant is derived from the server-controlled API key mapping.
+          nohup env \
+            GOVAI_LEDGER_DIR="${GOVAI_LEDGER_DIR}" \
+            GOVAI_API_KEYS_JSON="${GOVAI_API_KEYS_JSON}" \
+            AIGOV_ENVIRONMENT="${AIGOV_ENVIRONMENT}" \
+            AIGOV_BIND="${AIGOV_BIND}" \
+            DATABASE_URL="${DATABASE_URL}" \
+            bash -lc 'cd rust && cargo run --locked' \
+            > "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" 2>&1 &
+
+          # Robust readiness loop: wait for HTTP 200 on /health before posting evidence.
+          ready="0"
           for i in {1..240}; do
-            if curl -fsS "${AUDIT_URL}/status" >/dev/null; then
-              exit 0
+            code="$(curl -sS -o /tmp/govai_health_body -w "%{http_code}" "${AUDIT_URL%/}/health" || true)"
+            if [ "${code}" = "200" ]; then
+              ready="1"
+              break
             fi
             sleep 0.5
           done
-          tail -n 300 "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" || true
-          exit 1
+
+          if [ "${ready}" != "1" ]; then
+            echo "::error::Audit service readiness check failed (expected HTTP 200 from /health)."
+            echo "Audit service log:"
+            cat "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" || true
+            exit 1
+          fi
 
       - id: govai_emit_run_id
         if: success()
@@ -321,6 +344,8 @@ jobs:
 
             ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             curl -sS -X POST "${AUDIT_URL}/evidence" \
+              -H "Authorization: Bearer ci-test-api-key" \
+              -H "X-GovAI-Project: github-actions" \
               -H "Content-Type: application/json" \
               -d "{\"event_id\":\"evt_ai_discovery_${RUN_ID}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}\",\"event_type\":\"ai_discovery_reported\",\"ts_utc\":\"${ts}\",\"actor\":\"ci\",\"system\":\"github_actions\",\"run_id\":\"${RUN_ID}\",\"payload\":{\"openai\":false,\"transformers\":false,\"model_artifacts\":false}}"
 
@@ -351,6 +376,8 @@ jobs:
 
             ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             curl -sS -X POST "${AUDIT_URL}/evidence" \
+              -H "Authorization: Bearer ci-test-api-key" \
+              -H "X-GovAI-Project: github-actions" \
               -H "Content-Type: application/json" \
               -d "{\"event_id\":\"evt_ai_discovery_${RUN_ID}_${GITHUB_RUN_ID}\",\"event_type\":\"ai_discovery_reported\",\"ts_utc\":\"${ts}\",\"actor\":\"ci\",\"system\":\"github_actions\",\"run_id\":\"${RUN_ID}\",\"payload\":{\"openai\":false,\"transformers\":false,\"model_artifacts\":false}}"
 
