@@ -107,7 +107,7 @@ If your endpoint does not require an API key, remove the authorization header.
 govai check --run-id "$GOVAI_RUN_ID"
 ```
 
-Expected stdout (one line) and exit codes:
+Expected stdout and exit codes (the **first line** is always the verdict; additional lines may explain `missing_evidence` and/or `blocked_reasons`):
 
 | Verdict | Meaning | Exit code |
 |---------|---------|-----------|
