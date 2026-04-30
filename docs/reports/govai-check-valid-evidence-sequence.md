@@ -7,6 +7,9 @@ To make the workflow self-contained (no external pipelines required), the job po
 required for a `VALID` verdict, then runs `govai check` against the same `run_id` and the same `X-GovAI-Project`
 tenant context.
 
+This same hosted evidence sequence + strict `VALID` gate behavior is also applied in
+`.github/workflows/compliance.yml` (the authoritative CI workflow for PR checks).
+
 ## Evaluation gate
 
 Per the server verdict logic, a run can only be `VALID` if:
