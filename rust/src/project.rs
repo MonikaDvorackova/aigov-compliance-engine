@@ -35,35 +35,13 @@ pub fn tenant_id_for_usage(headers: &HeaderMap, bearer_token: Option<&str>) -> S
 /// Canonical tenant id for tenant-isolated ledger access.
 ///
 /// Rules:
-/// - Primary: `x-govai-project` (sanitized)
-/// - Fallback (safe + already supported elsewhere): API key fingerprint (if bearer token present)
-/// - In non-dev (`staging` / `prod`): return `Err` when neither is present (missing tenant context).
+/// - Tenant id is derived **only** from the API key via server-controlled mapping (`GOVAI_API_KEYS_JSON`).
+/// - `x-govai-project` is ignored for ledger tenant isolation (it may still be used for optional metadata elsewhere).
 pub fn require_tenant_id_for_ledger(
     headers: &HeaderMap,
     deployment_env: GovaiEnvironment,
 ) -> Result<String, String> {
-    let raw = headers
-        .get(HDR)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .trim();
-    if !raw.is_empty() {
-        return Ok(sanitize_project_segment(raw));
-    }
-
-    if let Some(t) = audit_api_key::raw_bearer_token(headers) {
-        let t = t.trim();
-        if !t.is_empty() {
-            return Ok(api_usage::key_fingerprint(t));
-        }
-    }
-
-    match deployment_env {
-        GovaiEnvironment::Dev => Ok("default".to_string()),
-        GovaiEnvironment::Staging | GovaiEnvironment::Prod => {
-            Err("missing_tenant_context".to_string())
-        }
-    }
+    audit_api_key::require_tenant_id_from_api_key_for_ledger(headers, deployment_env)
 }
 
 fn sanitize_project_segment(project_id: &str) -> String {
@@ -114,6 +92,24 @@ pub fn resolve_ledger_path(ledger_base: &str, tenant_id: &str) -> String {
 mod tests {
     use super::*;
     use axum::http::HeaderValue;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn ensure_test_key_map() {
+        if crate::audit_api_key::api_key_tenant_map_is_initialized() {
+            return;
+        }
+        std::env::set_var(
+            "GOVAI_API_KEYS_JSON",
+            r#"{ "mysecret": "team_1", "othersecret": "team_2" }"#,
+        );
+        // Ignore errors if another test raced to init first.
+        let _ = crate::audit_api_key::init_api_key_tenant_map(GovaiEnvironment::Prod);
+    }
 
     #[test]
     fn billing_tenant_prefers_x_govai_project() {
@@ -138,26 +134,32 @@ mod tests {
     }
 
     #[test]
-    fn require_tenant_id_for_ledger_header_primary() {
+    fn require_tenant_id_for_ledger_does_not_trust_x_govai_project_header() {
+        let _g = env_lock().lock().unwrap();
         let mut h = HeaderMap::new();
         h.insert("x-govai-project", HeaderValue::from_static("team-alpha"));
-        let tid = require_tenant_id_for_ledger(&h, GovaiEnvironment::Prod).unwrap();
-        assert_eq!(tid, "team-alpha");
+        ensure_test_key_map();
+        let err = require_tenant_id_for_ledger(&h, GovaiEnvironment::Prod).unwrap_err();
+        assert_eq!(err, "missing_api_key");
     }
 
     #[test]
-    fn require_tenant_id_for_ledger_falls_back_to_key_fingerprint() {
+    fn require_tenant_id_for_ledger_uses_api_key_tenant_mapping() {
+        let _g = env_lock().lock().unwrap();
+        ensure_test_key_map();
         let mut h = HeaderMap::new();
         h.insert("Authorization", HeaderValue::from_static("Bearer mysecret"));
         let tid = require_tenant_id_for_ledger(&h, GovaiEnvironment::Prod).unwrap();
-        assert_eq!(tid, crate::api_usage::key_fingerprint("mysecret"));
+        assert_eq!(tid, "team_1");
     }
 
     #[test]
     fn require_tenant_id_for_ledger_missing_rejected_in_prod() {
+        let _g = env_lock().lock().unwrap();
+        ensure_test_key_map();
         let h = HeaderMap::new();
         let err = require_tenant_id_for_ledger(&h, GovaiEnvironment::Prod).unwrap_err();
-        assert_eq!(err, "missing_tenant_context");
+        assert_eq!(err, "missing_api_key");
     }
 
     #[test]

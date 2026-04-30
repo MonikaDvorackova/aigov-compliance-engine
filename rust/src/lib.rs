@@ -58,6 +58,12 @@ pub async fn run() -> Result<(), String> {
             return Err(e);
         }
     };
+
+    if let Err(e) = crate::audit_api_key::init_api_key_tenant_map(deployment_env) {
+        eprintln!("{e}");
+        return Err(e);
+    }
+
     let policy_version = govai_environment::policy_version_for(deployment_env);
     let resolved_policy = policy_config::load_with_env(deployment_env.as_str());
 

@@ -1,4 +1,5 @@
 use aigov_audit::{
+    audit_api_key,
     api_usage::ApiUsageState,
     govai_api,
     govai_environment::GovaiEnvironment,
@@ -17,6 +18,24 @@ use std::sync::{Mutex, OnceLock};
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+}
+
+fn ensure_test_tenant_map() {
+    if audit_api_key::api_key_tenant_map_is_initialized() {
+        return;
+    }
+    std::env::set_var(
+        "GOVAI_API_KEYS_JSON",
+        r#"{
+          "testkey-tenant-alpha": "tenant-alpha",
+          "testkey-tenant-beta": "tenant-beta",
+          "testkey-tenant-gamma": "tenant-gamma",
+          "testkey-tenant-a": "tenant-a",
+          "testkey-tenant-b": "tenant-b"
+        }"#,
+    );
+    // Ignore errors if another test raced to init first.
+    let _ = audit_api_key::init_api_key_tenant_map(GovaiEnvironment::Dev);
 }
 
 fn append_event(dir: &TempDir, tenant: &str, event: EvidenceEvent) {
@@ -44,12 +63,11 @@ fn build_app(pool: sqlx::PgPool) -> axum::Router {
     )
 }
 
-async fn export_json(app: axum::Router, tenant: &str, run_id: &str) -> (StatusCode, Value) {
+async fn export_json(app: axum::Router, api_key: &str, run_id: &str) -> (StatusCode, Value) {
     let req = Request::builder()
         .method("GET")
         .uri(format!("/api/export/{run_id}"))
-        .header(header::AUTHORIZATION, "Bearer testkey")
-        .header("x-govai-project", tenant)
+        .header(header::AUTHORIZATION, format!("Bearer {api_key}"))
         .body(Body::empty())
         .unwrap();
 
@@ -63,7 +81,7 @@ async fn export_json(app: axum::Router, tenant: &str, run_id: &str) -> (StatusCo
 #[tokio::test]
 async fn export_contains_decision_and_evidence_requirements() {
     let _g = env_lock();
-    std::env::set_var("GOVAI_API_KEYS", "testkey");
+    ensure_test_tenant_map();
     let tmp = TempDir::new().unwrap();
     std::env::set_var("GOVAI_LEDGER_DIR", tmp.path().to_string_lossy().to_string());
 
@@ -129,7 +147,7 @@ async fn export_contains_decision_and_evidence_requirements() {
     // Lazy pool: DB ops are best-effort in export and ignored.
     let pool = sqlx::PgPool::connect_lazy("postgres://localhost/does_not_exist").unwrap();
     let app = build_app(pool);
-    let (status, json) = export_json(app, tenant, run_id).await;
+    let (status, json) = export_json(app, "testkey-tenant-alpha", run_id).await;
     assert_eq!(status, StatusCode::OK, "unexpected response: {}", json);
 
     assert_eq!(json.get("schema_version").and_then(|v| v.as_str()), Some("aigov.audit_export.v1"));
@@ -146,7 +164,7 @@ async fn export_contains_decision_and_evidence_requirements() {
 #[tokio::test]
 async fn export_includes_discovery_generated_requirements() {
     let _g = env_lock();
-    std::env::set_var("GOVAI_API_KEYS", "testkey");
+    ensure_test_tenant_map();
     let tmp = TempDir::new().unwrap();
     std::env::set_var("GOVAI_LEDGER_DIR", tmp.path().to_string_lossy().to_string());
 
@@ -169,7 +187,7 @@ async fn export_includes_discovery_generated_requirements() {
 
     let pool = sqlx::PgPool::connect_lazy("postgres://localhost/does_not_exist").unwrap();
     let app = build_app(pool);
-    let (status, json) = export_json(app, tenant, run_id).await;
+    let (status, json) = export_json(app, "testkey-tenant-beta", run_id).await;
     assert_eq!(status, StatusCode::OK, "unexpected response: {}", json);
 
     let reqs = json
@@ -188,7 +206,7 @@ async fn export_includes_discovery_generated_requirements() {
 #[tokio::test]
 async fn export_respects_tenant_isolation() {
     let _g = env_lock();
-    std::env::set_var("GOVAI_API_KEYS", "testkey");
+    ensure_test_tenant_map();
     let tmp = TempDir::new().unwrap();
     std::env::set_var("GOVAI_LEDGER_DIR", tmp.path().to_string_lossy().to_string());
 
@@ -225,7 +243,7 @@ async fn export_respects_tenant_isolation() {
     let pool = sqlx::PgPool::connect_lazy("postgres://localhost/does_not_exist").unwrap();
     let app = build_app(pool);
 
-    let (status, json) = export_json(app, "tenant-b", run_id).await;
+    let (status, json) = export_json(app, "testkey-tenant-b", run_id).await;
     assert_eq!(status, StatusCode::OK, "unexpected response: {}", json);
 
     let events = json.get("evidence_events").and_then(|v| v.as_array()).unwrap();
@@ -247,7 +265,7 @@ async fn export_respects_tenant_isolation() {
 #[tokio::test]
 async fn export_includes_discovery_findings_with_deterministic_ordering() {
     let _g = env_lock();
-    std::env::set_var("GOVAI_API_KEYS", "testkey");
+    ensure_test_tenant_map();
     let tmp = TempDir::new().unwrap();
     std::env::set_var("GOVAI_LEDGER_DIR", tmp.path().to_string_lossy().to_string());
 
@@ -299,7 +317,7 @@ async fn export_includes_discovery_findings_with_deterministic_ordering() {
 
     let pool = sqlx::PgPool::connect_lazy("postgres://localhost/does_not_exist").unwrap();
     let app = build_app(pool);
-    let (status, json) = export_json(app, tenant, run_id).await;
+    let (status, json) = export_json(app, "testkey-tenant-gamma", run_id).await;
     assert_eq!(status, StatusCode::OK, "unexpected response: {}", json);
 
     // Existing export fields must remain present (backward compatibility).
