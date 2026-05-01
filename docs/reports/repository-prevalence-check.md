@@ -49,3 +49,11 @@ python experiments/repository_prevalence_check.py
 - **Curated sample**, **not statistically representative**.
 - Labels are frozen **offline manual coding** — not exhaustive and not refreshed on each upstream push.
 - Maturity tiers **grade breadth** of signals; they **do not** certify legal or regulatory posture.
+
+## Evaluation gate
+
+This experiment is deterministic, offline, and add-only. It rewrites the repository prevalence check as a graded auditability maturity model over a fixed curated sample of 30 public ML/AI repositories. It produces CSV, JSON, summary CSV, and LaTeX outputs under `experiments/output/`.
+
+## Human approval gate
+
+This report confirms that the experiment has no production impact. It does not modify Rust code, API behavior, backend logic, or CI workflows. The repository sample is curated and not statistically representative; results should be interpreted as an illustrative prevalence check, not a benchmark.
