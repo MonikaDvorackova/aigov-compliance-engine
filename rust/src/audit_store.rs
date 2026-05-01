@@ -196,7 +196,15 @@ fn write_state_atomic(log_path: &str, state: &LedgerState) -> Result<(), String>
     f.write_all(&bytes).map_err(|e| e.to_string())?;
     f.write_all(b"\n").map_err(|e| e.to_string())?;
     f.flush().map_err(|e| e.to_string())?;
-    f.sync_data().map_err(|e| e.to_string())?;
+
+    let skip_fsync = std::env::var("GOVAI_SKIP_FSYNC")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    if !skip_fsync {
+        f.sync_data().map_err(|e| e.to_string())?;
+    }
     drop(f);
 
     std::fs::rename(&tmp_path, &state_path).map_err(|e| e.to_string())?;
