@@ -1,5 +1,7 @@
-name: "GovAI Compliance Check"
-description: "Fails CI unless the GovAI compliance verdict is VALID"
+name: "GovAI artifact-bound compliance gate"
+description: >-
+  Posts CI-produced evidence artefacts to the GovAI ledger, verifies digest continuity via
+  events_content_sha256, and fails CI unless hosted evaluation is VALID (production semantics).
 
 branding:
   icon: activity
@@ -7,7 +9,13 @@ branding:
 
 inputs:
   run_id:
-    description: "GovAI evidence run id (same as GOVAI_RUN_ID for evidence, check, and export)"
+    description: >-
+      Evidence run id (same identifier as CI evidence artefacts: <artifacts_path>/<run_id>.json).
+    required: true
+  artifacts_path:
+    description: >-
+      Directory containing CI evidence artefacts: evidence_digest_manifest.json and <run_id>.json
+      (typically downloaded from CI upload-artifact steps).
     required: true
   base_url:
     description: "GovAI audit service base URL"
@@ -33,10 +41,10 @@ runs:
       run: |
         set -euo pipefail
         python -m pip install --upgrade pip
-        python -m pip install "aigov-py==0.1.1"
+        python -m pip install "aigov-py==0.2.0"
         govai --help >/dev/null
 
-    - name: Run GovAI compliance check
+    - name: Artifact-bound gate (submit + verify)
       shell: bash
       env:
         GOVAI_AUDIT_BASE_URL: ${{ inputs.base_url }}
@@ -47,57 +55,48 @@ runs:
 
         if [ -z "${{ inputs.run_id }}" ]; then
           echo "::error::Missing required input: run_id"
-          exit 1
+          exit 4
+        fi
+
+        if [ -z "${{ inputs.artifacts_path }}" ]; then
+          echo "::error::Missing required input: artifacts_path (directory from CI artefacts)"
+          exit 4
+        fi
+
+        if [ ! -d "${{ inputs.artifacts_path }}" ]; then
+          echo "::error::artifacts_path is not a directory: ${{ inputs.artifacts_path }}"
+          exit 4
         fi
 
         if [ -z "${GOVAI_AUDIT_BASE_URL:-}" ]; then
           echo "::error::Missing required input: base_url"
-          exit 1
+          exit 4
         fi
 
         if [ -z "${GOVAI_API_KEY:-}" ]; then
           echo "::error::Missing required input: api_key (set GOVAI_API_KEY as a GitHub Actions secret and pass it to the action)"
-          exit 1
+          exit 4
         fi
 
-        echo "Effective GOVAI_RUN_ID=${{ inputs.run_id }}"
+        ARTIFACTS="$(cd "${{ inputs.artifacts_path }}" && pwd)"
+        RUN_ID="${{ inputs.run_id }}"
+
+        echo "Effective GOVAI_RUN_ID=${RUN_ID}"
+        echo "Effective GOVAI_ARTIFACTS_DIR=${ARTIFACTS}"
         echo "Effective GOVAI_PROJECT=${GOVAI_PROJECT:-}"
 
-        # govai check exits non-zero for intentional non-VALID verdicts (BLOCKED/INVALID).
-        # Capture output + exit code so we can report the verdict accurately.
+        govai --project "${GOVAI_PROJECT:-github-actions}" submit-evidence-pack \
+          --path "${ARTIFACTS}" \
+          --run-id "${RUN_ID}"
+
         set +e
-        out="$(govai check --run-id "${{ inputs.run_id }}" 2>&1)"
-        code="$?"
+        govai --project "${GOVAI_PROJECT:-github-actions}" verify-evidence-pack \
+          --path "${ARTIFACTS}" \
+          --run-id "${RUN_ID}"
+        verify_code="$?"
         set -e
 
-        # Always print the govai check output (verdict or error details).
-        printf '%s\n' "${out}"
+        printf '\nGovAI artifact-bound gate exit code=%s\n' "${verify_code}"
+        printf 'Exit codes (cli_exit): 1=ERROR · 2=INVALID · 3=BLOCKED · 4=USAGE\n'
 
-        if [ "${code}" -eq 0 ] && printf '%s\n' "${out}" | grep -Eq '^VALID$'; then
-          echo "GovAI verdict: VALID"
-          echo "GovAI compliance gate passed."
-          exit 0
-        fi
-
-        if printf '%s\n' "${out}" | grep -Eq '^BLOCKED$'; then
-          echo "::error::GovAI verdict: BLOCKED"
-          echo "::error::Run is not eligible for promotion yet — see missing_evidence and blocked_reasons in the govai check output above."
-          exit 1
-        fi
-
-        if printf '%s\n' "${out}" | grep -Eq '^INVALID$'; then
-          echo "::error::GovAI verdict: INVALID"
-          echo "::error::Compliance requirements were not satisfied — details are in the govai check output above."
-          exit 1
-        fi
-
-        # Otherwise, treat as failure to retrieve a verdict (backend/network/misconfiguration).
-        if printf '%s' "${out}" | grep -q "RUN_NOT_FOUND"; then
-          echo "::error::GovAI check could not retrieve a compliance verdict."
-          echo "::error::Likely causes: wrong run_id, missing evidence run initialization, wrong base_url, invalid API key."
-          exit 1
-        fi
-
-        echo "::error::GovAI check could not retrieve a compliance verdict."
-        echo "::error::Likely causes: wrong run_id, missing evidence run initialization, wrong base_url, invalid API key."
-        exit 1
+        exit "${verify_code}"

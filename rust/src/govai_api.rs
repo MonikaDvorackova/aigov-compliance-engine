@@ -1398,22 +1398,24 @@ async fn readiness_check(
     State(audit): State<AuditState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     if let Err(e) = sqlx::query("SELECT 1").fetch_one(&audit.pool).await {
+        eprintln!("readiness: database_ping failed: {e}");
         return api_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "NOT_READY",
             "Service is not ready to accept audit traffic.",
             "Verify Postgres connectivity and DATABASE_URL / GOVAI_DATABASE_URL.",
-            Some(json!({ "checks": { "database_ping": false, "detail": e.to_string() } })),
+            Some(json!({ "checks": { "database_ping": false, "detail": "database not ready" } })),
         );
     }
 
     if let Err(e) = db::verify_sqlx_migrations_complete(&audit.pool).await {
+        eprintln!("readiness: migrations incomplete: {e}");
         return api_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "NOT_READY",
             "Service is not ready to accept audit traffic.",
             "Apply migrations or enable GOVAI_AUTO_MIGRATE=true for automatic apply.",
-            Some(json!({ "checks": { "migrations_complete": false, "detail": e } })),
+            Some(json!({ "checks": { "migrations_complete": false, "detail": "migrations incomplete" } })),
         );
     }
 
@@ -1439,12 +1441,13 @@ async fn readiness_check(
     };
 
     if let Err(e) = ledger_err {
+        eprintln!("readiness: ledger not writable: {e}");
         return api_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "NOT_READY",
             "Service is not ready to accept audit traffic.",
             "Ensure GOVAI_LEDGER_DIR exists and is writable (or cwd writable in dev).",
-            Some(json!({ "checks": { "ledger_writable": false, "detail": e } })),
+            Some(json!({ "checks": { "ledger_writable": false, "detail": "ledger not ready" } })),
         );
     }
 

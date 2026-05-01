@@ -159,7 +159,7 @@ In the pilot user’s GitHub repo:
 - Variable `GOVAI_RUN_ID` = `<the same run id used above>`
 - Secret `GOVAI_API_KEY` = `<the bearer token>`
 
-Then add the workflow from `README.md` (`.github/workflows/govai-check.yml`) and run CI.
+Then use the artefact-bound gate from `README.md` / `docs/github-action.md`. Optional manual smoke lives in `.github/workflows/govai-smoke.yml` (**not** a production digest gate).
 
 Expected:
 

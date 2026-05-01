@@ -1,144 +1,109 @@
-# GitHub Actions: GovAI compliance gate
+# GitHub Actions: GovAI artefact-bound compliance gate
 
-This repository includes a reusable **composite GitHub Action** that installs the GovAI CLI from **PyPI** (`aigov-py==0.1.1`) and runs `govai check` as a CI gate.
+This repository publishes a reusable **composite GitHub Action** that installs the GovAI CLI from **PyPI** (`aigov-py==0.2.0`) and runs the **production semantic path**:
 
-`govai check` calls the GovAI audit service `GET /compliance-summary` for a run id and:
+1. `govai submit-evidence-pack` — replays CI-generated evidence events from `<artifacts_path>/<run_id>.json` to the hosted ledger.
+2. `govai verify-evidence-pack` — requires hosted **`events_content_sha256`** (from **`GET /bundle-hash`**) to match **`evidence_digest_manifest.json`** from CI, plus a **`VALID`** compliance verdict from **`GET /compliance-summary`**.
 
-- prints the compliance verdict (`VALID`, `INVALID`, or `BLOCKED`)
-- exits **0 only when the verdict is `VALID`**
+A green job using **this action** therefore means CI artefacts were anchored by digest on the ledger and evaluated as **`VALID`** — **not** merely that the hosted API accepted an ad-hoc or synthetic submission.
 
-That means your workflow **fails CI unless the verdict is `VALID`**.
+**`govai check` alone** does **not** prove artefact continuity; treat it as a policy readout **without** cryptographic binding to CI outputs. Prefer **`submit-evidence-pack` + `verify-evidence-pack`** for anything that behaves as a release gate.
 
-Configure branch protection so this job is a **required check** before merging to `main`.
+## Synthetic smoke workflow (explicitly labelled)
 
-## What the action does
+Manual workflow **`.github/workflows/govai-smoke.yml`** is labelled **SYNTHETIC SMOKE TEST ONLY**. It pushes scripted curls and optionally runs **`govai check`**; it runs **only** on **`workflow_dispatch`** — not automatically on merges to **`main`**. Use it for demos and connectivity probes, never as proof of artefact-bound production compliance.
+
+Authoritative artefact-bound production gate for this repo: **`.github/workflows/compliance.yml`**, **`govai-compliance-gate`** (after **`evidence_pack`**).
+
+## Configure branch protection so this job is required before merges
+
+Point required checks at the workflow/job that invokes this action **with real CI artefacts**.
+
+## Action behaviour
 
 - Sets up **Python 3.11**
-- Installs **`aigov-py==0.1.1`** from PyPI (provides the `govai` CLI)
-- Runs `govai check --run-id <run_id>` with your GovAI audit base URL and API key
-- Fails the job if the verdict is not `VALID` (non-zero exit code)
+- Installs **`aigov-py==0.2.0`** from PyPI
+- Validates **`artifacts_path`** is an existing directory
+- Runs **`submit-evidence-pack`** then **`verify-evidence-pack`** with **`--path`** and **`--run-id`**
+- Exit codes propagated from **`verify-evidence-pack`**: **`1`** ERROR (infra/digest/export), **`2`** INVALID, **`3`** BLOCKED, **`4`** USAGE (`python/aigov_py/cli_exit.py`)
 
 ## Official action reference
 
-Use the GovAI GitHub Action (pin a semver tag such as `@v1`):
+Publish path (example):
 
-`Kovali/GovAI@v1`
+`your-org/your-repo@<tag>` (root **`action.yml`**), or `./.github/actions/govai-check` for forks.
 
-## Action inputs
+## Inputs
 
-- **`run_id`** (required): **GovAI evidence run id** — the same string you use as `run_id` when posting events to `POST /evidence`, in `govai check`, and in `govai export-run`. This is **not** GitHub’s numeric `github.run_id`; store your UUID (or other server-accepted id) in a repository variable such as `GOVAI_RUN_ID` and pass it here.
-- **`base_url`** (required): GovAI audit service base URL (e.g. `https://govai.example.com`). Maps to env `GOVAI_AUDIT_BASE_URL` for the CLI.
-- **`api_key`** (required): GovAI API key (Bearer token). Maps to env `GOVAI_API_KEY` for the CLI.
-- **`project`** (optional, default: `github-actions`): Tenant/project context sent as `X-GovAI-Project` by the CLI. Set this if your hosted GovAI admin provided a specific project identifier.
+| Input | Required | Purpose |
+|--------|----------|---------|
+| **`run_id`** | Yes | Same id as `docs/reports/<run_id>.md` / CI artefacts `<run_id>.json`. Not GitHub’s numeric `github.run_id` unless that is deliberately your ledger id. |
+| **`artifacts_path`** | Yes | Directory containing **`evidence_digest_manifest.json`** and `<run_id>.json` (e.g. from **`actions/download-artifact`**). **`events_content_sha256`** in the manifest is the **source-of-truth** digest checked against **`GET /bundle-hash`**. |
+| **`base_url`** | Yes | GovAI audit base URL (**`GOVAI_AUDIT_BASE_URL`**). |
+| **`api_key`** | Yes | Bearer token (**`GOVAI_API_KEY`** secret). |
+| **`project`** | No (default **`github-actions`**) | **`X-GovAI-Project`** header. |
 
-## Required repository variables / secrets
+## Required repository secrets / variables
 
-Configure in **Settings → Secrets and variables → Actions**:
+- **`GOVAI_AUDIT_BASE_URL`** (repository variable recommended)
+- **`GOVAI_API_KEY`** (secret)
 
-| Name | Type | Required | Purpose |
-|------|------|----------|---------|
-| `GOVAI_AUDIT_BASE_URL` | Variable | Yes | Base URL of the GovAI audit API |
-| `GOVAI_RUN_ID` | Variable | No* | Optional fallback run id (recommended only for **manual debugging**, not PR/push checks) |
-| `GOVAI_API_KEY` | Secret | Yes (for the customer-facing CI gate) | Bearer token for the audit API |
-
-\*Preferred: supply `run_id` from another step/job output (`UPSTREAM_GOVAI_RUN_ID`) or (for standalone checks) generate a fresh run id in the workflow and initialize it via `POST /evidence` before calling `govai check`.
-
-Use **one** `GOVAI_RUN_ID` value for the whole release pipeline: every `POST /evidence` for that deployment, the `govai check` step, and `govai export-run` must refer to the **same** id.
-
-## Fail-fast behavior (strict gate)
-
-The composite action fails immediately if **`base_url`**, **`run_id`**, or **`api_key`** is missing, so a misconfigured integration cannot silently pass.
-
-**`.github/workflows/govai-check.yml`** stays available as an **explicit synthetic / smoke** harness: scripted evidence unrelated to artefacts from **`evidence_pack`**.
-
-Production semantics on merge to **`main`** in **this repo** live in **`.github/workflows/compliance.yml`**, **`govai-compliance-gate`**: artefacts from **`evidence_pack`** (including **`docs/evidence/<run_id>.json`** and **`evidence_digest_manifest.json`**) determine what is posted via **`govai submit-evidence-pack`**, while **`govai verify-evidence-pack`** requires hosted **`events_content_sha256`** to match the CI manifest plus a **`VALID`** compliance summary.
-
-For **govai-check** workflows:
-
-- **When the gate job runs**: the workflow *listens* broadly, but the **`govai-compliance-gate` job `if:`** may still exclude PRs/branches depending on edits.
-- **`GOVAI_RUN_ID`**: may be synthesized from **`GITHUB_REPOSITORY`**, **`GITHUB_RUN_ID`**, **`GITHUB_SHA`**, etc., or supplied via **`workflow_dispatch`** inputs.
-- **Evidence before check**: scripted curl / JSON bodies (“Synthetic evidence replay”) — adequate for demos, **not** a guarantee that CI-generated evidence was mirrored on the ledger.
-
-## Verdict vs infrastructure failures
-
-Understand what failed from logs and HTTP status:
-
-| Outcome | Meaning |
-|---------|---------|
-| **`VALID`** | Policy gate satisfied — `govai check` exits 0. |
-| **`BLOCKED`** | Hosted audit reachable; policy says the run cannot pass yet — often missing requirements or blocking reasons. **Not** a transport error — fix evidence or approvals, then retry. Current **repo CLI** exits **3** (`EX_BLOCKED`). |
-| **`INVALID`** | Hosted audit reachable; malformed or inconsistent ledger/evidence semantics for policy — distinct from **`BLOCKED`**. Current **repo CLI** exits **2** (`EX_INVALID`). |
-| **ERROR / transport / fingerprint mismatch** | With **`govai verify-evidence-pack`**, **`--verify-artifacts`**, or infra failures: exit **1** (`EX_ERR`) — digest mismatch, **`/bundle-hash`** errors, malformed manifests, unexpected HTTP/network errors — see **`python/aigov_py/cli_exit.py`**. |
-| **HTTP 502/503, timeouts, TLS errors, refused connection** | **Infrastructure**: load balancer/service not reachable, process not listening, overloaded, or **readiness** failing (for example dependency checks on **`GET /ready`**). This is **not** a policy verdict — fix deployment, networking, or dependencies. |
-
-For operator visibility, the audit service exposes **`GET /health`** (liveness) and **`GET /ready`** (DB + migrations + ledger writable); use **`/ready`** behind load balancers when you need dependency checks.
-
-## Minimal copy-paste workflow
+## Minimal usage (caller supplies downloaded artefact dir)
 
 ```yaml
-name: GovAI compliance gate
-
-on:
-  pull_request:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
 jobs:
-  govai-check:
+  govai-hosted-gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: GovAI compliance check
+      - uses: actions/download-artifact@v4
+        with:
+          name: evidence_packs
+          path: artefacts
+
+      - name: Artefact-bound GovAI gate
         uses: Kovali/GovAI@v1
         with:
           run_id: ${{ vars.GOVAI_RUN_ID }}
+          artifacts_path: artefacts
           base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}
           api_key: ${{ secrets.GOVAI_API_KEY }}
 ```
 
-## Example misconfiguration failure output
+## Example misconfiguration (**USAGE / exit 4**)
 
-If the gate is enabled but not configured, you’ll see errors like:
+Missing **`artifacts_path`**, **`api_key`**, or missing directory → action exits **`4`** with **`::error::`** annotations.
 
-```text
-::error::Missing required input: api_key (set GOVAI_API_KEY as a GitHub Actions secret and pass it to the action)
-```
+## Verdict semantics
 
-## Example BLOCKED failure output (not eligible for promotion)
+| CLI exit | Meaning |
+|----------|---------|
+| **0** | **`VERIFY_OK`**: digest continuity verified and verdict **`VALID`**. |
+| **1** | Error: transport, manifest/bundle-hash mismatch, export inconsistency — not a verdict. |
+| **2** | Verdict **`INVALID`**. |
+| **3** | Verdict **`BLOCKED`**. |
+| **4** | Usage/configuration (missing **`run_id`** / artefacts). |
 
-When the backend returns `BLOCKED`, the job fails (strict gate) and prints the verdict as a **compliance verdict** (not a fetch/connectivity failure). `BLOCKED` can happen due to missing required evidence and/or unmet approval/promotion prerequisites (in that case `missing_evidence` can be `[]`; see `blocked_reasons`):
+**Operational probes:** **`GET /health`** (liveness) vs **`GET /ready`** (Postgres + migrations + ledger writable) — readiness belongs behind load balancers for safe traffic shifting.
 
-```text
-BLOCKED
-blocked_reasons:
-  - awaiting_approval_or_promotion: Run is not yet promotable: approval/promotion prerequisites are not satisfied.
-::error::GovAI verdict: BLOCKED
-::error::Run is not eligible for promotion yet — see missing_evidence and blocked_reasons in the govai check output above.
-```
-
-Note: a run can be `BLOCKED` even if all required evidence is present (`missing_evidence: []`). In that case, the backend is enforcing an approval/promotion prerequisite and explains it via `blocked_reasons`. See `docs/examples/audit_export_v1.example.json`.
-
-## Local usage in this repository
-
-Internal repository example (for developing GovAI itself). Marketplace users should use `Kovali/GovAI@v1`:
+## Local dev (this repo)
 
 ```yaml
-- name: GovAI compliance check
-  uses: ./.github/actions/govai-check
+- uses: ./.github/actions/govai-check
   with:
-    run_id: ${{ vars.GOVAI_RUN_ID }}
+    run_id: ${{ needs.build.outputs.report_run_id }}
+    artifacts_path: downloaded-artefacts-dir
     base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}
     api_key: ${{ secrets.GOVAI_API_KEY }}
 ```
 
-## CLI install (without the composite action)
+## CLI install (without composite action)
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.1.1"
-govai check --run-id "$GOVAI_RUN_ID"
+python -m pip install "aigov-py==0.2.0"
+govai verify-evidence-pack --path ./artefacts --run-id "$GOVAI_RUN_ID"
 ```
 
-See also: [customer-quickstart.md](customer-quickstart.md).
+See also: **[customer-quickstart.md](customer-quickstart.md)** (update install pin after release tagging).

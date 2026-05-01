@@ -34,6 +34,14 @@ from aigov_py.prototype_domain import (
 from aigov_py.types import AssessmentCreate, GovaiError
 
 # Thin wrappers — same package
+
+
+class GovaiArgumentParser(argparse.ArgumentParser):
+    """argparse wired to ``EX_USAGE`` (4), keeping policy verdict exits on 2/3 only."""
+
+    def error(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        self.exit(cli_exit.EX_USAGE, f"{self.prog}: error: {message}\n")
 from aigov_py import export_bundle as export_bundle_mod
 from aigov_py import fetch_bundle_from_govai
 from aigov_py import report as report_mod
@@ -45,8 +53,10 @@ def _system_exit_code(se: SystemExit) -> int:
     if c is None:
         return cli_exit.EX_OK
     if isinstance(c, int):
+        if c == 2:
+            return cli_exit.EX_USAGE
         return c
-    return cli_exit.EX_INVALID
+    return cli_exit.EX_USAGE
 
 
 def _config_path_from_args(ns: argparse.Namespace) -> Path | None:
@@ -350,7 +360,7 @@ def run_demo_deterministic(*, timeout_sec: float) -> int:
 
     Requirements:
     - Must not require local Postgres when hosted env vars are provided.
-    - Requires GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY; if missing, exit 2 with clear instructions.
+    - Requires GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY; if missing, exit 4 with clear instructions.
     """
     base_url = _require_env_nonempty("GOVAI_AUDIT_BASE_URL")
     api_key = _require_env_nonempty("GOVAI_API_KEY")
@@ -369,7 +379,7 @@ def run_demo_deterministic(*, timeout_sec: float) -> int:
             "This demo does not need local Postgres when GOVAI_AUDIT_BASE_URL points to a hosted GovAI audit service.",
             file=sys.stderr,
         )
-        return cli_exit.EX_INVALID
+        return cli_exit.EX_USAGE
 
     actor = (os.environ.get("AIGOV_ACTOR") or "govai_demo").strip() or "govai_demo"
     system = (os.environ.get("AIGOV_SYSTEM") or "govai_demo_cli").strip() or "govai_demo_cli"
@@ -829,11 +839,11 @@ def run_demo(audit_url: str, api_key: str | None) -> int:
 
     verdict = verdict.strip()
     print(verdict)
-    return cli_exit.EX_OK if verdict == "VALID" else cli_exit.EX_ERR
+    return _exit_for_compliance_verdict(verdict)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
+def build_parser() -> GovaiArgumentParser:
+    p = GovaiArgumentParser(
         prog="govai",
         description=f"GovAI Terminal SDK — audit service workflow and assessment API (v{__version__}).",
     )
@@ -914,7 +924,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     s_check = sub.add_parser(
         "check",
-        help="Check compliance decision (VALID / INVALID / BLOCKED). Exit 0 only if VALID.",
+        help="Check compliance decision (VALID / INVALID / BLOCKED). Exit 0 only if VALID "
+        "(2=INVALID · 3=BLOCKED · 1=infra/api error · 4=usage). Use verify-evidence-pack for production artefact gates.",
     )
     s_check.add_argument(
         "--run-id",
@@ -1194,7 +1205,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = opt or _resolve_run_id(args)
         if not run_id:
             print("run id required", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
 
         client = GovAIClient(audit_url, api_key=api_key, default_project=project)
         vad = getattr(args, "verify_artifacts_dir", None)
@@ -1219,7 +1230,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
         base = Path(getattr(args, "evidence_pack_dir")).expanduser().resolve()
         try:
             bundle, _path = eag.load_bundle(run_id, base)
@@ -1249,7 +1260,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
         artifact_dir = Path(getattr(args, "verify_pack_dir")).expanduser().resolve()
         client = GovAIClient(audit_url, api_key=api_key, default_project=project)
         try:
@@ -1652,7 +1663,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2), file=sys.stderr)
         return cli_exit.EX_ERR
 
-    return cli_exit.EX_INVALID
+    return cli_exit.EX_ERR
 
 
 if __name__ == "__main__":

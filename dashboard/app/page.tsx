@@ -279,19 +279,22 @@ export default function Page() {
             Run AI compliance checks in CI
           </div>
           <div style={{ marginTop: 4, fontSize: 12.5, lineHeight: 1.45, color: "var(--govai-text-secondary)" }}>
-            Official package <span style={{ fontFamily: "ui-monospace, monospace" }}>aigov-py==0.1.1</span> on PyPI. One{" "}
-            <span style={{ fontFamily: "ui-monospace, monospace" }}>GOVAI_RUN_ID</span> for evidence, check, and export.
+            Official package <span style={{ fontFamily: "ui-monospace, monospace" }}>aigov-py==0.2.0</span> on PyPI.
+            Production CI uses artefact-bound{" "}
+            <span style={{ fontFamily: "ui-monospace, monospace" }}>submit-evidence-pack</span> +{" "}
+            <span style={{ fontFamily: "ui-monospace, monospace" }}>verify-evidence-pack</span> (
+            <span style={{ fontFamily: "ui-monospace, monospace" }}>events_content_sha256</span> digest gate).
           </div>
 
           <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-            <LandingCopyBlock label="Install" code={"pip install aigov-py==0.1.1"} />
+            <LandingCopyBlock label="Install" code={"pip install aigov-py==0.2.0"} />
             <LandingCopyBlock
-              label="Quick usage"
+              label="Quick usage (hosted gate)"
               code={[
                 "export GOVAI_AUDIT_BASE_URL=...",
-                "export GOVAI_RUN_ID=...   # same id for evidence, check, export",
-                "",
-                "govai check --run-id \"$GOVAI_RUN_ID\"",
+                "export GOVAI_RUN_ID=...",
+                "# After downloading CI artefacts into ./art:",
+                "govai verify-evidence-pack --path ./art --run-id \"$GOVAI_RUN_ID\"",
               ].join("\n")}
             />
             <div className="govai_landing_cli_grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -308,6 +311,7 @@ export default function Page() {
                 "- uses: Kovali/GovAI/.github/actions/govai-check@v1",
                 "  with:",
                 "    run_id: ${{ vars.GOVAI_RUN_ID }}",
+                "    artifacts_path: path/to/downloaded-ci-artifacts",
                 "    base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}",
                 "    api_key: ${{ secrets.GOVAI_API_KEY }}",
               ].join("\n")}

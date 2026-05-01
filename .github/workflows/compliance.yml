@@ -266,10 +266,10 @@ jobs:
             bash -lc 'cd rust && cargo run --locked' \
             > "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" 2>&1 &
 
-          # Robust readiness loop: wait for HTTP 200 on /health before posting evidence.
+          # Robust readiness loop: HTTP 200 on /ready (DB + migrations + ledger), not mere liveness /health.
           ready="0"
           for i in {1..240}; do
-            code="$(curl -sS -o /tmp/govai_health_body -w "%{http_code}" "${AUDIT_URL%/}/health" || true)"
+            code="$(curl -sS -o /tmp/govai_ready_body -w "%{http_code}" "${AUDIT_URL%/}/ready" || true)"
             if [ "${code}" = "200" ]; then
               ready="1"
               break
@@ -278,7 +278,7 @@ jobs:
           done
 
           if [ "${ready}" != "1" ]; then
-            echo "::error::Audit service readiness check failed (expected HTTP 200 from /health)."
+            echo "::error::Audit service readiness check failed (expected HTTP 200 from GET /ready; /health is liveness-only)."
             echo "Audit service log:"
             cat "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" || true
             exit 1
@@ -347,7 +347,7 @@ jobs:
             echo "Local audit service preflight"
             echo "AUDIT_URL=${AUDIT_URL}"
             echo "------------------------------------------------------------"
-            curl -v "${AUDIT_URL%/}/health" || true
+            curl -v "${AUDIT_URL%/}/ready" || true
             curl -v "${AUDIT_URL%/}/status" || true
             echo "------------------------------------------------------------"
             echo "Audit service log:"
@@ -609,7 +609,7 @@ jobs:
           fi
 
           echo "::error::Artifact-bound GovAI hosted gate failed (exit ${verify_code})."
-          echo "Exit codes: 1 = ERROR (infra/digest/export) · 2 = INVALID · 3 = BLOCKED · see python/aigov_py/cli_exit.py"
+          echo "Exit codes: 1 = ERROR (infra/digest/export) · 2 = INVALID · 3 = BLOCKED · 4 = USAGE · see python/aigov_py/cli_exit.py"
           govai --project "${GOVAI_PROJECT}" explain --run-id "${GOVAI_RUN_ID}" || true
           curl -sS \
             -H "Authorization: Bearer ${GOVAI_API_KEY}" \
