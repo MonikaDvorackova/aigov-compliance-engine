@@ -184,6 +184,7 @@ jobs:
     env:
       AUDIT_URL: http://127.0.0.1:8088
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      GOVAI_AUTO_MIGRATE: "true"
       BASE_SHA: ${{ needs.changes.outputs.base_sha }}
       HEAD_SHA: ${{ needs.changes.outputs.head_sha }}
       REPORTS_CHANGED_FLAG: ${{ needs.changes.outputs.reports_changed }}
@@ -261,6 +262,7 @@ jobs:
             AIGOV_ENVIRONMENT="${AIGOV_ENVIRONMENT}" \
             AIGOV_BIND="${AIGOV_BIND}" \
             DATABASE_URL="${DATABASE_URL}" \
+            GOVAI_AUTO_MIGRATE="${GOVAI_AUTO_MIGRATE}" \
             bash -lc 'cd rust && cargo run --locked' \
             > "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" 2>&1 &
 
