@@ -133,7 +133,7 @@ verify_log:
 
 run:
 	cd python && . .venv/bin/activate && \
-	RUN_ID=$(RUN_ID) python -m aigov_py.pipeline_train
+	GOVAI_AUDIT_BASE_URL=$${GOVAI_AUDIT_BASE_URL:-http://127.0.0.1:8088} GOVAI_API_KEY=$${GOVAI_API_KEY:-ci-test-api-key} GOVAI_PROJECT=$${GOVAI_PROJECT:-github-actions} RUN_ID=$(RUN_ID) python -m aigov_py.pipeline_train
 
 require_run:
 	@if [ -z "$(RUN_ID)" ]; then \
