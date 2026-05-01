@@ -45,6 +45,8 @@ def test_subcommand_help() -> None:
         "fetch-bundle",
         "compliance-summary",
         "check",
+        "submit-evidence-pack",
+        "verify-evidence-pack",
         "submit-evidence",
         "report",
         "export-bundle",
@@ -283,7 +285,7 @@ def test_check_blocked_prints_missing_evidence(capsys: pytest.CaptureFixture[str
     }
     with patch("aigov_py.cli.get_compliance_summary", return_value=s):
         code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
-    assert code == cli_exit.EX_INVALID
+    assert code == cli_exit.EX_BLOCKED
     out = capsys.readouterr().out
     lines = [ln.strip() for ln in out.strip().splitlines()]
     assert lines[0] == "BLOCKED"
@@ -299,7 +301,7 @@ def test_check_blocked_prints_missing_requirement_ids_from_api_missing(capsys: p
     }
     with patch("aigov_py.cli.get_compliance_summary", return_value=s):
         code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
-    assert code == cli_exit.EX_INVALID
+    assert code == cli_exit.EX_BLOCKED
     out = capsys.readouterr().out
     assert out.strip().splitlines()[0].strip() == "BLOCKED"
     assert "missing (requirement ids):" in out

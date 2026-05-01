@@ -23,7 +23,6 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashSet;
 use std::cmp::Ordering;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -259,27 +258,6 @@ fn prepare_event_for_ingest(
 
     event.environment = Some(canon.to_string());
     Ok(existing)
-}
-
-fn canonicalize_events(mut events: Vec<EvidenceEvent>) -> Vec<EvidenceEvent> {
-    let mut seen: HashSet<String> = HashSet::new();
-    events.sort_by(|a, b| a.ts_utc.cmp(&b.ts_utc));
-    let mut out_rev: Vec<EvidenceEvent> = Vec::with_capacity(events.len());
-    for e in events.into_iter().rev() {
-        if seen.insert(e.event_id.clone()) {
-            out_rev.push(e);
-        }
-    }
-    out_rev.reverse();
-
-    out_rev.sort_by(|a, b| {
-        a.ts_utc
-            .cmp(&b.ts_utc)
-            .then_with(|| a.event_type.cmp(&b.event_type))
-            .then_with(|| a.event_id.cmp(&b.event_id))
-    });
-
-    out_rev
 }
 
 #[derive(Clone)]
@@ -938,7 +916,7 @@ async fn bundle_route(
                     Some(json!({ "run_id": q.run_id })),
                 );
             }
-            let events = canonicalize_events(events);
+            let events = bundle::canonicalize_evidence_events(events);
             let lp = format!("rust/{}", log_path);
             let doc = bundle::bundle_document_value(&q.run_id, audit.policy_version, &lp, &events);
             (StatusCode::OK, Json(doc))
@@ -1117,7 +1095,7 @@ async fn export_run_route(
         );
     }
 
-    let events = canonicalize_events(events);
+    let events = bundle::canonicalize_evidence_events(events);
     let log_path_report = format!("rust/{}", log_path);
     let bundle_doc =
         bundle::bundle_document_value(&run_id, audit.policy_version, &log_path_report, &events);
@@ -1129,6 +1107,7 @@ async fn export_run_route(
         artifact_path.as_deref(),
         &events,
     );
+    let events_content_sha256 = bundle::portable_evidence_digest_v1(&run_id, &events);
 
     let chain_records = match crate::audit_store::collect_stored_records_for_run(&log_path, &run_id)
     {
@@ -1237,6 +1216,8 @@ async fn export_run_route(
         "discovery_findings": discovery_findings,
         "evidence_hashes": {
             "bundle_sha256": bundle_sha256,
+            "events_content_sha256": events_content_sha256,
+            "evidence_digest_schema": "aigov.evidence_digest.v1",
             "chain_head_record_sha256": head_sha256,
             "log_chain": log_chain
         },
@@ -1343,7 +1324,7 @@ async fn bundle_hash_route(
                     Some(json!({ "run_id": q.run_id })),
                 );
             }
-            let events = canonicalize_events(events);
+            let events = bundle::canonicalize_evidence_events(events);
             let artifact_path = bundle::find_model_artifact_path(&events);
             let lp = format!("rust/{}", log_path);
 
@@ -1354,6 +1335,7 @@ async fn bundle_hash_route(
                 artifact_path.as_deref(),
                 &events,
             );
+            let events_content_sha256 = bundle::portable_evidence_digest_v1(&q.run_id, &events);
 
             (
                 StatusCode::OK,
@@ -1361,7 +1343,9 @@ async fn bundle_hash_route(
                     "ok": true,
                     "run_id": q.run_id,
                     "policy_version": audit.policy_version,
-                    "bundle_sha256": digest
+                    "bundle_sha256": digest,
+                    "events_content_sha256": events_content_sha256,
+                    "evidence_digest_schema": "aigov.evidence_digest.v1"
                 })),
             )
         }
@@ -1567,7 +1551,7 @@ async fn compliance_summary_route(
                     })),
                 );
             }
-            let events = canonicalize_events(events);
+            let events = bundle::canonicalize_evidence_events(events);
             let deployment_environment = audit.deployment_env.as_str();
             let ledger_environment = events
                 .last()

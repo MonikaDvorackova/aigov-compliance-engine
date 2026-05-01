@@ -49,11 +49,15 @@ Use **one** `GOVAI_RUN_ID` value for the whole release pipeline: every `POST /ev
 
 The composite action fails immediately if **`base_url`**, **`run_id`**, or **`api_key`** is missing, so a misconfigured integration cannot silently pass.
 
-This repository’s reference workflow **`.github/workflows/govai-check.yml`** is also strict about secrets/variables, but note the following so you do not misread local vs hosted behavior:
+**`.github/workflows/govai-check.yml`** stays available as an **explicit synthetic / smoke** harness: scripted evidence unrelated to artefacts from **`evidence_pack`**.
 
-- **When the job runs**: `.github/workflows/govai-check.yml` *listens* on `pull_request` and `push` to **`main`** and **`staging`**, but the **`govai-compliance-gate` job’s `if:`** currently runs it only for **`workflow_dispatch`** and **`push` to `main`**. Pushes to **`staging`**, **pull requests**, and other events therefore **skip** that job unless you change the condition.
-- **`GOVAI_RUN_ID` source**: the workflow’s “Resolve GOVAI_RUN_ID” step builds a deterministic id from repository metadata (for example `GITHUB_REPOSITORY`, `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`, `GITHUB_SHA`) unless you override it via `workflow_dispatch` input or a future `UPSTREAM_GOVAI_RUN_ID` wiring. That value is **not** GitHub’s numeric `github.run_id` alone; it is a **string** used as the audit `run_id` for the whole job.
-- **Evidence before `govai check`**: the same workflow posts a **full required evidence sequence** for a `VALID` verdict (see the step “Submit required evidence (make run eligible for VALID)” and its comments listing `ai_discovery_reported`, `evaluation_reported`, `risk_reviewed`, etc.). That is **not** a single “minimal” event path; **`VALID`** is the expected outcome when the hosted backend accepts that sequence under current policy.
+Production semantics on merge to **`main`** in **this repo** live in **`.github/workflows/compliance.yml`**, **`govai-compliance-gate`**: artefacts from **`evidence_pack`** (including **`docs/evidence/<run_id>.json`** and **`evidence_digest_manifest.json`**) determine what is posted via **`govai submit-evidence-pack`**, while **`govai verify-evidence-pack`** requires hosted **`events_content_sha256`** to match the CI manifest plus a **`VALID`** compliance summary.
+
+For **govai-check** workflows:
+
+- **When the gate job runs**: the workflow *listens* broadly, but the **`govai-compliance-gate` job `if:`** may still exclude PRs/branches depending on edits.
+- **`GOVAI_RUN_ID`**: may be synthesized from **`GITHUB_REPOSITORY`**, **`GITHUB_RUN_ID`**, **`GITHUB_SHA`**, etc., or supplied via **`workflow_dispatch`** inputs.
+- **Evidence before check**: scripted curl / JSON bodies (“Synthetic evidence replay”) — adequate for demos, **not** a guarantee that CI-generated evidence was mirrored on the ledger.
 
 ## Verdict vs infrastructure failures
 
@@ -62,8 +66,9 @@ Understand what failed from logs and HTTP status:
 | Outcome | Meaning |
 |---------|---------|
 | **`VALID`** | Policy gate satisfied — `govai check` exits 0. |
-| **`BLOCKED`** | Hosted audit reachable; policy says the run cannot pass yet — often missing requirements or blocking reasons. **Not** a transport error — fix evidence or approvals, then retry. |
-| **`INVALID`** | Hosted audit reachable; malformed or inconsistent ledger/evidence semantics for policy — distinct from **`BLOCKED`**. |
+| **`BLOCKED`** | Hosted audit reachable; policy says the run cannot pass yet — often missing requirements or blocking reasons. **Not** a transport error — fix evidence or approvals, then retry. Current **repo CLI** exits **3** (`EX_BLOCKED`). |
+| **`INVALID`** | Hosted audit reachable; malformed or inconsistent ledger/evidence semantics for policy — distinct from **`BLOCKED`**. Current **repo CLI** exits **2** (`EX_INVALID`). |
+| **ERROR / transport / fingerprint mismatch** | With **`govai verify-evidence-pack`**, **`--verify-artifacts`**, or infra failures: exit **1** (`EX_ERR`) — digest mismatch, **`/bundle-hash`** errors, malformed manifests, unexpected HTTP/network errors — see **`python/aigov_py/cli_exit.py`**. |
 | **HTTP 502/503, timeouts, TLS errors, refused connection** | **Infrastructure**: load balancer/service not reachable, process not listening, overloaded, or **readiness** failing (for example dependency checks on **`GET /ready`**). This is **not** a policy verdict — fix deployment, networking, or dependencies. |
 
 For operator visibility, the audit service exposes **`GET /health`** (liveness) and **`GET /ready`** (DB + migrations + ledger writable); use **`/ready`** behind load balancers when you need dependency checks.
