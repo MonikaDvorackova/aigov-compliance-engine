@@ -1,5 +1,9 @@
-# GovAI CLI — compliance gate for merge / deploy.
-# Fails unless `govai check` exits 0 (verdict VALID only).
+# GovAI CLI — **synthetic connectivity / demo workflow** for merge / deploy.
+# This workflow posts scripted evidence (NOT CI-generated artefacts) then runs `govai check`.
+#
+# Production release validation belongs in `.github/workflows/compliance.yml`
+# (`govai-compliance-gate` job: artefact-bound `submit-evidence-pack` +
+# `verify-evidence-pack` after `evidence_pack`).
 #
 # Required configuration (Settings → Secrets and variables → Actions):
 # - Variables:
@@ -85,7 +89,7 @@ jobs:
             echo "__GOVAI_RUN_ID__"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Submit required evidence (make run eligible for VALID)
+      - name: Synthetic evidence replay (hosted smoke only — NOT production artefacts)
         env:
           GOVAI_AUDIT_BASE_URL: ${{ vars.GOVAI_AUDIT_BASE_URL }}
           GOVAI_API_KEY: ${{ secrets.GOVAI_API_KEY }}

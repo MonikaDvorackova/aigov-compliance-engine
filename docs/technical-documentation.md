@@ -93,7 +93,7 @@ Limits are exposed via GET /usage.
 - **Ingest:** `POST /evidence` — body: `EvidenceEvent` (`event_id`, `event_type`, `ts_utc`, `actor`, `system`, `run_id`, `payload`).
 - **Usage / export:** `GET /usage`, `GET /api/export/:run_id`.
 - **Chain:** `GET /verify`, `GET /verify-log`
-- **Bundle:** `GET /bundle?run_id=…`, `GET /bundle-hash?run_id=…`
+- **Bundle:** `GET /bundle?run_id=…`, `GET /bundle-hash?run_id=…` (also returns **`events_content_sha256`** — portable SHA-256 over canonicalised evidence events minus server `environment`; see **`bundle::portable_evidence_digest_v1`** — used for artefact-bound production gates alongside legacy **`bundle_sha256`** tied to **`log_path` / tier** metadata)
 - **Summary:** `GET /compliance-summary?run_id=…` — `ok`, `schema_version` (`aigov.compliance_summary.v2`), `policy_version`, `run_id`; when `ok` is true — `verdict` (`VALID` / `INVALID` / `BLOCKED`) and `current_state` (inner `schema_version`: `aigov.compliance_current_state.v2`, same projection as bundle `identifiers` for canonical fields).
 - **Storage:** append-only JSONL ledger files.
   - Dev default: relative to process cwd (local-friendly).

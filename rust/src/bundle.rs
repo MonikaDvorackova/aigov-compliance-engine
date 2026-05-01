@@ -3,6 +3,61 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::collections::HashSet;
+
+/// Same ordering/de-duplication as historical `canonicalize_events` in `govai_api` /
+/// `/bundle-hash`, so digest and bundle hashing apply to identical event sequences.
+pub fn canonicalize_evidence_events(mut events: Vec<EvidenceEvent>) -> Vec<EvidenceEvent> {
+    let mut seen: HashSet<String> = HashSet::new();
+    events.sort_by(|a, b| a.ts_utc.cmp(&b.ts_utc));
+    let mut out_rev: Vec<EvidenceEvent> = Vec::with_capacity(events.len());
+    for e in events.into_iter().rev() {
+        if seen.insert(e.event_id.clone()) {
+            out_rev.push(e);
+        }
+    }
+    out_rev.reverse();
+
+    out_rev.sort_by(|a, b| {
+        a.ts_utc
+            .cmp(&b.ts_utc)
+            .then_with(|| a.event_type.cmp(&b.event_type))
+            .then_with(|| a.event_id.cmp(&b.event_id))
+    });
+
+    out_rev
+}
+
+/// Cross-environment ledger digest over evidence events only (`run_id`, ordered events with
+/// `environment` stripped). Stable across `policy_version`, host path, or chain linkage.
+///
+/// Contracts with `events_content_sha256` on `/bundle-hash` / export metadata.
+pub fn portable_evidence_digest_v1(run_id: &str, events: &[EvidenceEvent]) -> String {
+    let run_id_trim = run_id.trim();
+    let seq = canonicalize_evidence_events(events.to_vec());
+
+    let ev_values: Vec<serde_json::Value> = seq
+        .into_iter()
+        .map(|e| {
+            let stripped = EvidenceEvent {
+                environment: None,
+                ..e
+            };
+            sort_json_value(serde_json::to_value(stripped).expect("EvidenceEvent serde"))
+        })
+        .collect();
+
+    let v = serde_json::json!({
+        "events": ev_values,
+        "run_id": run_id_trim,
+        "schema": "aigov.evidence_digest.v1"
+    });
+
+    let bytes = canonical_json_bytes(&v);
+    let mut h = Sha256::new();
+    h.update(bytes);
+    hex::encode(h.finalize())
+}
 
 fn canonical_json_bytes<T: Serialize>(value: &T) -> Vec<u8> {
     // serde_json keeps insertion order, but we need canonical ordering
@@ -569,4 +624,73 @@ pub fn bundle_sha256(
     let mut h = Sha256::new();
     h.update(bytes);
     hex::encode(h.finalize())
+}
+
+#[cfg(test)]
+mod portable_digest_tests {
+    use super::*;
+    use crate::schema::EvidenceEvent;
+
+    fn ev_sample(
+        id: &str,
+        et: &str,
+        ts: &str,
+        rid: &str,
+        environment: Option<&str>,
+        payload: serde_json::Value,
+    ) -> EvidenceEvent {
+        EvidenceEvent {
+            event_id: id.to_string(),
+            event_type: et.to_string(),
+            ts_utc: ts.to_string(),
+            actor: "actor_x".to_string(),
+            system: "sys_y".to_string(),
+            run_id: rid.to_string(),
+            environment: environment.map(|s| s.to_string()),
+            payload,
+        }
+    }
+
+    #[test]
+    fn portable_digest_ignores_environment_stamp() {
+        let rid = "rid-env-invariant";
+        let a = vec![ev_sample(
+            "e1",
+            "ai_discovery_reported",
+            "2020-01-01T01:02:03Z",
+            rid,
+            Some("dev"),
+            serde_json::json!({"openai": false}),
+        )];
+        let b = vec![ev_sample(
+            "e1",
+            "ai_discovery_reported",
+            "2020-01-01T01:02:03Z",
+            rid,
+            None,
+            serde_json::json!({"openai": false}),
+        )];
+        assert_eq!(
+            portable_evidence_digest_v1(rid, &a),
+            portable_evidence_digest_v1(rid, &b)
+        );
+    }
+
+    #[test]
+    fn portable_digest_deterministic_repeated_calls() {
+        let rid = "rid-stable";
+        let events = vec![ev_sample(
+            "evt-a",
+            "ai_discovery_reported",
+            "2021-06-07T08:09:10Z",
+            rid,
+            Some("staging"),
+            serde_json::json!({"openai": false, "transformers": true}),
+        )];
+        let d1 = portable_evidence_digest_v1(rid, &events);
+        let d2 = portable_evidence_digest_v1(rid, &events);
+        assert_eq!(d1, d2);
+        assert!(d1.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(d1.len(), 64);
+    }
 }

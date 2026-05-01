@@ -15,6 +15,8 @@ Goal for “hosted mode”: customers call your hosted URL and **do not run Rust
   - [ ] Ingress routes allowed for:
     - [ ] `POST /evidence`
     - [ ] `GET /compliance-summary`
+    - [ ] `GET /bundle-hash` (returns `bundle_sha256` and **`events_content_sha256`** for artefact-bound CI gates — schema **`aigov.evidence_digest.v1`**)
+    - [ ] `GET /api/export/:run_id` (optional cross-check from `verify-evidence-pack`: `evidence_hashes.events_content_sha256`)
     - [ ] `GET /status`
     - [ ] `GET /usage`
   - [ ] **Liveness** probe: **`GET /health`** (process is up — no dependency checks).
