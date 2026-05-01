@@ -15,10 +15,21 @@ from .prototype_domain import (
 
 def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+    headers = {"Content-Type": "application/json"}
+
+    api_key = os.environ.get("GOVAI_API_KEY", "").strip()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    project = os.environ.get("GOVAI_PROJECT", "").strip()
+    if project:
+        headers["X-GovAI-Project"] = project
+
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
@@ -42,7 +53,7 @@ def main() -> None:
     system = os.getenv("AIGOV_SYSTEM", "aigov_poc")
 
     endpoint = (
-        os.getenv("AIGOV_AUDIT_ENDPOINT") or os.getenv("AIGOV_AUDIT_URL") or "http://127.0.0.1:8088"
+        os.getenv("GOVAI_AUDIT_BASE_URL") or os.getenv("AIGOV_AUDIT_ENDPOINT") or os.getenv("AIGOV_AUDIT_URL") or "http://127.0.0.1:8088"
     ).rstrip("/")
     url = f"{endpoint}/evidence"
 
