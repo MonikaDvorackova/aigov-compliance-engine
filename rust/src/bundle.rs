@@ -1,11 +1,8 @@
-use crate::audit_store::StoredRecord;
 use crate::schema::EvidenceEvent;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 
 fn canonical_json_bytes<T: Serialize>(value: &T) -> Vec<u8> {
     // serde_json keeps insertion order, but we need canonical ordering
@@ -34,31 +31,11 @@ fn sort_json_value(v: serde_json::Value) -> serde_json::Value {
 }
 
 pub fn collect_events_for_run(log_path: &str, run_id: &str) -> Result<Vec<EvidenceEvent>, String> {
-    let f = match File::open(log_path) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // First-write initialization: missing tenant ledger means "no events yet".
-            // (Ledger file is created on first successful append.)
-            return Ok(Vec::new());
-        }
-        Err(e) => return Err(e.to_string()),
-    };
-
-    let reader = BufReader::new(f);
     let mut out: Vec<EvidenceEvent> = Vec::new();
-
-    for line in reader.lines() {
-        let l = line.map_err(|e| e.to_string())?;
-        let t = l.trim();
-        if t.is_empty() {
-            continue;
-        }
-
-        let rec: StoredRecord = serde_json::from_str(t).map_err(|e| e.to_string())?;
-
-        // Prefer the stored JSON to avoid re serialization differences
+    let (records, _diag) = crate::audit_store::scan_ledger_records(log_path)?;
+    for rec in records {
+        // Prefer the stored JSON to avoid re-serialization differences.
         let ev: EvidenceEvent = serde_json::from_str(&rec.event_json).map_err(|e| e.to_string())?;
-
         if ev.run_id == run_id {
             out.push(ev);
         }

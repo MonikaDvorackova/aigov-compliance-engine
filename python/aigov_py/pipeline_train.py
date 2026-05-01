@@ -17,7 +17,7 @@ from .prototype_domain import (
   risk_lifecycle_payloads,
 )
 
-AUDIT_URL = os.environ.get("AIGOV_AUDIT_URL", "http://127.0.0.1:8088")
+AUDIT_URL = os.environ.get("GOVAI_AUDIT_BASE_URL") or os.environ.get("AIGOV_AUDIT_URL", "http://127.0.0.1:8088")
 SYSTEM = os.environ.get("AIGOV_SYSTEM", "aigov_poc")
 ACTOR = os.environ.get("AIGOV_ACTOR", "monika")
 THRESHOLD = float(os.environ.get("AIGOV_ACC_THRESHOLD", "0.8"))
@@ -28,7 +28,18 @@ def now_utc() -> str:
 
 
 def post_event(event: dict) -> dict:
-  r = requests.post(f"{AUDIT_URL}/evidence", json=event, timeout=10)
+  api_key = os.environ.get("GOVAI_API_KEY", "").strip()
+  project = os.environ.get("GOVAI_PROJECT", "github-actions").strip() or "github-actions"
+
+  headers = {
+    "X-GovAI-Project": project,
+    "Content-Type": "application/json",
+  }
+
+  if api_key:
+    headers["Authorization"] = f"Bearer {api_key}"
+
+  r = requests.post(f"{AUDIT_URL}/evidence", json=event, headers=headers, timeout=10)
   try:
     return r.json()
   except Exception:
