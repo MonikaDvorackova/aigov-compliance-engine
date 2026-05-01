@@ -11,6 +11,11 @@ use std::path::{Path, PathBuf};
 
 pub const LEDGER_DIR_ENV: &str = "GOVAI_LEDGER_DIR";
 
+/// Resolved `GOVAI_LEDGER_DIR` when non-empty after trim.
+pub fn configured_ledger_dir() -> Option<PathBuf> {
+    env_ledger_dir_raw().map(PathBuf::from)
+}
+
 fn env_ledger_dir_raw() -> Option<String> {
     std::env::var(LEDGER_DIR_ENV)
         .ok()

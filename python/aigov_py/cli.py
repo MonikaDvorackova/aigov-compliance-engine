@@ -165,6 +165,7 @@ def _require_env_nonempty(name: str) -> str | None:
 
 
 def _missing_evidence_from_summary(summary: Any) -> list[str]:
+    """Gap codes from `/compliance-summary` requirements: `missing` (current API) union `missing_evidence` (legacy)."""
     if not isinstance(summary, dict):
         return []
     requirements = summary.get("requirements")
@@ -175,17 +176,27 @@ def _missing_evidence_from_summary(summary: Any) -> list[str]:
     if not isinstance(requirements, dict):
         return []
 
-    items = requirements.get("missing_evidence") or []
     out: list[str] = []
-    if not isinstance(items, list):
-        return out
-    for item in items:
-        if isinstance(item, dict):
-            code = item.get("code")
-            if isinstance(code, str) and code.strip():
-                out.append(code.strip())
-        elif isinstance(item, str) and item.strip():
-            out.append(item.strip())
+    seen: set[str] = set()
+
+    def add_code(code: str) -> None:
+        c = code.strip()
+        if c and c not in seen:
+            seen.add(c)
+            out.append(c)
+
+    for key in ("missing_evidence", "missing"):
+        items = requirements.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict):
+                code = item.get("code")
+                if isinstance(code, str):
+                    add_code(code)
+            elif isinstance(item, str) and item.strip():
+                add_code(item)
+
     return out
 
 
@@ -199,7 +210,7 @@ def _requirements_dict_from_summary(summary: dict[str, Any]) -> dict[str, Any] |
 
 
 def _print_check_failure_details(summary: dict[str, Any], verdict: str) -> None:
-    """After the verdict line, print missing_evidence and blocked_reasons for CI visibility."""
+    """After the verdict line, print requirement gaps (API `missing` / legacy `missing_evidence`) and blocked_reasons."""
     if verdict not in ("BLOCKED", "INVALID"):
         return
     req = _requirements_dict_from_summary(summary)
@@ -208,6 +219,20 @@ def _print_check_failure_details(summary: dict[str, Any], verdict: str) -> None:
         if isinstance(missing_evidence, list) and missing_evidence:
             print("missing_evidence:")
             for item in missing_evidence:
+                if isinstance(item, dict):
+                    code = item.get("code")
+                    src = item.get("source")
+                    if isinstance(code, str) and code.strip():
+                        extra = f" ({src})" if src else ""
+                        print(f"  - {code.strip()}{extra}")
+                    else:
+                        print(f"  - {item}")
+                elif isinstance(item, str) and item.strip():
+                    print(f"  - {item.strip()}")
+        missing_only = req.get("missing") or []
+        if isinstance(missing_only, list) and missing_only:
+            print("missing (requirement ids):")
+            for item in missing_only:
                 if isinstance(item, dict):
                     code = item.get("code")
                     src = item.get("source")

@@ -47,16 +47,26 @@ Use **one** `GOVAI_RUN_ID` value for the whole release pipeline: every `POST /ev
 
 ## Fail-fast behavior (strict gate)
 
-The repository’s customer-facing workflow gate (`.github/workflows/govai-check.yml`) is **strict**:
+The composite action fails immediately if **`base_url`**, **`run_id`**, or **`api_key`** is missing, so a misconfigured integration cannot silently pass.
 
-- If any of these are missing, the job **fails immediately** (non-zero exit code):
-  - `GOVAI_AUDIT_BASE_URL`
-  - `GOVAI_API_KEY`
-- For PR/push usage, the workflow is **self-contained**: it generates a fresh `run_id` (unless an upstream run id is provided) and posts a minimal evidence event before running `govai check`.
-- The job still fails unless the verdict is `VALID` — with minimal evidence only, the expected outcome is typically `BLOCKED` rather than `RUN_NOT_FOUND`.
-- This is intentional so a misconfigured gate cannot “skip green” and accidentally allow merges.
+This repository’s reference workflow **`.github/workflows/govai-check.yml`** is also strict about secrets/variables, but note the following so you do not misread local vs hosted behavior:
 
-The composite action is intentionally strict: missing `base_url`, `run_id`, or `api_key` fails immediately so a misconfigured gate cannot “skip green”.
+- **When the job runs**: `.github/workflows/govai-check.yml` *listens* on `pull_request` and `push` to **`main`** and **`staging`**, but the **`govai-compliance-gate` job’s `if:`** currently runs it only for **`workflow_dispatch`** and **`push` to `main`**. Pushes to **`staging`**, **pull requests**, and other events therefore **skip** that job unless you change the condition.
+- **`GOVAI_RUN_ID` source**: the workflow’s “Resolve GOVAI_RUN_ID” step builds a deterministic id from repository metadata (for example `GITHUB_REPOSITORY`, `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`, `GITHUB_SHA`) unless you override it via `workflow_dispatch` input or a future `UPSTREAM_GOVAI_RUN_ID` wiring. That value is **not** GitHub’s numeric `github.run_id` alone; it is a **string** used as the audit `run_id` for the whole job.
+- **Evidence before `govai check`**: the same workflow posts a **full required evidence sequence** for a `VALID` verdict (see the step “Submit required evidence (make run eligible for VALID)” and its comments listing `ai_discovery_reported`, `evaluation_reported`, `risk_reviewed`, etc.). That is **not** a single “minimal” event path; **`VALID`** is the expected outcome when the hosted backend accepts that sequence under current policy.
+
+## Verdict vs infrastructure failures
+
+Understand what failed from logs and HTTP status:
+
+| Outcome | Meaning |
+|---------|---------|
+| **`VALID`** | Policy gate satisfied — `govai check` exits 0. |
+| **`BLOCKED`** | Hosted audit reachable; policy says the run cannot pass yet — often missing requirements or blocking reasons. **Not** a transport error — fix evidence or approvals, then retry. |
+| **`INVALID`** | Hosted audit reachable; malformed or inconsistent ledger/evidence semantics for policy — distinct from **`BLOCKED`**. |
+| **HTTP 502/503, timeouts, TLS errors, refused connection** | **Infrastructure**: load balancer/service not reachable, process not listening, overloaded, or **readiness** failing (for example dependency checks on **`GET /ready`**). This is **not** a policy verdict — fix deployment, networking, or dependencies. |
+
+For operator visibility, the audit service exposes **`GET /health`** (liveness) and **`GET /ready`** (DB + migrations + ledger writable); use **`/ready`** behind load balancers when you need dependency checks.
 
 ## Minimal copy-paste workflow
 

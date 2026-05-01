@@ -5,10 +5,55 @@ use uuid::Uuid;
 
 pub type DbPool = PgPool;
 
+/// Count of `.sql` files under `rust/migrations/`. Updated when migrations are added; tests assert parity.
+pub const EXPECTED_SQLX_MIGRATION_COUNT: i64 = 12;
+
+pub fn postgres_url_configured_nonempty() -> Result<(), String> {
+    let url = std::env::var("GOVAI_DATABASE_URL")
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .unwrap_or_default();
+    if url.trim().is_empty() {
+        return Err(
+            "Missing Postgres URL: set GOVAI_DATABASE_URL (preferred) or DATABASE_URL.".to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Returns `Err` unless `_sqlx_migrations` reports at least [`EXPECTED_SQLX_MIGRATION_COUNT`] successful applies.
+pub async fn verify_sqlx_migrations_complete(pool: &DbPool) -> Result<(), String> {
+    let applied: i64 = sqlx::query_scalar(
+        "select count(*)::bigint from _sqlx_migrations where success = true",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("_sqlx_migrations")
+            || msg.contains("does not exist")
+            || msg.contains("relation")
+        {
+            "Postgres schema not migrated: `_sqlx_migrations` unavailable or migrations not applied."
+                .to_string()
+        } else {
+            format!("could not verify migration state: {}", e)
+        }
+    })?;
+
+    if applied < EXPECTED_SQLX_MIGRATION_COUNT {
+        return Err(format!(
+            "Postgres migrations incomplete: {} successful migrations recorded in `_sqlx_migrations`, expected {}. Apply repo migrations out-of-band or set GOVAI_AUTO_MIGRATE=true.",
+            applied, EXPECTED_SQLX_MIGRATION_COUNT
+        ));
+    }
+    Ok(())
+}
+
 pub async fn init_pool_from_env() -> Result<DbPool, String> {
+    postgres_url_configured_nonempty()?;
     let database_url = std::env::var("GOVAI_DATABASE_URL")
         .or_else(|_| std::env::var("DATABASE_URL"))
-        .map_err(|_| "DATABASE_URL missing (or GOVAI_DATABASE_URL)".to_string())?;
+        .map_err(|_| "Missing Postgres URL: set GOVAI_DATABASE_URL (preferred) or DATABASE_URL.".to_string())?;
     PgPoolOptions::new()
         .max_connections(10)
         .connect(&database_url)
@@ -143,6 +188,25 @@ pub async fn bootstrap_team_for_user(pool: &DbPool, user_id: Uuid) -> Result<Uui
 
     tx.commit().await?;
     Ok(team_id)
+}
+
+#[cfg(test)]
+mod migration_count_tests {
+    use super::EXPECTED_SQLX_MIGRATION_COUNT;
+
+    #[test]
+    fn expected_sqlx_migration_count_matches_migrations_directory() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let n = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("read migrations dir {:?}: {}", dir, e))
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |x| x == "sql"))
+            .count() as i64;
+        assert_eq!(
+            n, EXPECTED_SQLX_MIGRATION_COUNT,
+            "update EXPECTED_SQLX_MIGRATION_COUNT when adding/removing migrations"
+        );
+    }
 }
 
 pub struct AssessmentRow {

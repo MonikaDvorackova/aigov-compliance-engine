@@ -17,7 +17,8 @@ Goal for “hosted mode”: customers call your hosted URL and **do not run Rust
     - [ ] `GET /compliance-summary`
     - [ ] `GET /status`
     - [ ] `GET /usage`
-  - [ ] Healthcheck configured to call **`GET /health`** (or `GET /status` if you prefer).
+  - [ ] **Liveness** probe: **`GET /health`** (process is up — no dependency checks).
+  - [ ] **Readiness** probe (recommended behind a load balancer): **`GET /ready`** — returns **503** unless Postgres responds, **`_sqlx_migrations`** shows the expected number of successful applies, and the ledger directory is writable (see below).
 
 - **Database (managed Postgres)**
   - [ ] Provision a Postgres database (managed).
@@ -67,8 +68,9 @@ Goal for “hosted mode”: customers call your hosted URL and **do not run Rust
 ### Optional (only if you use these features)
 
 - **`AIGOV_BIND`**
-  - Bind address for the server (default: `127.0.0.1:8088`).
-  - In containers, typically set to `0.0.0.0:8088`.
+  - Bind address for the server (default locally: **`127.0.0.1:8088`**).
+  - On **Railway**, **Heroku-style** platforms, **`PORT`**, or other dynamic ports: use **`AIGOV_BIND="0.0.0.0:$PORT"`** (shell must expand `$PORT`; a plain `ENTRYPOINT` without a shell often does **not** expand it — use `sh -c '…'`).
+  - **Do not** assume a fixed **8088** on hosted platforms; **`PORT`** must come from the platform when applicable.
 
 - **`GOVAI_METERING`**
   - `on` enables team-scoped metering enforced on `POST /evidence`.
@@ -107,7 +109,27 @@ In the Python terminal SDK, they configure:
 - **`GET /compliance-summary?run_id=<id>`**: compute compliance verdict + missing evidence (requires bearer token when `GOVAI_API_KEYS` is set)
 - **`GET /status`**: lightweight JSON status (`ok`, `policy_version`, `environment`, optional `base_url`)
 - **`GET /usage`**: usage counters (requires bearer token when `GOVAI_API_KEYS` is set)
-- **`GET /health`**: healthcheck endpoint (always `ok: true`)
+- **`GET /health`**: **liveness** — process is running (`ok: true`); does **not** verify Postgres or the ledger disk.
+- **`GET /ready`**: **readiness** — verifies Postgres, applied migrations marker, and ledger writability.
+
+## Railway — production-shaped start command
+
+Use the **`aigov_audit`** binary (repo build output: `./aigov_audit`). Typical **Railway Start Command**:
+
+```bash
+sh -c 'mkdir -p /tmp/govai-ledger; GOVAI_LEDGER_DIR=/tmp/govai-ledger AIGOV_BIND="0.0.0.0:$PORT" ./aigov_audit'
+```
+
+Set at least:
+
+- **`GOVAI_DATABASE_URL`** (or **`DATABASE_URL`**) — managed Postgres URL.
+- **`GOVAI_API_KEYS`** — comma-separated bearer secrets (must align with tenant mapping when **`GOVAI_API_KEYS_JSON`** is used).
+- **`GOVAI_API_KEYS_JSON`** — staging/production expect a JSON map of **`api_key → tenant_id`** (see Rust `audit_api_key` module): required for isolated hosted tenants on **`AIGOV_ENVIRONMENT=staging`** / **`prod`**.
+- **`AIGOV_ENVIRONMENT`** — use **`staging`** or **`prod`** for hosted tiers (determines startup strictness).
+- **`GOVAI_AUTO_MIGRATE`** — **`true`** in simple Railway setups, **or** run SQLx migrations as a separate release step.
+- **`PORT`** — provided by Railway; **do not** hardcode **8088** for this platform.
+
+Local and Docker Compose examples may still use **`127.0.0.1:8088`** or **`0.0.0.0:8088`** explicitly; hosted examples should always follow the platform’s **`PORT`**.
 
 ## Verification commands
 
@@ -208,4 +230,4 @@ Edit `docker-compose.yml` and set:
 ## Notes / pending
 
 - `GET /usage` is **implemented** already.
-- If you want an always-on “hosted mode” hard requirement for auth (fail fast when `GOVAI_API_KEYS` is missing), add a deployment-side policy to enforce that (or extend startup checks). This doc keeps the current local-friendly default behavior.
+- **Staging/production** deployments fail fast today when **`GOVAI_API_KEYS_JSON`** is unset/invalid (**tenant isolation**), when **loopback binds** slip through (**`AIGOV_ENVIRONMENT=staging`** / **`prod`**), when **migrations** are incomplete without **`GOVAI_AUTO_MIGRATE`**, or when **`GOVAI_LEDGER_DIR`** is not durable — see server startup logs and **`GET /ready`** for live dependency status.
