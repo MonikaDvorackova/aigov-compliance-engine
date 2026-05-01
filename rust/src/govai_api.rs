@@ -28,7 +28,8 @@ use std::cmp::Ordering;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::api_error::api_error_with;
+use crate::api_error::{api_error, api_error_with};
+use crate::ledger_storage;
 
 fn clean_policy_prefix(s: &str) -> &str {
     s.trim()
@@ -150,6 +151,7 @@ pub async fn root() -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
+/// Liveness only (no DB or disk checks). For Postgres + migrations + ledger checks use **`GET /ready`** on the audit router.
 pub async fn health() -> (StatusCode, Json<serde_json::Value>) {
     (StatusCode::OK, Json(json!({ "ok": true })))
 }
@@ -1407,6 +1409,75 @@ async fn verify_log(
     }
 }
 
+/// Readiness: DB reachable, migrations complete, ledger writable (`GOVAI_LEDGER_DIR` or dev cwd).
+async fn readiness_check(
+    State(audit): State<AuditState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Err(e) = sqlx::query("SELECT 1").fetch_one(&audit.pool).await {
+        return api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NOT_READY",
+            "Service is not ready to accept audit traffic.",
+            "Verify Postgres connectivity and DATABASE_URL / GOVAI_DATABASE_URL.",
+            Some(json!({ "checks": { "database_ping": false, "detail": e.to_string() } })),
+        );
+    }
+
+    if let Err(e) = db::verify_sqlx_migrations_complete(&audit.pool).await {
+        return api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NOT_READY",
+            "Service is not ready to accept audit traffic.",
+            "Apply migrations or enable GOVAI_AUTO_MIGRATE=true for automatic apply.",
+            Some(json!({ "checks": { "migrations_complete": false, "detail": e } })),
+        );
+    }
+
+    let ledger_err = match audit.deployment_env {
+        GovaiEnvironment::Staging | GovaiEnvironment::Prod => {
+            let Some(dir) = ledger_storage::configured_ledger_dir() else {
+                return api_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "NOT_READY",
+                    "Service is not ready to accept audit traffic.",
+                    "Set GOVAI_LEDGER_DIR to a writable directory backed by persistent storage.",
+                    Some(json!({ "checks": { "ledger_writable": false } })),
+                );
+            };
+            ledger_storage::validate_ledger_dir(dir.as_path())
+        }
+        GovaiEnvironment::Dev => match ledger_storage::configured_ledger_dir() {
+            Some(dir) => ledger_storage::validate_ledger_dir(dir.as_path()),
+            None => std::env::current_dir()
+                .map_err(|e| format!("cannot read cwd: {}", e))
+                .and_then(|cwd| ledger_storage::validate_ledger_dir(&cwd)),
+        },
+    };
+
+    if let Err(e) = ledger_err {
+        return api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NOT_READY",
+            "Service is not ready to accept audit traffic.",
+            "Ensure GOVAI_LEDGER_DIR exists and is writable (or cwd writable in dev).",
+            Some(json!({ "checks": { "ledger_writable": false, "detail": e } })),
+        );
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "ready": true,
+            "checks": {
+                "database_ping": true,
+                "migrations_complete": true,
+                "ledger_writable": true
+            }
+        })),
+    )
+}
+
 pub fn audit_router(
     log_path: &'static str,
     policy_version: &'static str,
@@ -1432,6 +1503,10 @@ pub fn audit_router(
         async move { crate::audit_api_key::gate_audit_routes(cfg, usage, request, next).await }
     });
 
+    let unauthenticated = Router::new()
+        .route("/ready", get(readiness_check))
+        .with_state(state.clone());
+
     let gated = Router::new()
         .route("/evidence", post(ingest))
         .route("/usage", get(usage_route))
@@ -1444,7 +1519,9 @@ pub fn audit_router(
         .layer(audit_key_layer)
         .with_state(state.clone());
 
-    Router::new().merge(gated)
+    Router::new()
+        .merge(unauthenticated)
+        .merge(gated)
 }
 
 #[derive(Deserialize)]
