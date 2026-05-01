@@ -65,3 +65,7 @@ Rollback impact:
 - trailing partial ledger recovery would be removed
 - hot-path index optimization would be removed
 - CI may again validate PRs against hosted production if the workflow condition is reverted
+
+Additional CI validation note:
+
+The hosted `govai-check.yml` compliance gate is restricted to `main` and manual dispatch. Pull request validation must not call the production Railway endpoint because production Railway runs `main`, not the PR commit. This preserves validation correctness and avoids testing new PR code against an older deployed backend.
