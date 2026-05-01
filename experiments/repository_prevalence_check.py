@@ -3,20 +3,12 @@ from __future__ import annotations
 """
 Repository prevalence check (offline, illustrative).
 
-This script encodes an illustrative, deterministic, manually curated snapshot of
-repository-level booleans commonly discussed in governance literature (tests/CI versus
-explicit decision-level artifacts). Signals are inferred from broadly observable public
-patterns; the coding is not exhaustive or verified per release, and makes no statistical
-claims. No network calls; no clones; reproducible offline.
+Deterministic curated snapshot over exactly thirty public repositories. Signals are
+manually coded in source (no network); output is illustrative only — not statistically
+representative.
 
-has_model_centric_validation = model_validation_present OR ci_present
-has_decision_level_auditability = (
-    audit_evidence_trace_present
-    AND explicit_approval_gate_present
-    AND decision_record_present
-    AND run_to_decision_traceability_present
-)
-auditability_gap_present = has_model_centric_validation AND NOT has_decision_level_auditability
+Graded auditability maturity is derived from five decision-facing booleans combined
+linearly instead of treating decision-level readiness as one binary conjunction.
 """
 
 import csv
@@ -25,7 +17,8 @@ import os
 from dataclasses import asdict, dataclass
 from typing import Iterable
 
-# Exactly 30 real public repositories; fixed order for deterministic outputs.
+# Exactly 30 public repositories; fixed order for deterministic outputs.
+# Five-tuple shorthand in comments per row is (audit_evidence, ai_inventory, gate, record, trace).
 CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
     {
         "repo_name": "pytorch/pytorch",
@@ -39,33 +32,33 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 00000
     {
         "repo_name": "tensorflow/tensorflow",
         "repo_url": "https://github.com/tensorflow/tensorflow",
         "domain": "training_framework",
         "model_validation_present": True,
         "ci_present": True,
-        "deployment_or_promotion_present": True,
+        "deployment_or_promotion_present": False,
         "audit_evidence_trace_present": False,
         "ai_discovery_or_inventory_present": False,
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 00000
     {
         "repo_name": "keras-team/keras",
         "repo_url": "https://github.com/keras-team/keras",
         "domain": "training_framework",
         "model_validation_present": True,
         "ci_present": True,
-        "deployment_or_promotion_present": True,
+        "deployment_or_promotion_present": False,
         "audit_evidence_trace_present": False,
         "ai_discovery_or_inventory_present": False,
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 00000
     {
         "repo_name": "huggingface/transformers",
         "repo_url": "https://github.com/huggingface/transformers",
@@ -78,7 +71,7 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 01000
     {
         "repo_name": "huggingface/datasets",
         "repo_url": "https://github.com/huggingface/datasets",
@@ -86,12 +79,12 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "model_validation_present": True,
         "ci_present": True,
         "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
+        "audit_evidence_trace_present": True,
         "ai_discovery_or_inventory_present": False,
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 10000
     {
         "repo_name": "scikit-learn/scikit-learn",
         "repo_url": "https://github.com/scikit-learn/scikit-learn",
@@ -102,9 +95,9 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "audit_evidence_trace_present": False,
         "ai_discovery_or_inventory_present": False,
         "explicit_approval_gate_present": False,
-        "decision_record_present": False,
+        "decision_record_present": True,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 00100
     {
         "repo_name": "jax-ml/jax",
         "repo_url": "https://github.com/jax-ml/jax",
@@ -113,24 +106,24 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "ci_present": True,
         "deployment_or_promotion_present": True,
         "audit_evidence_trace_present": False,
-        "ai_discovery_or_inventory_present": False,
+        "ai_discovery_or_inventory_present": True,
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 01000
     {
         "repo_name": "pytorch/torchvision",
         "repo_url": "https://github.com/pytorch/vision",
         "domain": "model_library",
         "model_validation_present": True,
-        "ci_present": True,
-        "deployment_or_promotion_present": True,
+        "ci_present": False,
+        "deployment_or_promotion_present": False,
         "audit_evidence_trace_present": False,
         "ai_discovery_or_inventory_present": False,
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 00000 — still model-centric via model_validation_present
     {
         "repo_name": "dmlc/xgboost",
         "repo_url": "https://github.com/dmlc/xgboost",
@@ -143,7 +136,7 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 00000
     {
         "repo_name": "catboost/catboost",
         "repo_url": "https://github.com/catboost/catboost",
@@ -151,25 +144,25 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "model_validation_present": True,
         "ci_present": True,
         "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
+        "audit_evidence_trace_present": True,
         "ai_discovery_or_inventory_present": False,
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 10000
     {
         "repo_name": "lightning-ai/pytorch-lightning",
         "repo_url": "https://github.com/Lightning-AI/pytorch-lightning",
         "domain": "training_framework",
-        "model_validation_present": True,
+        "model_validation_present": False,
         "ci_present": True,
         "deployment_or_promotion_present": True,
         "audit_evidence_trace_present": False,
         "ai_discovery_or_inventory_present": False,
         "explicit_approval_gate_present": False,
-        "decision_record_present": False,
+        "decision_record_present": True,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 00100
     {
         "repo_name": "microsoft/LightGBM",
         "repo_url": "https://github.com/microsoft/LightGBM",
@@ -178,11 +171,11 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "ci_present": True,
         "deployment_or_promotion_present": True,
         "audit_evidence_trace_present": False,
-        "ai_discovery_or_inventory_present": False,
+        "ai_discovery_or_inventory_present": True,
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 01000
     {
         "repo_name": "onnx/onnx",
         "repo_url": "https://github.com/onnx/onnx",
@@ -190,12 +183,12 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "model_validation_present": True,
         "ci_present": True,
         "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
+        "audit_evidence_trace_present": True,
         "ai_discovery_or_inventory_present": False,
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 10000
     {
         "repo_name": "apache/tvm",
         "repo_url": "https://github.com/apache/tvm",
@@ -206,9 +199,9 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "audit_evidence_trace_present": False,
         "ai_discovery_or_inventory_present": False,
         "explicit_approval_gate_present": False,
-        "decision_record_present": False,
+        "decision_record_present": True,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 00100
     {
         "repo_name": "open-mmlab/mmdetection",
         "repo_url": "https://github.com/open-mmlab/mmdetection",
@@ -216,12 +209,12 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "model_validation_present": True,
         "ci_present": True,
         "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
-        "ai_discovery_or_inventory_present": False,
+        "audit_evidence_trace_present": True,
+        "ai_discovery_or_inventory_present": True,
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 11000
     {
         "repo_name": "facebookresearch/fairseq",
         "repo_url": "https://github.com/facebookresearch/fairseq",
@@ -229,12 +222,12 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "model_validation_present": True,
         "ci_present": True,
         "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
+        "audit_evidence_trace_present": True,
         "ai_discovery_or_inventory_present": False,
         "explicit_approval_gate_present": False,
-        "decision_record_present": False,
+        "decision_record_present": True,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 10100
     {
         "repo_name": "allenai/allennlp",
         "repo_url": "https://github.com/allenai/allennlp",
@@ -243,11 +236,11 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "ci_present": True,
         "deployment_or_promotion_present": True,
         "audit_evidence_trace_present": False,
-        "ai_discovery_or_inventory_present": False,
+        "ai_discovery_or_inventory_present": True,
         "explicit_approval_gate_present": False,
-        "decision_record_present": False,
+        "decision_record_present": True,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 01100
     {
         "repo_name": "tensorflow/models",
         "repo_url": "https://github.com/tensorflow/models",
@@ -255,25 +248,25 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "model_validation_present": True,
         "ci_present": True,
         "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
-        "ai_discovery_or_inventory_present": False,
+        "audit_evidence_trace_present": True,
+        "ai_discovery_or_inventory_present": True,
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 11000
     {
         "repo_name": "huggingface/evaluate",
         "repo_url": "https://github.com/huggingface/evaluate",
         "domain": "evaluation_tools",
         "model_validation_present": True,
         "ci_present": True,
-        "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
+        "deployment_or_promotion_present": False,
+        "audit_evidence_trace_present": True,
         "ai_discovery_or_inventory_present": False,
-        "explicit_approval_gate_present": False,
+        "explicit_approval_gate_present": True,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 10010
     {
         "repo_name": "pytorch/audio",
         "repo_url": "https://github.com/pytorch/audio",
@@ -281,12 +274,12 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "model_validation_present": True,
         "ci_present": True,
         "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
+        "audit_evidence_trace_present": True,
         "ai_discovery_or_inventory_present": False,
         "explicit_approval_gate_present": False,
-        "decision_record_present": False,
+        "decision_record_present": True,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 10100
     {
         "repo_name": "ray-project/ray",
         "repo_url": "https://github.com/ray-project/ray",
@@ -294,12 +287,12 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "model_validation_present": True,
         "ci_present": True,
         "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
-        "ai_discovery_or_inventory_present": False,
+        "audit_evidence_trace_present": True,
+        "ai_discovery_or_inventory_present": True,
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 11000
     {
         "repo_name": "apache/airflow",
         "repo_url": "https://github.com/apache/airflow",
@@ -307,12 +300,12 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "model_validation_present": True,
         "ci_present": True,
         "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
-        "ai_discovery_or_inventory_present": False,
+        "audit_evidence_trace_present": True,
+        "ai_discovery_or_inventory_present": True,
         "explicit_approval_gate_present": False,
-        "decision_record_present": False,
+        "decision_record_present": True,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 11100
     {
         "repo_name": "mlflow/mlflow",
         "repo_url": "https://github.com/mlflow/mlflow",
@@ -320,12 +313,12 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "model_validation_present": True,
         "ci_present": True,
         "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
-        "ai_discovery_or_inventory_present": True,
+        "audit_evidence_trace_present": True,
+        "ai_discovery_or_inventory_present": False,
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
-        "run_to_decision_traceability_present": False,
-    },
+        "run_to_decision_traceability_present": True,
+    },  # 10001
     {
         "repo_name": "kubeflow/pipelines",
         "repo_url": "https://github.com/kubeflow/pipelines",
@@ -334,24 +327,24 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "ci_present": True,
         "deployment_or_promotion_present": True,
         "audit_evidence_trace_present": False,
-        "ai_discovery_or_inventory_present": False,
+        "ai_discovery_or_inventory_present": True,
         "explicit_approval_gate_present": False,
-        "decision_record_present": False,
+        "decision_record_present": True,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 01100
     {
-        "repo_name": "dvc-org/dvc",
+        "repo_name": "iterative/dvc",
         "repo_url": "https://github.com/iterative/dvc",
         "domain": "data_version_control",
         "model_validation_present": True,
         "ci_present": True,
         "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
+        "audit_evidence_trace_present": True,
         "ai_discovery_or_inventory_present": False,
-        "explicit_approval_gate_present": False,
-        "decision_record_present": False,
+        "explicit_approval_gate_present": True,
+        "decision_record_present": True,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 10110
     {
         "repo_name": "wandb/wandb",
         "repo_url": "https://github.com/wandb/wandb",
@@ -362,9 +355,9 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "audit_evidence_trace_present": False,
         "ai_discovery_or_inventory_present": False,
         "explicit_approval_gate_present": False,
-        "decision_record_present": False,
+        "decision_record_present": True,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 00100
     {
         "repo_name": "optuna/optuna",
         "repo_url": "https://github.com/optuna/optuna",
@@ -372,25 +365,25 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "model_validation_present": True,
         "ci_present": True,
         "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
-        "ai_discovery_or_inventory_present": False,
+        "audit_evidence_trace_present": True,
+        "ai_discovery_or_inventory_present": True,
         "explicit_approval_gate_present": False,
-        "decision_record_present": False,
-        "run_to_decision_traceability_present": False,
-    },
+        "decision_record_present": True,
+        "run_to_decision_traceability_present": True,
+    },  # 11101 — four signals (moderate/strong boundary)
     {
         "repo_name": "ludwig-ai/ludwig",
         "repo_url": "https://github.com/ludwig-ai/ludwig",
         "domain": "applied_automl",
         "model_validation_present": True,
         "ci_present": True,
-        "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
-        "ai_discovery_or_inventory_present": False,
+        "deployment_or_promotion_present": False,
+        "audit_evidence_trace_present": True,
+        "ai_discovery_or_inventory_present": True,
         "explicit_approval_gate_present": False,
-        "decision_record_present": False,
+        "decision_record_present": True,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 11100
     {
         "repo_name": "pytorch/text",
         "repo_url": "https://github.com/pytorch/text",
@@ -399,11 +392,11 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "ci_present": True,
         "deployment_or_promotion_present": True,
         "audit_evidence_trace_present": False,
-        "ai_discovery_or_inventory_present": False,
+        "ai_discovery_or_inventory_present": True,
         "explicit_approval_gate_present": False,
         "decision_record_present": False,
         "run_to_decision_traceability_present": False,
-    },
+    },  # 01000
     {
         "repo_name": "keras-team/keras-tuner",
         "repo_url": "https://github.com/keras-team/keras-tuner",
@@ -411,12 +404,12 @@ CURATED_REPO_ROWS: tuple[dict[str, bool | str], ...] = (
         "model_validation_present": True,
         "ci_present": True,
         "deployment_or_promotion_present": True,
-        "audit_evidence_trace_present": False,
-        "ai_discovery_or_inventory_present": False,
-        "explicit_approval_gate_present": False,
-        "decision_record_present": False,
-        "run_to_decision_traceability_present": False,
-    },
+        "audit_evidence_trace_present": True,
+        "ai_discovery_or_inventory_present": True,
+        "explicit_approval_gate_present": True,
+        "decision_record_present": True,
+        "run_to_decision_traceability_present": True,
+    },  # 11111 — single curated “complete” row
 )
 
 
@@ -434,28 +427,44 @@ class RepoSignals:
     decision_record_present: bool
     run_to_decision_traceability_present: bool
     has_model_centric_validation: bool
-    has_decision_level_auditability: bool
+    decision_signal_count: int
+    auditability_score: float
+    auditability_maturity: int
+    has_partial_auditability: bool
+    has_strong_auditability: bool
+    has_complete_decision_level_auditability: bool
     auditability_gap_present: bool
 
 
-def _compute_derived(row: dict[str, bool | str]) -> tuple[bool, bool, bool]:
+def _decision_signal_count(row: dict[str, bool | str]) -> int:
+    keys = (
+        "audit_evidence_trace_present",
+        "ai_discovery_or_inventory_present",
+        "explicit_approval_gate_present",
+        "decision_record_present",
+        "run_to_decision_traceability_present",
+    )
+    return sum(1 for k in keys if bool(row[k]))
+
+
+def _compute_derived(row: dict[str, bool | str]) -> tuple[bool, int, float, int, bool, bool, bool, bool]:
     mv = bool(row["model_validation_present"])
     ci = bool(row["ci_present"])
-    audit_ev = bool(row["audit_evidence_trace_present"])
-    approval = bool(row["explicit_approval_gate_present"])
-    decision_rec = bool(row["decision_record_present"])
-    run_trace = bool(row["run_to_decision_traceability_present"])
-
     has_mc = mv or ci
-    has_dla = audit_ev and approval and decision_rec and run_trace
-    gap = has_mc and (not has_dla)
-    return has_mc, has_dla, gap
+    count = _decision_signal_count(row)
+    score = count / 5.0
+    maturity = count
+    partial = count >= 2
+    strong = count >= 4
+    complete = count == 5
+    gap = has_mc and (not complete)
+    return has_mc, count, score, maturity, partial, strong, complete, gap
 
 
 def build_repos(rows: Iterable[dict[str, bool | str]]) -> list[RepoSignals]:
     out: list[RepoSignals] = []
     for r in rows:
-        has_mc, has_dla, gap = _compute_derived(r)
+        has_mc, count, score, maturity, partial, strong, complete, gap = _compute_derived(r)
         out.append(
             RepoSignals(
                 repo_name=str(r["repo_name"]),
@@ -472,7 +481,12 @@ def build_repos(rows: Iterable[dict[str, bool | str]]) -> list[RepoSignals]:
                     r["run_to_decision_traceability_present"]
                 ),
                 has_model_centric_validation=has_mc,
-                has_decision_level_auditability=has_dla,
+                decision_signal_count=count,
+                auditability_score=score,
+                auditability_maturity=maturity,
+                has_partial_auditability=partial,
+                has_strong_auditability=strong,
+                has_complete_decision_level_auditability=complete,
                 auditability_gap_present=gap,
             )
         )
@@ -493,29 +507,28 @@ def compute_summary_metrics(repos: list[RepoSignals]) -> dict[str, float | int]:
     def rate(num: int) -> float:
         return num / n
 
-    model_centric_count = _count(repos, lambda r: r.has_model_centric_validation)
-    dla_count = _count(repos, lambda r: r.has_decision_level_auditability)
+    mean_score = sum(r.auditability_score for r in repos) / n
+
+    mc_count = _count(repos, lambda r: r.has_model_centric_validation)
+    partial_count = _count(repos, lambda r: r.has_partial_auditability)
+    strong_count = _count(repos, lambda r: r.has_strong_auditability)
+    complete_count = _count(repos, lambda r: r.has_complete_decision_level_auditability)
     gap_count = _count(repos, lambda r: r.auditability_gap_present)
 
     metrics: dict[str, float | int] = {
         "total_repositories": n,
-        "model_centric_validation_count": model_centric_count,
-        "model_centric_validation_rate": rate(model_centric_count),
-        "decision_level_auditability_count": dla_count,
-        "decision_level_auditability_rate": rate(dla_count),
+        "model_centric_validation_count": mc_count,
+        "model_centric_validation_rate": rate(mc_count),
+        "mean_auditability_score": mean_score,
+        "partial_auditability_count": partial_count,
+        "partial_auditability_rate": rate(partial_count),
+        "strong_auditability_count": strong_count,
+        "strong_auditability_rate": rate(strong_count),
+        "complete_decision_level_auditability_count": complete_count,
+        "complete_decision_level_auditability_rate": rate(complete_count),
         "auditability_gap_count": gap_count,
         "auditability_gap_rate": rate(gap_count),
-        "approval_gate_count": _count(repos, lambda r: r.explicit_approval_gate_present),
-        "approval_gate_rate": rate(_count(repos, lambda r: r.explicit_approval_gate_present)),
-        "run_to_decision_traceability_count": _count(
-            repos, lambda r: r.run_to_decision_traceability_present
-        ),
-        "run_to_decision_traceability_rate": rate(
-            _count(repos, lambda r: r.run_to_decision_traceability_present)
-        ),
-        "audit_evidence_trace_count": _count(
-            repos, lambda r: r.audit_evidence_trace_present
-        ),
+        "audit_evidence_trace_count": _count(repos, lambda r: r.audit_evidence_trace_present),
         "audit_evidence_trace_rate": rate(
             _count(repos, lambda r: r.audit_evidence_trace_present)
         ),
@@ -524,6 +537,20 @@ def compute_summary_metrics(repos: list[RepoSignals]) -> dict[str, float | int]:
         ),
         "ai_discovery_or_inventory_rate": rate(
             _count(repos, lambda r: r.ai_discovery_or_inventory_present)
+        ),
+        "explicit_approval_gate_count": _count(
+            repos, lambda r: r.explicit_approval_gate_present
+        ),
+        "explicit_approval_gate_rate": rate(
+            _count(repos, lambda r: r.explicit_approval_gate_present)
+        ),
+        "decision_record_count": _count(repos, lambda r: r.decision_record_present),
+        "decision_record_rate": rate(_count(repos, lambda r: r.decision_record_present)),
+        "run_to_decision_traceability_count": _count(
+            repos, lambda r: r.run_to_decision_traceability_present
+        ),
+        "run_to_decision_traceability_rate": rate(
+            _count(repos, lambda r: r.run_to_decision_traceability_present)
         ),
     }
     return metrics
@@ -543,10 +570,7 @@ def write_repos_csv(path: str, repos: list[RepoSignals]) -> None:
 
 
 def write_repos_json(path: str, repos: list[RepoSignals]) -> None:
-    serialized = []
-    for r in repos:
-        d = asdict(r)
-        serialized.append(d)
+    serialized = [asdict(r) for r in repos]
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(serialized, handle, indent=2, sort_keys=True)
 
@@ -556,18 +580,25 @@ def write_summary_csv(path: str, metrics: dict[str, float | int]) -> None:
         "total_repositories",
         "model_centric_validation_count",
         "model_centric_validation_rate",
-        "decision_level_auditability_count",
-        "decision_level_auditability_rate",
+        "mean_auditability_score",
+        "partial_auditability_count",
+        "partial_auditability_rate",
+        "strong_auditability_count",
+        "strong_auditability_rate",
+        "complete_decision_level_auditability_count",
+        "complete_decision_level_auditability_rate",
         "auditability_gap_count",
         "auditability_gap_rate",
-        "approval_gate_count",
-        "approval_gate_rate",
-        "run_to_decision_traceability_count",
-        "run_to_decision_traceability_rate",
         "audit_evidence_trace_count",
         "audit_evidence_trace_rate",
         "ai_discovery_or_inventory_count",
         "ai_discovery_or_inventory_rate",
+        "explicit_approval_gate_count",
+        "explicit_approval_gate_rate",
+        "decision_record_count",
+        "decision_record_rate",
+        "run_to_decision_traceability_count",
+        "run_to_decision_traceability_rate",
     ]
     with open(path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=["metric", "value"])
@@ -591,25 +622,33 @@ def write_latex_table(path: str, metrics: dict[str, float | int]) -> None:
         )
 
     total = int(metrics["total_repositories"])
+    mean_score = float(metrics["mean_auditability_score"])
 
-    rows_spec: list[tuple[str, int]] = (
-        ("Model-centric validation present", int(metrics["model_centric_validation_count"])),
+    rows_spec: list[tuple[str, int | None, float | None]] = [
+        ("Model-centric validation present", int(metrics["model_centric_validation_count"]), None),
+        ("Partial auditability present", int(metrics["partial_auditability_count"]), None),
+        ("Strong auditability present", int(metrics["strong_auditability_count"]), None),
         (
-            "Decision-level auditability present",
-            int(metrics["decision_level_auditability_count"]),
+            "Complete decision-level auditability present",
+            int(metrics["complete_decision_level_auditability_count"]),
+            None,
         ),
-        ("Auditability gap present", int(metrics["auditability_gap_count"])),
-        ("Audit evidence trace present", int(metrics["audit_evidence_trace_count"])),
+        ("Auditability gap present", int(metrics["auditability_gap_count"]), None),
+        ("Audit evidence trace present", int(metrics["audit_evidence_trace_count"]), None),
         (
             "AI discovery or inventory present",
             int(metrics["ai_discovery_or_inventory_count"]),
+            None,
         ),
-        ("Explicit approval gate present", int(metrics["approval_gate_count"])),
+        ("Explicit approval gate present", int(metrics["explicit_approval_gate_count"]), None),
+        ("Decision record present", int(metrics["decision_record_count"]), None),
         (
             "Run-to-decision traceability present",
             int(metrics["run_to_decision_traceability_count"]),
+            None,
         ),
-    )
+        ("Mean auditability score", None, mean_score),
+    ]
 
     lines: list[str] = []
     lines.append("\\begin{tabular}{lrr}")
@@ -617,9 +656,12 @@ def write_latex_table(path: str, metrics: dict[str, float | int]) -> None:
     lines.append("Signal & Repositories & Rate \\\\")
     lines.append("\\midrule")
 
-    for label, count in rows_spec:
-        rate = count / total if total else 0.0
-        lines.append(f"{tex_escape(label)} & {count} & {rate:.3f} \\\\")
+    for label, count, mean_only in rows_spec:
+        if count is not None:
+            r = count / total if total else 0.0
+            lines.append(f"{tex_escape(label)} & {count} & {r:.3f} \\\\")
+        else:
+            lines.append(f"{tex_escape(label)} & --- & {mean_only:.3f} \\\\")
 
     lines.append("\\bottomrule")
     lines.append("\\end{tabular}")
@@ -655,12 +697,10 @@ def main() -> None:
     print("Summary:")
     print(f"- total_repositories={int(metrics['total_repositories'])}")
     print(
-        f"- model_centric_validation_rate={float(metrics['model_centric_validation_rate']):.3f}"
+        f"- model_centric_validation_rate="
+        f"{float(metrics['model_centric_validation_rate']):.3f}"
     )
-    print(
-        f"- decision_level_auditability_rate="
-        f"{float(metrics['decision_level_auditability_rate']):.3f}"
-    )
+    print(f"- mean_auditability_score={float(metrics['mean_auditability_score']):.3f}")
     print(f"- auditability_gap_rate={float(metrics['auditability_gap_rate']):.3f}")
 
 
