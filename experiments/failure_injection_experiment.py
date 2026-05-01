@@ -22,6 +22,18 @@ FAILURE_TYPES: list[str] = [
 ]
 
 
+# Human-readable labels for LaTeX / paper outputs.
+CONDITION_DISPLAY: dict[str, str] = {
+    "missing_audit_evidence": "Missing audit evidence",
+    "missing_ai_discovery_output": "Missing AI discovery output",
+    "missing_approval_record": "Missing approval record",
+    "failed_compliance_evaluation": "Failed compliance evaluation",
+    "inconsistent_run_context": "Inconsistent run context",
+    "unavailable_audit_run": "Unavailable audit run",
+    "partial_evidence": "Partial evidence",
+}
+
+
 @dataclass(frozen=True)
 class Run:
     run_id: str
@@ -34,6 +46,10 @@ class Run:
     approval: str
     trace_consistent: bool
     run_available: bool
+    evidence_pack_present: bool
+    events_content_sha256_match: bool
+    export_digest_match: bool
+    artifact_bound_verification: bool
     baseline_verdict: Verdict
     gate_verdict: Verdict
     expected_gate_verdict: Verdict
@@ -49,6 +65,10 @@ def decision_gate_logic(
     *,
     evaluation_result: EvaluationResult,
     run_available: bool,
+    evidence_pack_present: bool,
+    events_content_sha256_match: bool,
+    export_digest_match: bool,
+    artifact_bound_verification: bool,
     evidence_complete: bool,
     ai_discovery_present: bool,
     approval: str,
@@ -57,6 +77,14 @@ def decision_gate_logic(
     if evaluation_result == "fail":
         return "INVALID"
     if run_available is False:
+        return "BLOCKED"
+    if evidence_pack_present is not True:
+        return "BLOCKED"
+    if events_content_sha256_match is not True:
+        return "BLOCKED"
+    if export_digest_match is not True:
+        return "BLOCKED"
+    if artifact_bound_verification is not True:
         return "BLOCKED"
     if evidence_complete is not True:
         return "BLOCKED"
@@ -78,6 +106,10 @@ def make_base_fields() -> dict:
         "approval": "granted",
         "trace_consistent": True,
         "run_available": True,
+        "evidence_pack_present": True,
+        "events_content_sha256_match": True,
+        "export_digest_match": True,
+        "artifact_bound_verification": True,
     }
 
 
@@ -86,24 +118,41 @@ def apply_failure_type(fields: dict, failure_type: str) -> dict:
 
     if failure_type == "missing_audit_evidence":
         updated["evidence_complete"] = False
+        updated["evidence_pack_present"] = True
+        updated["events_content_sha256_match"] = True
+        updated["export_digest_match"] = True
+        updated["artifact_bound_verification"] = True
 
     elif failure_type == "missing_ai_discovery_output":
         updated["ai_discovery_present"] = False
+        updated["artifact_bound_verification"] = True
 
     elif failure_type == "missing_approval_record":
         updated["approval"] = "missing"
+        updated["artifact_bound_verification"] = True
 
     elif failure_type == "failed_compliance_evaluation":
         updated["evaluation_result"] = "fail"
+        updated["artifact_bound_verification"] = True
 
     elif failure_type == "inconsistent_run_context":
         updated["trace_consistent"] = False
+        updated["events_content_sha256_match"] = False
+        updated["artifact_bound_verification"] = False
 
     elif failure_type == "unavailable_audit_run":
         updated["run_available"] = False
+        updated["evidence_pack_present"] = False
+        updated["events_content_sha256_match"] = False
+        updated["export_digest_match"] = False
+        updated["artifact_bound_verification"] = False
 
     elif failure_type == "partial_evidence":
         updated["evidence_complete"] = False
+        updated["evidence_pack_present"] = True
+        updated["events_content_sha256_match"] = False
+        updated["export_digest_match"] = False
+        updated["artifact_bound_verification"] = False
 
     else:
         raise ValueError(f"Unsupported failure type: {failure_type}")
@@ -120,6 +169,10 @@ def build_run(*, run_id: str, condition: str, is_injected_failure: bool, fields:
     gate_verdict = decision_gate_logic(
         evaluation_result=fields["evaluation_result"],
         run_available=fields["run_available"],
+        evidence_pack_present=fields["evidence_pack_present"],
+        events_content_sha256_match=fields["events_content_sha256_match"],
+        export_digest_match=fields["export_digest_match"],
+        artifact_bound_verification=fields["artifact_bound_verification"],
         evidence_complete=fields["evidence_complete"],
         ai_discovery_present=fields["ai_discovery_present"],
         approval=fields["approval"],
@@ -138,6 +191,10 @@ def build_run(*, run_id: str, condition: str, is_injected_failure: bool, fields:
         approval=fields["approval"],
         trace_consistent=fields["trace_consistent"],
         run_available=fields["run_available"],
+        evidence_pack_present=fields["evidence_pack_present"],
+        events_content_sha256_match=fields["events_content_sha256_match"],
+        export_digest_match=fields["export_digest_match"],
+        artifact_bound_verification=fields["artifact_bound_verification"],
         baseline_verdict=baseline_verdict,
         gate_verdict=gate_verdict,
         expected_gate_verdict=expected_gate_verdict,
@@ -161,7 +218,7 @@ def generate_runs() -> list[Run]:
     for _ in range(100):
         add("valid", False, make_base_fields())
 
-    # 100 noisy but valid runs (model-centric validation fails, decision gate remains valid)
+    # 100 noisy but valid: irrelevant metadata perturbation (baseline-only); gate stays VALID.
     for _ in range(100):
         noisy = make_base_fields()
         noisy["model_validation"] = "failed"
@@ -171,7 +228,6 @@ def generate_runs() -> list[Run]:
     for failure_type in FAILURE_TYPES:
         for _ in range(100):
             base = make_base_fields()
-            # Ensure baseline misses the failure when model_validation passes.
             base["model_validation"] = "passed"
             add(failure_type, True, apply_failure_type(base, failure_type))
 
@@ -205,9 +261,33 @@ def rate(numerator: int, denominator: int) -> float:
     return numerator / denominator
 
 
+def compute_overall_extra_metrics(runs_list: list[Run]) -> dict[str, float]:
+    injected = [r for r in runs_list if r.is_injected_failure]
+    n_inj = len(injected)
+
+    abv_fail = sum(1 for r in injected if r.artifact_bound_verification is not True)
+    digest_mismatch_runs = [
+        r
+        for r in injected
+        if (r.events_content_sha256_match is not True) or (r.export_digest_match is not True)
+    ]
+    digest_detected = sum(
+        1
+        for r in digest_mismatch_runs
+        if r.gate_verdict in {"BLOCKED", "INVALID"}
+    )
+
+    return {
+        "artifact_bound_verification_failure_rate": rate(abv_fail, n_inj),
+        "digest_mismatch_detection_rate": rate(digest_detected, len(digest_mismatch_runs)),
+    }
+
+
 def summarize(runs: Iterable[Run]) -> tuple[list[dict], dict]:
     runs_list = list(runs)
     conditions = ["valid", "noisy_but_valid"] + failure_conditions()
+
+    extra = compute_overall_extra_metrics(runs_list)
 
     rows: list[dict] = []
     overall = {
@@ -228,6 +308,17 @@ def summarize(runs: Iterable[Run]) -> tuple[list[dict], dict]:
         gate_detect = sum(1 for r in failures if r.gate_verdict in {"BLOCKED", "INVALID"})
         gate_valid_on_valid = sum(1 for r in valids if r.gate_verdict == "VALID")
 
+        abv_fn = sum(1 for r in failures if r.artifact_bound_verification is not True)
+        digest_subset = [
+            r
+            for r in failures
+            if (r.events_content_sha256_match is not True)
+            or (r.export_digest_match is not True)
+        ]
+        digest_detected = sum(
+            1 for r in digest_subset if r.gate_verdict in {"BLOCKED", "INVALID"}
+        )
+
         row = {
             "condition": condition,
             "runs": len(subset),
@@ -243,6 +334,8 @@ def summarize(runs: Iterable[Run]) -> tuple[list[dict], dict]:
             "baseline_false_negative_rate": f"{rate(baseline_fn, len(failures)):.3f}",
             "decision_gate_detection_rate": f"{rate(gate_detect, len(failures)):.3f}",
             "valid_retention_rate": f"{rate(gate_valid_on_valid, len(valids)):.3f}",
+            "artifact_bound_verification_failure_rate": f"{rate(abv_fn, len(failures)):.3f}",
+            "digest_mismatch_detection_rate": f"{rate(digest_detected, len(digest_subset)):.3f}",
         }
         rows.append(row)
 
@@ -260,6 +353,8 @@ def summarize(runs: Iterable[Run]) -> tuple[list[dict], dict]:
             overall["decision_gate_detections"], overall["total_failures"]
         ),
         "valid_retention_rate": rate(overall["gate_valid_on_valid"], overall["total_valid"]),
+        "artifact_bound_verification_failure_rate": extra["artifact_bound_verification_failure_rate"],
+        "digest_mismatch_detection_rate": extra["digest_mismatch_detection_rate"],
     }
 
     return rows, overall_metrics
@@ -278,9 +373,19 @@ def write_summary_csv(path: str, rows: list[dict], overall_metrics: dict) -> Non
         overall_row["runs"] = str(sum(int(r["runs"]) for r in rows))
         overall_row["failures"] = str(sum(int(r["failures"]) for r in rows))
         overall_row["valids"] = str(sum(int(r["valids"]) for r in rows))
-        overall_row["baseline_false_negative_rate"] = f"{overall_metrics['baseline_false_negative_rate']:.3f}"
-        overall_row["decision_gate_detection_rate"] = f"{overall_metrics['decision_gate_detection_rate']:.3f}"
+        overall_row["baseline_false_negative_rate"] = (
+            f"{overall_metrics['baseline_false_negative_rate']:.3f}"
+        )
+        overall_row["decision_gate_detection_rate"] = (
+            f"{overall_metrics['decision_gate_detection_rate']:.3f}"
+        )
         overall_row["valid_retention_rate"] = f"{overall_metrics['valid_retention_rate']:.3f}"
+        overall_row["artifact_bound_verification_failure_rate"] = (
+            f"{overall_metrics['artifact_bound_verification_failure_rate']:.3f}"
+        )
+        overall_row["digest_mismatch_detection_rate"] = (
+            f"{overall_metrics['digest_mismatch_detection_rate']:.3f}"
+        )
         writer.writerow(overall_row)
 
 
@@ -293,7 +398,6 @@ def write_latex_table(path: str, rows: list[dict], overall_metrics: dict) -> Non
             .replace("&", "\\&")
         )
 
-    # Table focuses on failure conditions + overall, per paper claim.
     failure_rows = [r for r in rows if r["condition"] in set(FAILURE_TYPES)]
 
     lines: list[str] = []
@@ -303,13 +407,18 @@ def write_latex_table(path: str, rows: list[dict], overall_metrics: dict) -> Non
     lines.append("\\midrule")
 
     for r in failure_rows:
+        cond = r["condition"]
+        label = CONDITION_DISPLAY.get(cond, cond)
         lines.append(
-            f"{tex_escape(r['condition'])} & {r['baseline_false_negative_rate']} & {r['decision_gate_detection_rate']} \\\\"
+            f"{tex_escape(label)} & {r['baseline_false_negative_rate']} & "
+            f"{r['decision_gate_detection_rate']} \\\\"
         )
 
     lines.append("\\midrule")
     lines.append(
-        f"OVERALL (failures) & {overall_metrics['baseline_false_negative_rate']:.3f} & {overall_metrics['decision_gate_detection_rate']:.3f} \\\\"
+        f"{tex_escape('Overall failures')} & "
+        f"{overall_metrics['baseline_false_negative_rate']:.3f} & "
+        f"{overall_metrics['decision_gate_detection_rate']:.3f} \\\\"
     )
     lines.append("\\bottomrule")
     lines.append("\\end{tabular}")
@@ -345,8 +454,17 @@ def main() -> None:
     print("")
     print("Overall metrics:")
     print(f"- baseline_false_negative_rate={overall_metrics['baseline_false_negative_rate']:.3f}")
-    print(f"- decision_gate_detection_rate={overall_metrics['decision_gate_detection_rate']:.3f}")
+    print(
+        f"- decision_gate_detection_rate={overall_metrics['decision_gate_detection_rate']:.3f}"
+    )
     print(f"- valid_retention_rate={overall_metrics['valid_retention_rate']:.3f}")
+    print(
+        "- artifact_bound_verification_failure_rate="
+        f"{overall_metrics['artifact_bound_verification_failure_rate']:.3f}"
+    )
+    print(
+        f"- digest_mismatch_detection_rate={overall_metrics['digest_mismatch_detection_rate']:.3f}"
+    )
 
 
 if __name__ == "__main__":
