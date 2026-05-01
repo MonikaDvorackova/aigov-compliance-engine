@@ -26,6 +26,8 @@ pub mod rbac;
 use axum::Router;
 use std::net::SocketAddr;
 
+use crate::govai_environment::GovaiEnvironment;
+
 const LOG_PATH: &str = "audit_log.jsonl";
 
 fn default_bind() -> SocketAddr {
@@ -48,6 +50,36 @@ fn bind_addr_from_env() -> SocketAddr {
     default_bind()
 }
 
+pub(crate) fn staging_prod_bind_must_be_reachable(
+    deployment_env: GovaiEnvironment,
+    addr: SocketAddr,
+) -> Result<(), String> {
+    match deployment_env {
+        GovaiEnvironment::Staging | GovaiEnvironment::Prod if addr.ip().is_loopback() => Err(format!(
+            "Refusing to start {deployment_env} on loopback {addr}: use a reachable bind address such as \"0.0.0.0:${{PORT}}\" (Railway provides PORT)."
+        )),
+        _ => Ok(()),
+    }
+}
+
+async fn assert_staging_prod_operational_constraints(
+    deployment_env: GovaiEnvironment,
+    addr: SocketAddr,
+    auto_migrate: bool,
+    pool: &db::DbPool,
+) -> Result<(), String> {
+    match deployment_env {
+        GovaiEnvironment::Dev => Ok(()),
+        GovaiEnvironment::Staging | GovaiEnvironment::Prod => {
+            staging_prod_bind_must_be_reachable(deployment_env, addr)?;
+            if !auto_migrate {
+                db::verify_sqlx_migrations_complete(pool).await?;
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Run the HTTP server (same as the `aigov_audit` binary).
 pub async fn run() -> Result<(), String> {
     let addr = bind_addr_from_env();
@@ -65,19 +97,25 @@ pub async fn run() -> Result<(), String> {
         return Err(e);
     }
 
-    if let Err(e) = crate::ledger_storage::validate_startup(deployment_env) {
-        eprintln!("{e}");
-        return Err(e);
-    }
+    let ledger_dir_result = crate::ledger_storage::validate_startup(deployment_env)?;
+    let ledger_display = ledger_dir_result
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "(unset — evidence files use process working directory; not for staging/prod)".to_string());
 
     let policy_version = govai_environment::policy_version_for(deployment_env);
     let resolved_policy = policy_config::load_with_env(deployment_env.as_str());
 
+    if let Err(e) = db::postgres_url_configured_nonempty() {
+        eprintln!("{e}");
+        return Err(e);
+    }
+
     let pool = match db::init_pool_from_env().await {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("DB init failed: {}", e);
-            eprintln!("Set GOVAI_DATABASE_URL (preferred) or DATABASE_URL to a Postgres connection string");
+            eprintln!("database connection failed: {}", e);
+            eprintln!("Configure GOVAI_DATABASE_URL or DATABASE_URL to a reachable Postgres URL.");
             return Err(e);
         }
     };
@@ -87,10 +125,25 @@ pub async fn run() -> Result<(), String> {
         .map(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes"))
         .unwrap_or(false);
     if auto_migrate {
+        println!("startup: migrations=applying (GOVAI_AUTO_MIGRATE=true)");
         if let Err(e) = sqlx::migrate!("./migrations").run(&pool).await {
             eprintln!("DB migration failed: {}", e);
             return Err(format!("DB migration failed: {e}"));
         }
+    } else if matches!(
+        deployment_env,
+        GovaiEnvironment::Staging | GovaiEnvironment::Prod
+    ) {
+        println!("startup: migrations=not auto-applied; verifying schema...");
+    } else {
+        println!("startup: migrations=not auto-applied (dev); GOVAI_AUTO_MIGRATE not enabled");
+    }
+
+    if let Err(e) =
+        assert_staging_prod_operational_constraints(deployment_env, addr, auto_migrate, &pool).await
+    {
+        eprintln!("staging/prod startup validation failed: {e}");
+        return Err(e);
     }
 
     let metering = crate::metering::MeteringConfig::from_env();
@@ -128,9 +181,19 @@ pub async fn run() -> Result<(), String> {
         .merge(govai_api::compliance_workflow_router(pool));
 
     println!(
-        "govai listening on http://{} (environment={} policy_version={})",
+        "startup: bind=http://{} environment={} policy_version={}",
         addr, deployment_env, policy_version
     );
+    println!("startup: ledger_dir={ledger_display}");
+    println!("startup: database=verified (pool connected)");
+    if auto_migrate {
+        println!("startup: migrations=complete (applied this boot)");
+    } else if matches!(deployment_env, GovaiEnvironment::Staging | GovaiEnvironment::Prod) {
+        println!("startup: migrations=verified against _sqlx_migrations");
+    }
+    println!("startup: liveness=GET /health  readiness=GET /ready");
+
+    println!("govai listening on http://{}", addr);
 
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
@@ -207,5 +270,25 @@ mod tests {
         assert_eq!(bind_addr_from_env(), default_bind());
 
         clear_env_keys();
+    }
+
+    #[test]
+    fn staging_rejects_loopback_bind() {
+        let addr = SocketAddr::from(([127, 0, 0, 1], 8088));
+        let err =
+            staging_prod_bind_must_be_reachable(GovaiEnvironment::Staging, addr).unwrap_err();
+        assert!(err.contains("loopback"), "{err}");
+
+        let ok = staging_prod_bind_must_be_reachable(
+            GovaiEnvironment::Staging,
+            SocketAddr::from(([0, 0, 0, 0], 8088)),
+        );
+        assert!(ok.is_ok());
+    }
+
+    #[test]
+    fn dev_allows_loopback_bind() {
+        let addr = SocketAddr::from(([127, 0, 0, 1], 8088));
+        assert!(staging_prod_bind_must_be_reachable(GovaiEnvironment::Dev, addr).is_ok());
     }
 }

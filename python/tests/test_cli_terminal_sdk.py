@@ -291,6 +291,33 @@ def test_check_blocked_prints_missing_evidence(capsys: pytest.CaptureFixture[str
     assert "missing_evidence:" in out
 
 
+def test_check_blocked_prints_missing_requirement_ids_from_api_missing(capsys: pytest.CaptureFixture[str]) -> None:
+    s = {
+        "ok": True,
+        "verdict": "BLOCKED",
+        "requirements": {"missing": ["evaluation_reported", "risk_reviewed"]},
+    }
+    with patch("aigov_py.cli.get_compliance_summary", return_value=s):
+        code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
+    assert code == cli_exit.EX_INVALID
+    out = capsys.readouterr().out
+    assert out.strip().splitlines()[0].strip() == "BLOCKED"
+    assert "missing (requirement ids):" in out
+    assert "evaluation_reported" in out
+    assert "risk_reviewed" in out
+
+
+def test_missing_evidence_from_summary_union_api_fields() -> None:
+    """`_missing_evidence_from_summary` accepts `requirements.missing` (current API) and `missing_evidence`."""
+
+    from aigov_py import cli as cli_mod
+
+    s = {"requirements": {"missing": ["foo_req"]}}
+    assert cli_mod._missing_evidence_from_summary(s) == ["foo_req"]
+    legacy = {"requirements": {"missing_evidence": [{"code": "bar_ev"}]}}
+    assert cli_mod._missing_evidence_from_summary(legacy) == ["bar_ev"]
+
+
 def test_check_exits_invalid_no_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GOVAI_RUN_ID", raising=False)
     monkeypatch.delenv("RUN_ID", raising=False)
