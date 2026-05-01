@@ -280,11 +280,11 @@ flow: flow_full
 # Thin wrappers around Python scripts (core flow glue)
 approve: require_run
 	cd python && . .venv/bin/activate && \
-		RUN_ID=$(RUN_ID) AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.approve
+		GOVAI_AUDIT_BASE_URL=$${GOVAI_AUDIT_BASE_URL:-http://127.0.0.1:8088} GOVAI_API_KEY=$${GOVAI_API_KEY:-ci-test-api-key} GOVAI_PROJECT=$${GOVAI_PROJECT:-github-actions} RUN_ID=$(RUN_ID) AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.approve
 
 promote: require_run
 	cd python && . .venv/bin/activate && \
-		RUN_ID=$(RUN_ID) AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.promote
+		GOVAI_AUDIT_BASE_URL=$${GOVAI_AUDIT_BASE_URL:-http://127.0.0.1:8088} GOVAI_API_KEY=$${GOVAI_API_KEY:-ci-test-api-key} GOVAI_PROJECT=$${GOVAI_PROJECT:-github-actions} RUN_ID=$(RUN_ID) AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.promote
 
 export_bundle: require_run ensure_dirs
 	cd python && . .venv/bin/activate && \
