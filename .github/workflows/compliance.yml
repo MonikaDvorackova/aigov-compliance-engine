@@ -449,6 +449,8 @@ jobs:
         working-directory: python
         env:
           GOVAI_AUDIT_BASE_URL: http://127.0.0.1:8088
+          GOVAI_API_KEY: ci-test-api-key
+          GOVAI_PROJECT: github-actions
           RUN_ID: ${{ steps.govai_emit_run_id.outputs.run_id }}
         run: |
           set -euo pipefail
