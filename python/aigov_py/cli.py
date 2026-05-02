@@ -1109,6 +1109,100 @@ def build_parser() -> GovaiArgumentParser:
     c.add_argument("--team-id", default=os.environ.get("GOVAI_TEAM_ID"), help="Team UUID (or GOVAI_TEAM_ID).")
     c.add_argument("--created-by", default=os.environ.get("GOVAI_CREATED_BY"), help="User UUID (or GOVAI_CREATED_BY).")
 
+    s_exp = sub.add_parser(
+        "experiment",
+        help="Auditability experiments: offline matrices plus optional GitHub Actions RWCI runner.",
+    )
+    s_exp_sub = s_exp.add_subparsers(dest="experiment_cmd", required=True, metavar="EXPERIMENT")
+
+    s_exp_cfi = s_exp_sub.add_parser(
+        "controlled-failure-injection",
+        help="900-run failure taxonomy × projection (VALID/INVALID/BLOCKED).",
+    )
+    s_exp_cfi.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        metavar="DIR",
+        help="Directory for controlled_failure_injection.csv and .json.",
+    )
+
+    s_exp_abe = s_exp_sub.add_parser(
+        "artifact-bound",
+        help="Artifact digest / bundle scenarios vs gate outcomes.",
+    )
+    s_exp_abe.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        metavar="DIR",
+        help="Directory for artifact_bound_enforcement.csv and .json.",
+    )
+
+    s_exp_rwci = s_exp_sub.add_parser(
+        "real-world-ci-runner",
+        help="Fork repos, inject govai-audit workflow, run real GitHub Actions + govai check (requires tokens).",
+    )
+    s_exp_rwci.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        metavar="DIR",
+        help="Directory for real_world_ci_injection.csv, .json, and artifacts/ logs.",
+    )
+    s_exp_rwci.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        metavar="N",
+        help="Maximum repositories from datasets/repos.json to process (after optional --repo filter).",
+    )
+    s_exp_rwci.add_argument(
+        "--repo",
+        default=None,
+        metavar="NAME",
+        help="Run only the dataset entry with this name (e.g. transformers).",
+    )
+    s_exp_rwci.add_argument(
+        "--scenario",
+        default=None,
+        metavar="NAME",
+        help="Run only this scenario: missing_evidence, missing_approval, or broken_traceability.",
+    )
+
+    s_exp_agg = s_exp_sub.add_parser(
+        "aggregate",
+        help="Merge CFI, optional ABE, and RWCI JSON into final_summary.json and final_table.csv.",
+    )
+    s_exp_agg.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        metavar="DIR",
+        help="Directory for final outputs (final_summary.json, final_table.csv).",
+    )
+    s_exp_agg.add_argument(
+        "--cfi",
+        type=Path,
+        required=True,
+        metavar="DIR",
+        help="Directory containing controlled_failure_injection.json.",
+    )
+    s_exp_agg.add_argument(
+        "--abe",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="Optional directory containing artifact_bound_enforcement.json.",
+    )
+    s_exp_agg.add_argument(
+        "--rwci",
+        type=Path,
+        required=True,
+        metavar="DIR",
+        help="Directory containing real_world_ci_injection.json.",
+    )
+
     return p
 
 
@@ -1123,6 +1217,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.cmd is None:
         parser.print_help()
         return cli_exit.EX_OK
+
+    if args.cmd == "experiment":
+        from aigov_py.experiments import aggregate as exp_aggregate
+        from aigov_py.experiments import artifact_bound_enforcement as exp_abe
+        from aigov_py.experiments import controlled_failure_injection as exp_cfi
+        from aigov_py.experiments import real_world_ci_runner as exp_rwci_runner
+
+        ec = getattr(args, "experiment_cmd", "")
+        if ec == "controlled-failure-injection":
+            return exp_cfi.main_cli(getattr(args, "output"))
+        if ec == "artifact-bound":
+            return exp_abe.main_cli(getattr(args, "output"))
+        if ec == "real-world-ci-runner":
+            return exp_rwci_runner.main_cli(
+                output=getattr(args, "output"),
+                limit=int(getattr(args, "limit", 10)),
+                repo=getattr(args, "repo", None),
+                scenario=getattr(args, "scenario", None),
+            )
+        if ec == "aggregate":
+            return exp_aggregate.main_cli(
+                output=getattr(args, "output"),
+                cfi=getattr(args, "cfi"),
+                abe=getattr(args, "abe"),
+                rwci=getattr(args, "rwci"),
+            )
+        print("unknown experiment", file=sys.stderr)
+        return cli_exit.EX_USAGE
 
     if args.cmd == "init":
         try:

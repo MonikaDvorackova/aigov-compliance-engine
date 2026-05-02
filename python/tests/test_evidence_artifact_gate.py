@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from govai import GovAIAPIError
+from govai import GovAIAPIError, GovAIHTTPError
 
 from aigov_py import cli_exit
 from aigov_py.cli import main
@@ -117,3 +117,189 @@ def test_submit_evidence_pack_missing_bundle_errors(tmp_path: Path) -> None:
         ]
     )
     assert code == cli_exit.EX_ERR
+
+
+def _dup_409_body(*, eid: str, rid: str) -> str:
+    raw = f"duplicate event_id for run_id: event_id={eid} run_id={rid}"
+    return json.dumps(
+        {
+            "ok": False,
+            "error": {
+                "code": "DUPLICATE_EVENT_ID",
+                "message": "dup",
+                "hint": "h",
+                "details": {"raw": raw},
+            },
+        }
+    )
+
+
+def _two_event_artifact_dir(tmp_path: Path) -> tuple[Path, str]:
+    run_id = "rid-two"
+    d = tmp_path / "pack"
+    d.mkdir(parents=True, exist_ok=True)
+    ev = {
+        "event_type": "ai_discovery_reported",
+        "ts_utc": "2020-01-01T00:00:00Z",
+        "actor": "ci",
+        "system": "github_actions",
+        "run_id": run_id,
+        "payload": {"openai": False},
+    }
+    bundle = {
+        "ok": True,
+        "run_id": run_id,
+        "events": [
+            {**ev, "event_id": "e1"},
+            {**ev, "event_id": "e2", "ts_utc": "2020-01-01T00:01:00Z"},
+        ],
+    }
+    (d / f"{run_id}.json").write_text(json.dumps(bundle), encoding="utf-8")
+    (d / "evidence_digest_manifest.json").write_text(
+        json.dumps({"run_id": run_id, "events_content_sha256": ("ab" * 32)}, indent=2),
+        encoding="utf-8",
+    )
+    return d, run_id
+
+
+def test_submit_evidence_pack_duplicate_409_matching_ids_succeeds(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    artifact_dir, run_id = _two_event_artifact_dir(tmp_path)
+    body409 = _dup_409_body(eid="e1", rid=run_id)
+    err = GovAIHTTPError("HTTP 409", status_code=409, body_text=body409)
+
+    def fake_submit(client: object, body: dict) -> dict:
+        if str(body.get("event_id")) == "e1":
+            raise err
+        return {"ok": True, "record_hash": "x"}
+
+    with patch("aigov_py.evidence_artifact_gate.submit_event", side_effect=fake_submit):
+        code = main(
+            [
+                "--audit-base-url",
+                "http://audit.test",
+                "submit-evidence-pack",
+                "--path",
+                str(artifact_dir),
+                "--run-id",
+                run_id,
+            ]
+        )
+    assert code == cli_exit.EX_OK
+    out = capsys.readouterr().out
+    assert "already submitted: e1" in out
+    assert "submitted evidence pack" in out
+
+
+def test_submit_evidence_pack_duplicate_409_mismatched_event_id_fails(tmp_path: Path) -> None:
+    artifact_dir, run_id = _two_event_artifact_dir(tmp_path)
+    body409 = _dup_409_body(eid="other_id", rid=run_id)
+    err = GovAIHTTPError("HTTP 409", status_code=409, body_text=body409)
+
+    def fake_submit(client: object, body: dict) -> dict:
+        if str(body.get("event_id")) == "e1":
+            raise err
+        return {"ok": True}
+
+    with patch("aigov_py.evidence_artifact_gate.submit_event", side_effect=fake_submit):
+        code = main(
+            [
+                "--audit-base-url",
+                "http://audit.test",
+                "submit-evidence-pack",
+                "--path",
+                str(artifact_dir),
+                "--run-id",
+                run_id,
+            ]
+        )
+    assert code == cli_exit.EX_ERR
+
+
+def test_submit_evidence_pack_duplicate_409_missing_parseable_ids_fails(tmp_path: Path) -> None:
+    artifact_dir, run_id = _two_event_artifact_dir(tmp_path)
+    body409 = json.dumps(
+        {
+            "ok": False,
+            "error": {
+                "code": "DUPLICATE_EVENT_ID",
+                "message": "dup",
+                "hint": "h",
+                "details": {},
+            },
+        }
+    )
+    err = GovAIHTTPError("HTTP 409", status_code=409, body_text=body409)
+
+    with patch("aigov_py.evidence_artifact_gate.submit_event", side_effect=err):
+        code = main(
+            [
+                "--audit-base-url",
+                "http://audit.test",
+                "submit-evidence-pack",
+                "--path",
+                str(artifact_dir),
+                "--run-id",
+                run_id,
+            ]
+        )
+    assert code == cli_exit.EX_ERR
+
+
+def test_verify_evidence_pack_still_runs_digest_after_idempotent_submit(tmp_path: Path) -> None:
+    """Idempotent submit must not replace verify-evidence-pack; digest + verdict checks still run."""
+    artifact_dir, run_id = _two_event_artifact_dir(tmp_path)
+    body409 = _dup_409_body(eid="e1", rid=run_id)
+    dup_err = GovAIHTTPError("HTTP 409", status_code=409, body_text=body409)
+
+    def fake_submit(client: object, body: dict) -> dict:
+        if str(body.get("event_id")) == "e1":
+            raise dup_err
+        return {"ok": True}
+
+    digest_calls: list[str] = []
+
+    def fake_bundle_hash_digest(cli: object, rid: str) -> dict:
+        digest_calls.append(rid)
+        return {"ok": True, "events_content_sha256": "ab" * 32, "run_id": rid}
+
+    with patch("aigov_py.evidence_artifact_gate.submit_event", side_effect=fake_submit):
+        c_submit = main(
+            [
+                "--audit-base-url",
+                "http://audit.test",
+                "submit-evidence-pack",
+                "--path",
+                str(artifact_dir),
+                "--run-id",
+                run_id,
+            ]
+        )
+    assert c_submit == cli_exit.EX_OK
+
+    with (
+        patch("aigov_py.cli.GovAIClient") as gc,
+        patch("aigov_py.evidence_artifact_gate.bundle_hash_digest", side_effect=fake_bundle_hash_digest),
+        patch("aigov_py.evidence_artifact_gate.fetch_export_evidence_hashes", return_value=(None, "skip")),
+    ):
+        inst = MagicMock()
+        gc.return_value = inst
+        inst.request_json.return_value = {"ok": True, "verdict": "VALID"}
+
+        c_verify = main(
+            [
+                "--audit-base-url",
+                "http://audit.test",
+                "verify-evidence-pack",
+                "--path",
+                str(artifact_dir),
+                "--run-id",
+                run_id,
+            ]
+        )
+
+    assert c_verify == cli_exit.EX_OK
+    assert digest_calls == [run_id]
+    inst.request_json.assert_called()
