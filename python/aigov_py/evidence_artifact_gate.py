@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from govai import GovAIAPIError, GovAIClient, GovAIHTTPError, submit_event
+from govai import GovAIAPIError, GovAIClient, GovAIHTTPError, submit_event as _submit_event
 
 
 def canonicalize_evidence_event_dicts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -96,7 +96,7 @@ def submit_event_or_idempotent_duplicate(client: GovAIClient, body: dict[str, An
     """
 
     try:
-        submit_event_or_idempotent_duplicate(client, body)
+        _submit_event(client, body)
     except GovAIHTTPError as e:
         if _is_idempotent_duplicate_409_for_body(e, body):
             print(f"already submitted: {str(body.get('event_id') or '')}")
