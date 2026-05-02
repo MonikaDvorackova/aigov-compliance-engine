@@ -244,6 +244,11 @@ def test_verify_json_mocked_requests(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert code == cli_exit.EX_OK
 
 
+def test_unknown_subcommand_exits_usage() -> None:
+    code = main(["not-a-valid-subcommand"])
+    assert code == cli_exit.EX_USAGE
+
+
 def test_missing_run_id_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GOVAI_RUN_ID", raising=False)
     monkeypatch.delenv("RUN_ID", raising=False)
@@ -320,11 +325,11 @@ def test_missing_evidence_from_summary_union_api_fields() -> None:
     assert cli_mod._missing_evidence_from_summary(legacy) == ["bar_ev"]
 
 
-def test_check_exits_invalid_no_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_exits_usage_no_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GOVAI_RUN_ID", raising=False)
     monkeypatch.delenv("RUN_ID", raising=False)
     code = main(["--audit-base-url", "http://audit.test", "check"])
-    assert code == cli_exit.EX_INVALID
+    assert code == cli_exit.EX_USAGE
 
 
 def test_check_run_id_flag_overrides_positional(capsys: pytest.CaptureFixture[str]) -> None:

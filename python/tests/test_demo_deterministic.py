@@ -16,7 +16,7 @@ def test_demo_deterministic_missing_base_url_exits_2(
     monkeypatch.delenv("GOVAI_AUDIT_BASE_URL", raising=False)
     monkeypatch.setenv("GOVAI_API_KEY", "secret")
     code = main(["run", "demo-deterministic"])
-    assert code == cli_exit.EX_INVALID
+    assert code == cli_exit.EX_USAGE
     err = capsys.readouterr().err
     assert "Missing GOVAI_AUDIT_BASE_URL" in err
 
@@ -27,7 +27,7 @@ def test_demo_deterministic_missing_api_key_exits_2(
     monkeypatch.setenv("GOVAI_AUDIT_BASE_URL", "https://audit.example.test")
     monkeypatch.delenv("GOVAI_API_KEY", raising=False)
     code = main(["run", "demo-deterministic"])
-    assert code == cli_exit.EX_INVALID
+    assert code == cli_exit.EX_USAGE
     err = capsys.readouterr().err
     assert "Missing GOVAI_API_KEY" in err
 

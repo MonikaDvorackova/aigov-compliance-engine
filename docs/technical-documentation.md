@@ -17,12 +17,16 @@ Implemented scope:
 
 GovAI is a CI compliance gate for AI systems with audit evidence export.
 
-It:
+**Production semantics** (recommended for release / promoted branches): artefact-bound flow — **`govai submit-evidence-pack`** replays CI-generated **`events`**, **`govai verify-evidence-pack`** demands hosted **`events_content_sha256`** ( **`GET /bundle-hash`** ) match **`evidence_digest_manifest.json`**, **then** **`GET /compliance-summary`** **`VALID`**. **`events_content_sha256`** is the portable digest tying the ledger export to CI outputs.
+
+Synthetic smoke or **`govai check`** without digest verification proves policy reachability for *some* evidence stream, **not** that *your CI bundle* was cryptographically anchored on the ledger. Use **`.github/workflows/compliance.yml`** / **`govai-compliance-gate`** (this repo) or the published composite action wired to **`artifacts_path`** for the authoritative production path.
+
+Core HTTP surface:
 
 - accepts evidence via POST /evidence
 - enforces policy constraints at write time
 - produces deterministic decision via GET /compliance-summary
-- blocks CI if verdict != VALID
+- **production gate**: artefact-bound submit + verify (digest + VALID), not **`check`** alone
 - exports audit data via GET /api/export/:run_id
 
 Guarantees:
