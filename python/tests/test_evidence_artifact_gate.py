@@ -134,6 +134,73 @@ def _dup_409_body(*, eid: str, rid: str) -> str:
     )
 
 
+def test_is_duplicate_event_id_idempotent_acceptance_matching_raw() -> None:
+    body = _dup_409_body(eid="evt_x", rid="run_a")
+    assert eag.is_duplicate_event_id_idempotent_acceptance(
+        409,
+        body,
+        {"event_id": "evt_x", "run_id": "run_a"},
+    )
+
+
+def test_is_duplicate_event_id_idempotent_acceptance_matching_details_fields() -> None:
+    payload = json.dumps(
+        {
+            "ok": False,
+            "error": {
+                "code": "DUPLICATE_EVENT_ID",
+                "message": "dup",
+                "details": {"event_id": "e1", "run_id": "r1"},
+            },
+        }
+    )
+    assert eag.is_duplicate_event_id_idempotent_acceptance(409, payload, {"event_id": "e1", "run_id": "r1"})
+
+
+def test_is_duplicate_event_id_idempotent_acceptance_matching_message_pattern() -> None:
+    raw_in_msg = "duplicate event_id for run_id: event_id=same run_id=rid"
+    payload = json.dumps(
+        {
+            "ok": False,
+            "error": {
+                "code": "DUPLICATE_EVENT_ID",
+                "message": raw_in_msg,
+            },
+        }
+    )
+    assert eag.is_duplicate_event_id_idempotent_acceptance(
+        409, payload, {"event_id": "same", "run_id": "rid"}
+    )
+
+
+def test_is_duplicate_event_id_idempotent_acceptance_rejects_non_409() -> None:
+    body = _dup_409_body(eid="evt_x", rid="run_a")
+    assert not eag.is_duplicate_event_id_idempotent_acceptance(200, body, {"event_id": "evt_x", "run_id": "run_a"})
+
+
+def test_is_duplicate_event_id_idempotent_acceptance_rejects_mismatch() -> None:
+    body = _dup_409_body(eid="other", rid="run_a")
+    assert not eag.is_duplicate_event_id_idempotent_acceptance(
+        409, body, {"event_id": "evt_x", "run_id": "run_a"}
+    )
+
+
+def test_is_duplicate_event_id_idempotent_acceptance_rejects_wrong_409_code() -> None:
+    payload = json.dumps({"ok": False, "error": {"code": "CONFLICT_OTHER", "message": "no"}})
+    assert not eag.is_duplicate_event_id_idempotent_acceptance(
+        409, payload, {"event_id": "e", "run_id": "r"}
+    )
+
+
+def test_is_duplicate_event_id_idempotent_acceptance_rejects_unparsable_conflict() -> None:
+    body409 = json.dumps(
+        {"ok": False, "error": {"code": "DUPLICATE_EVENT_ID", "message": "dup", "details": {}}},
+    )
+    assert not eag.is_duplicate_event_id_idempotent_acceptance(
+        409, body409, {"event_id": "e1", "run_id": "run_a"}
+    )
+
+
 def _two_event_artifact_dir(tmp_path: Path) -> tuple[Path, str]:
     run_id = "rid-two"
     d = tmp_path / "pack"

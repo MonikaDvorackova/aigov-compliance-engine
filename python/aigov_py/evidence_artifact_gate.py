@@ -82,12 +82,19 @@ def _duplicate_event_run_from_error_payload(payload: dict[str, Any]) -> tuple[st
     return None, None
 
 
-def _is_idempotent_duplicate_409_for_body(exc: GovAIHTTPError, submitted: Mapping[str, Any]) -> bool:
-    """True only for DUPLICATE_EVENT_ID where the server names the same event_id and run_id as ``submitted``."""
+def is_duplicate_event_id_idempotent_acceptance(
+    status_code: int,
+    response_body_text: str,
+    submitted: Mapping[str, Any],
+) -> bool:
+    """True only for DUPLICATE_EVENT_ID (HTTP 409) where the payload names the same event_id/run_id as *submitted*.
 
-    if int(exc.status_code or 0) != 409:
+    Shared by ``submit_event_or_idempotent_duplicate`` and raw curl-based callers (GitHub workflows).
+    """
+
+    if int(status_code or 0) != 409:
         return False
-    text = (exc.body_text or "").strip()
+    text = (response_body_text or "").strip()
     if not text:
         return False
     try:
@@ -104,6 +111,14 @@ def _is_idempotent_duplicate_409_for_body(exc: GovAIHTTPError, submitted: Mappin
     want_eid = str(submitted.get("event_id") or "")
     want_rid = str(submitted.get("run_id") or "")
     return peid == want_eid and prid == want_rid
+
+
+def _is_idempotent_duplicate_409_for_body(exc: GovAIHTTPError, submitted: Mapping[str, Any]) -> bool:
+    return is_duplicate_event_id_idempotent_acceptance(
+        int(exc.status_code or 0),
+        exc.body_text or "",
+        submitted,
+    )
 
 
 def submit_event_or_idempotent_duplicate(client: GovAIClient, body: dict[str, Any]) -> None:
