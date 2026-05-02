@@ -27,6 +27,11 @@ inputs:
     description: "Optional tenant/project context (X-GovAI-Project). Default: github-actions."
     required: false
     default: "github-actions"
+  require_export:
+    description: >-
+      When true, pass --require-export to verify-evidence-pack (fail if /api/export cross-check is unavailable).
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
@@ -80,6 +85,10 @@ runs:
 
         ARTIFACTS="$(cd "${{ inputs.artifacts_path }}" && pwd)"
         RUN_ID="${{ inputs.run_id }}"
+        REQUIRE_EXPORT_FLAG=""
+        if [ "${{ inputs.require_export }}" = "true" ]; then
+          REQUIRE_EXPORT_FLAG="--require-export"
+        fi
 
         echo "Effective GOVAI_RUN_ID=${RUN_ID}"
         echo "Effective GOVAI_ARTIFACTS_DIR=${ARTIFACTS}"
@@ -90,13 +99,21 @@ runs:
           --run-id "${RUN_ID}"
 
         set +e
+        # shellcheck disable=SC2086
         govai --project "${GOVAI_PROJECT:-github-actions}" verify-evidence-pack \
           --path "${ARTIFACTS}" \
-          --run-id "${RUN_ID}"
+          --run-id "${RUN_ID}" \
+          ${REQUIRE_EXPORT_FLAG}
         verify_code="$?"
         set -e
 
         printf '\nGovAI artifact-bound gate exit code=%s\n' "${verify_code}"
+        case "${verify_code}" in
+          1) printf 'Failure kind: ERROR\n' ;;
+          2) printf 'Failure kind: INVALID\n' ;;
+          3) printf 'Failure kind: BLOCKED\n' ;;
+          4) printf 'Failure kind: USAGE\n' ;;
+        esac
         printf 'Exit codes (cli_exit): 1=ERROR · 2=INVALID · 3=BLOCKED · 4=USAGE\n'
 
         exit "${verify_code}"

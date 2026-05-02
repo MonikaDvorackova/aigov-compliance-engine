@@ -80,7 +80,7 @@ def test_submit_evidence_missing_run_id_fails(monkeypatch: pytest.MonkeyPatch) -
             "{}",
         ]
     )
-    assert code == cli_exit.EX_INVALID
+    assert code == cli_exit.EX_USAGE
 
 
 def test_submit_evidence_missing_payload_fails() -> None:
@@ -95,7 +95,7 @@ def test_submit_evidence_missing_payload_fails() -> None:
             "ai_discovery_reported",
         ]
     )
-    assert code == cli_exit.EX_INVALID
+    assert code == cli_exit.EX_USAGE
 
 
 def test_submit_evidence_invalid_json_payload_fails() -> None:
@@ -112,7 +112,7 @@ def test_submit_evidence_invalid_json_payload_fails() -> None:
             "{",
         ]
     )
-    assert code == cli_exit.EX_INVALID
+    assert code == cli_exit.EX_USAGE
 
 
 def test_submit_evidence_success_sends_expected_event_and_api_key() -> None:
@@ -253,7 +253,7 @@ def test_missing_run_id_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GOVAI_RUN_ID", raising=False)
     monkeypatch.delenv("RUN_ID", raising=False)
     code = main(["compliance-summary"])
-    assert code == cli_exit.EX_INVALID
+    assert code == cli_exit.EX_USAGE
 
 
 def _valid_check_summary() -> dict:
@@ -356,3 +356,80 @@ def test_check_exits_err_when_verdict_missing(capsys: pytest.CaptureFixture[str]
         code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
     assert code == cli_exit.EX_ERR
     assert capsys.readouterr().out.strip() == ""
+
+
+def _verify_pack_artifact_dir(tmp_path: Path, run_id: str) -> Path:
+    d = tmp_path / "art"
+    d.mkdir()
+    bundle = {
+        "ok": True,
+        "run_id": run_id,
+        "events": [
+            {
+                "event_id": "e1",
+                "event_type": "ai_discovery_reported",
+                "ts_utc": "2020-01-01T00:00:00Z",
+                "actor": "ci",
+                "system": "github_actions",
+                "run_id": run_id,
+                "payload": {"openai": False},
+            }
+        ],
+    }
+    (d / f"{run_id}.json").write_text(json.dumps(bundle), encoding="utf-8")
+    (d / "evidence_digest_manifest.json").write_text(
+        json.dumps({"run_id": run_id, "events_content_sha256": "ab" * 32}),
+        encoding="utf-8",
+    )
+    return d
+
+
+def test_verify_evidence_pack_logs_skipped_export(tmp_path, capsys: pytest.CaptureFixture[str]) -> None:
+    run_id = "rid-verify-skip"
+    d = _verify_pack_artifact_dir(tmp_path, run_id)
+    with patch("aigov_py.cli.eag.bundle_hash_digest", return_value={"events_content_sha256": "ab" * 32}):
+        with patch(
+            "aigov_py.cli.eag.fetch_export_evidence_hashes",
+            return_value=(None, "export not available"),
+        ):
+            with patch("aigov_py.cli.get_compliance_summary", return_value={"ok": True, "verdict": "VALID"}):
+                code = main(
+                    [
+                        "--audit-base-url",
+                        "http://audit.test",
+                        "--api-key",
+                        "k",
+                        "verify-evidence-pack",
+                        "--path",
+                        str(d),
+                        "--run-id",
+                        run_id,
+                    ]
+                )
+    assert code == cli_exit.EX_OK
+    assert "skipped" in capsys.readouterr().err.lower()
+
+
+def test_verify_evidence_pack_require_export_fails_when_export_unavailable(tmp_path) -> None:
+    run_id = "rid-verify-req"
+    d = _verify_pack_artifact_dir(tmp_path, run_id)
+    with patch("aigov_py.cli.eag.bundle_hash_digest", return_value={"events_content_sha256": "ab" * 32}):
+        with patch(
+            "aigov_py.cli.eag.fetch_export_evidence_hashes",
+            return_value=(None, "export not available"),
+        ):
+            code = main(
+                [
+                    "--audit-base-url",
+                    "http://audit.test",
+                    "--api-key",
+                    "k",
+                    "verify-evidence-pack",
+                    "--path",
+                    str(d),
+                    "--run-id",
+                    run_id,
+                    "--require-export",
+                ]
+            )
+    assert code == cli_exit.EX_ERR

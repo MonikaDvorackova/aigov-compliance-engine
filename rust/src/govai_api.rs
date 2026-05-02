@@ -1042,12 +1042,13 @@ async fn export_run_route(
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
+            eprintln!("export_run_route: tenant_log_path: {e}");
             return api_err(
                 StatusCode::BAD_REQUEST,
                 "MISSING_TENANT_CONTEXT",
                 "Missing tenant context.",
                 "Provide `Authorization: Bearer <api_key>`.",
-                Some(serde_json::Value::String(e)),
+                None,
                 Some(audit.policy_version),
                 None,
             );
@@ -1056,12 +1057,13 @@ async fn export_run_route(
     let ledger_tenant_id = match project::require_tenant_id_for_ledger(&headers, audit.deployment_env) {
         Ok(t) => t,
         Err(e) => {
+            eprintln!("export_run_route: require_tenant_id_for_ledger: {e}");
             return api_err(
                 StatusCode::BAD_REQUEST,
                 "MISSING_TENANT_CONTEXT",
                 "Missing tenant context.",
                 "Provide `Authorization: Bearer <api_key>`.",
-                Some(serde_json::Value::String(e)),
+                None,
                 Some(audit.policy_version),
                 None,
             );
@@ -1072,12 +1074,13 @@ async fn export_run_route(
     let events = match bundle::collect_events_for_run(&log_path, &run_id) {
         Ok(e) => e,
         Err(e) => {
+            eprintln!("export_run_route: collect_events_for_run: {e}");
             return api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "BUNDLE_READ_ERROR",
-                "We could not read events for this run_id.",
-                "Retry in a moment. If this persists, contact support (this is a server-side issue).",
-                Some(json!({ "run_id": run_id, "raw": e })),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "EXPORT_NOT_AVAILABLE",
+                "export not available",
+                "Retry in a moment. If this persists, contact support.",
+                Some(json!({ "run_id": run_id })),
                 Some(audit.policy_version),
                 None,
             );
@@ -1113,12 +1116,13 @@ async fn export_run_route(
     {
         Ok(r) => r,
         Err(e) => {
+            eprintln!("export_run_route: collect_stored_records_for_run: {e}");
             return api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "CHAIN_READ_ERROR",
-                "We could not load chain records for this run_id.",
-                "Retry in a moment. If this persists, contact support (this is a server-side issue).",
-                Some(json!({ "run_id": run_id, "raw": e })),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "EXPORT_NOT_AVAILABLE",
+                "export not available",
+                "Retry in a moment. If this persists, contact support.",
+                Some(json!({ "run_id": run_id })),
                 Some(audit.policy_version),
                 None,
             );
@@ -1263,12 +1267,13 @@ async fn export_run_route(
         let team_id = match metering::team_id_for_key_hash(&audit.pool, &key_hash).await {
             Ok(t) => t,
             Err(e) => {
+                eprintln!("export_run_route: team_id_for_key_hash: {e}");
                 return api_err(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "METERING_ERROR",
                     "We could not load metering information for this API key.",
                     "Retry in a moment. If this persists, contact support (this is a server-side issue).",
-                    Some(json!({ "raw": e.to_string() })),
+                    None,
                     Some(audit.policy_version),
                     None,
                 );
@@ -1300,12 +1305,13 @@ async fn bundle_hash_route(
     let log_path = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
+            eprintln!("bundle_hash_route: tenant_log_path: {e}");
             return api_err(
                 StatusCode::BAD_REQUEST,
                 "MISSING_TENANT_CONTEXT",
                 "Missing tenant context.",
                 "Provide `Authorization: Bearer <api_key>`.",
-                Some(serde_json::Value::String(e)),
+                None,
                 Some(audit.policy_version),
                 None,
             )
@@ -1349,15 +1355,18 @@ async fn bundle_hash_route(
                 })),
             )
         }
-        Err(e) => api_err(
-            StatusCode::NOT_FOUND,
-            "RUN_NOT_FOUND",
-            "No events were found for this run_id in the current tenant ledger.",
-            tenant_scoped_not_found_hint(),
-            Some(json!({ "raw": e })),
-            Some(audit.policy_version),
-            Some(json!({ "run_id": q.run_id })),
-        ),
+        Err(e) => {
+            eprintln!("bundle_hash_route: collect_events_for_run: {e}");
+            api_err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "BUNDLE_NOT_AVAILABLE",
+                "bundle not available",
+                "Retry in a moment. If this persists, contact support.",
+                Some(json!({ "run_id": q.run_id })),
+                Some(audit.policy_version),
+                None,
+            )
+        }
     }
 }
 
@@ -1402,9 +1411,9 @@ async fn readiness_check(
         return api_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "NOT_READY",
-            "Service is not ready to accept audit traffic.",
+            "database not ready",
             "Verify Postgres connectivity and DATABASE_URL / GOVAI_DATABASE_URL.",
-            Some(json!({ "checks": { "database_ping": false, "detail": "database not ready" } })),
+            Some(json!({ "checks": { "database_ping": false } })),
         );
     }
 
@@ -1413,9 +1422,9 @@ async fn readiness_check(
         return api_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "NOT_READY",
-            "Service is not ready to accept audit traffic.",
+            "database not ready",
             "Apply migrations or enable GOVAI_AUTO_MIGRATE=true for automatic apply.",
-            Some(json!({ "checks": { "migrations_complete": false, "detail": "migrations incomplete" } })),
+            Some(json!({ "checks": { "migrations_complete": false } })),
         );
     }
 
@@ -1425,7 +1434,7 @@ async fn readiness_check(
                 return api_error(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "NOT_READY",
-                    "Service is not ready to accept audit traffic.",
+                    "ledger not ready",
                     "Set GOVAI_LEDGER_DIR to a writable directory backed by persistent storage.",
                     Some(json!({ "checks": { "ledger_writable": false } })),
                 );
@@ -1445,9 +1454,9 @@ async fn readiness_check(
         return api_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "NOT_READY",
-            "Service is not ready to accept audit traffic.",
+            "ledger not ready",
             "Ensure GOVAI_LEDGER_DIR exists and is writable (or cwd writable in dev).",
-            Some(json!({ "checks": { "ledger_writable": false, "detail": "ledger not ready" } })),
+            Some(json!({ "checks": { "ledger_writable": false } })),
         );
     }
 
