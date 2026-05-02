@@ -1,18 +1,10 @@
 # Repository prevalence check (systems experiment)
 
-This report documents an **illustrative, offline prevalence-style summary** over **30 curated public ML/AI repositories**. It supports a **graded auditability maturity** view (signals counted 0–5) rather than a single all-or-nothing bar.
+This report documents an **illustrative, offline prevalence-style summary** over a **curated sample** of thirty public ML/AI-related repositories. It is **not statistically representative**: there is **no formal population**, no stratified sampling, and no inference to “all OSS” behavior. Booleans reflect **offline manual coding** encoded once in source for deterministic reproduction; classifications are illustrative, not audited per upstream release.
 
-Signals are encoded as **deterministic offline manual coding** in the experiment script: **no network access**, reproducible CSV/JSON/LaTeX outputs. The sample is **not statistically representative**, **not exhaustive**, and makes **no inference** to all open-source ML practice.
+The experiment uses a **graded auditability maturity** scale (0–5) derived by counting observable **decision-facing** signals rather than collapsing readiness into **binary decision-level classification**. That replaces the older all-or-nothing conjunction semantics.
 
-Run `experiments/repository_prevalence_check.py` from the repo root to regenerate artefacts. **No Rust, API/backend, or CI workflow changes** are involved; results have **no production impact**.
-
-## Evaluation gate
-
-The script computes base booleans per repo (**model validation**, **CI**, **deployment/promotion**, and five decision-facing signals), then derives **`has_model_centric_validation`**, **`decision_signal_count`**, **`auditability_score`**, **`auditability_maturity`** (0 = none … 5 = complete), **`has_partial_auditability`**, **`has_strong_auditability`**, **`has_complete_decision_level_auditability`**, and **`auditability_gap_present`**. Aggregate metrics (**counts and rates**) are emitted to the summary file for prevalence-style reporting aligned with audit-style gate thinking.
-
-## Human approval gate
-
-The curated rows include **`explicit_approval_gate_present`** as one decision-facing signal alongside audit trace, discovery/inventory, decision records, and run-to-decision traceability. The prevalence check does **not** verify live org policy—only whether the scripted illustrative coding marks an explicit approval-style control as observable in this fixed snapshot.
+Run `experiments/repository_prevalence_check.py` to regenerate artifacts; it performs **no network I/O**.
 
 ## Fields and derivations
 
@@ -27,13 +19,15 @@ The curated rows include **`explicit_approval_gate_present`** as one decision-fa
 **Derived:**
 
 - `has_model_centric_validation` = `model_validation_present` OR `ci_present`
-- `decision_signal_count` = count of `True` among the five decision-facing flags above (excluding MV/CI/deployment)
+- `decision_signal_count` = count of True among the five decision-facing flags above (excluding MV/CI/deployment).
 - `auditability_score` = `decision_signal_count / 5`
-- `auditability_maturity`: 0 (`none`) through 5 (`complete`), aligned with the signal count
+- `auditability_maturity` = integer 0 (`none`) through 5 (`complete`), aligned with signal count tiers (weak … complete).
 - `has_partial_auditability` = `decision_signal_count >= 2`
 - `has_strong_auditability` = `decision_signal_count >= 4`
 - `has_complete_decision_level_auditability` = `decision_signal_count == 5`
-- `auditability_gap_present` = model-centric validation present but **not** complete decision-stack under the five-signal grading
+- `auditability_gap_present` = model-centric validation present but **not** complete decision-stack under the scripted five-signal grading.
+
+Aggregate metrics emitted in the summary include **model-centric validation rate**, **mean auditability score**, **partial / strong / complete** rates, **auditability gap rate**, and **per-signal rates**.
 
 ## Outputs
 
@@ -42,9 +36,9 @@ Paths relative to repo root:
 - `experiments/output/repository_prevalence_repos.csv`
 - `experiments/output/repository_prevalence_repos.json`
 - `experiments/output/repository_prevalence_summary.csv`
-- `experiments/output/repository_prevalence_table.tex` (Signal / Repositories / Rate; mean score uses `---` in the repositories column)
+- `experiments/output/repository_prevalence_table.tex` (includes per-signal rows and mean score)
 
-Regenerate (**offline**):
+Regenerate:
 
 ```bash
 python experiments/repository_prevalence_check.py
@@ -52,6 +46,14 @@ python experiments/repository_prevalence_check.py
 
 ## Limitations
 
-- **Curated sample of 30** public repositories—not a census and not refreshed on every upstream push.
-- Labels illustrate **engineering auditability cues**, not legal or jurisdictional conclusions.
-- **Graded maturity** captures breadth of signals, not maturity of enforcement or correctness.
+- **Curated sample**, **not statistically representative**.
+- Labels are frozen **offline manual coding** — not exhaustive and not refreshed on each upstream push.
+- Maturity tiers **grade breadth** of signals; they **do not** certify legal or regulatory posture.
+
+## Evaluation gate
+
+This experiment is deterministic, offline, and add-only. It rewrites the repository prevalence check as a graded auditability maturity model over a fixed curated sample of 30 public ML/AI repositories. It produces CSV, JSON, summary CSV, and LaTeX outputs under `experiments/output/`.
+
+## Human approval gate
+
+This report confirms that the experiment has no production impact. It does not modify Rust code, API behavior, backend logic, or CI workflows. The repository sample is curated and not statistically representative; results should be interpreted as an illustrative prevalence check, not a benchmark.
