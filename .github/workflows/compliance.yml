@@ -360,7 +360,11 @@ jobs:
             local body="$2"
             local response
             response="$(mktemp)"
+            local body_file
+            body_file="$(mktemp)"
             local status
+
+            printf '%s' "${body}" > "${body_file}"
 
             echo ""
             echo "============================================================"
@@ -384,6 +388,36 @@ jobs:
             echo "Response (HTTP ${status}):"
             cat "${response}" || true
 
+            if [ "${status}" -ge 200 ] && [ "${status}" -lt 300 ]; then
+              rm -f "${body_file}"
+              return 0
+            fi
+            if [ "${status}" = "409" ]; then
+              export EVIDENCE_POST_HTTP_STATUS="${status}"
+              export EVIDENCE_POST_RESPONSE_PATH="${response}"
+              export EVIDENCE_POST_BODY_PATH="${body_file}"
+              # shellcheck disable=SC2310
+              if python <<'PY'
+import json
+import os
+from pathlib import Path
+
+from aigov_py.evidence_artifact_gate import is_duplicate_event_id_idempotent_acceptance
+
+status_code = int(os.environ["EVIDENCE_POST_HTTP_STATUS"])
+resp_txt = Path(os.environ["EVIDENCE_POST_RESPONSE_PATH"]).read_text(encoding="utf-8")
+submitted = json.loads(Path(os.environ["EVIDENCE_POST_BODY_PATH"]).read_text(encoding="utf-8"))
+raise SystemExit(
+    0 if is_duplicate_event_id_idempotent_acceptance(status_code, resp_txt, submitted) else 1
+)
+PY
+              then
+                echo "idempotent duplicate accepted"
+                rm -f "${body_file}"
+                return 0
+              fi
+            fi
+            rm -f "${body_file}"
             if [ "${status}" = "000" ] || [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
               echo "::error::Evidence POST (local) failed with HTTP ${status}"
               preflight_local
