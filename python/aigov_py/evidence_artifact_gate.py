@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from govai import GovAIAPIError, GovAIClient, submit_event
+from govai import GovAIAPIError, GovAIClient, GovAIHTTPError, submit_event
 
 
 def canonicalize_evidence_event_dicts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -36,6 +36,72 @@ def event_for_submit(ev: Mapping[str, Any]) -> dict[str, Any]:
     body.pop("environment", None)
     return body
 
+
+
+def _duplicate_ids_from_error_payload(payload: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    import re
+
+    candidates: list[str] = []
+
+    details = payload.get("details")
+    if isinstance(details, dict):
+        raw = details.get("raw")
+        if isinstance(raw, str):
+            candidates.append(raw)
+        event_id = details.get("event_id")
+        run_id = details.get("run_id")
+        if isinstance(event_id, str) and isinstance(run_id, str):
+            return event_id, run_id
+
+    message = payload.get("message")
+    if isinstance(message, str):
+        candidates.append(message)
+
+    for value in candidates:
+        match = re.search(r"event_id=([^\s]+)\s+run_id=([^\s]+)", value)
+        if match:
+            return match.group(1), match.group(2)
+
+    return None, None
+
+
+def _is_idempotent_duplicate_409_for_body(error: GovAIHTTPError, body: Mapping[str, Any]) -> bool:
+    if getattr(error, "status_code", None) != 409:
+        return False
+
+    payload = getattr(error, "payload", None)
+    if not isinstance(payload, dict):
+        return False
+
+    code = payload.get("code")
+    err = payload.get("error")
+    if isinstance(err, dict):
+        code = err.get("code") or code
+        payload = err | {k: v for k, v in payload.items() if k != "error"}
+
+    if code != "DUPLICATE_EVENT_ID":
+        return False
+
+    duplicate_event_id, duplicate_run_id = _duplicate_ids_from_error_payload(payload)
+    return (
+        duplicate_event_id == str(body.get("event_id") or "")
+        and duplicate_run_id == str(body.get("run_id") or "")
+    )
+
+
+def submit_event_or_idempotent_duplicate(client: GovAIClient, body: dict[str, Any]) -> None:
+    """
+    POST /evidence for one event; treat DUPLICATE_EVENT_ID as success only when
+    the conflict names the same event_id and run_id as this request body.
+    """
+
+    try:
+        submit_event_or_idempotent_duplicate(client, body)
+    except GovAIHTTPError as e:
+        if _is_idempotent_duplicate_409_for_body(e, body):
+            print(f"already submitted: {str(body.get('event_id') or '')}")
+            return
+        raise
 
 def load_bundle(run_id: str, artifact_dir: Path) -> tuple[dict[str, Any], Path]:
     p = artifact_dir / f"{run_id}.json"
@@ -87,7 +153,7 @@ def submit_evidence_bundle_events(
         et = str(body.get("event_type") or "")
         if progress is not None:
             progress(idx, n, et)
-        submit_event(client, body)
+        submit_event_or_idempotent_duplicate(client, body)
 
 
 def bundle_hash_digest(client: GovAIClient, run_id: str) -> dict[str, Any]:
