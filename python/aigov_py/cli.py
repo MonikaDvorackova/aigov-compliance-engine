@@ -279,6 +279,7 @@ def _verify_artifact_digest_continuity(
     *,
     artifact_dir: Path,
     run_id: str,
+    require_export: bool = False,
 ) -> int:
     try:
         man = eag.load_manifest(artifact_dir)
@@ -310,8 +311,20 @@ def _verify_artifact_digest_continuity(
         )
         return cli_exit.EX_ERR
 
-    export_hashes = eag.fetch_export_evidence_hashes(client, run_id)
-    if isinstance(export_hashes, dict):
+    export_hashes, export_skip = eag.fetch_export_evidence_hashes(client, run_id)
+    if export_hashes is None:
+        note = export_skip or "export not available"
+        print(
+            f"NOTE: /api/export cross-check skipped ({note}).",
+            file=sys.stderr,
+        )
+        if require_export:
+            print(
+                "ERROR: --require-export requires a successful /api/export cross-check.",
+                file=sys.stderr,
+            )
+            return cli_exit.EX_ERR
+    else:
         ex = str(export_hashes.get("events_content_sha256") or "").strip().lower()
         if ex and ex != got:
             print(
@@ -958,7 +971,8 @@ def build_parser() -> GovaiArgumentParser:
 
     s_verify_pack = sub.add_parser(
         "verify-evidence-pack",
-        help="Hosted gate: hosted /bundle-hash events_content_sha256 + export + compliance-summary VALID.",
+        help="Hosted gate: /bundle-hash events_content_sha256 (mandatory) vs CI digest manifest; optional "
+        "/api/export cross-check unless --require-export; then compliance-summary VALID.",
     )
     s_verify_pack.add_argument(
         "--path",
@@ -968,6 +982,11 @@ def build_parser() -> GovaiArgumentParser:
         help="Directory with evidence_digest_manifest.json and <run_id>.json (CI artifacts).",
     )
     s_verify_pack.add_argument("--run-id", default=None, help="Run id (fallback: env GOVAI_RUN_ID or RUN_ID).")
+    s_verify_pack.add_argument(
+        "--require-export",
+        action="store_true",
+        help="Fail (exit 1) if /api/export cross-check cannot be performed or disagrees with /bundle-hash.",
+    )
 
     s_submit = sub.add_parser("submit-evidence", help="Submit one evidence event to POST /evidence.")
     s_submit.add_argument("--run-id", default=None, help="Run UUID (fallback: env GOVAI_RUN_ID or RUN_ID).")
@@ -1136,7 +1155,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
         prev_audit = os.environ.get("AIGOV_AUDIT_URL")
         prev_end = os.environ.get("AIGOV_AUDIT_ENDPOINT")
         try:
@@ -1157,7 +1176,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
         prev_audit = os.environ.get("AIGOV_AUDIT_URL")
         prev_end = os.environ.get("AIGOV_AUDIT_ENDPOINT")
         try:
@@ -1184,7 +1203,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
         try:
             client = GovAIClient(audit_url, api_key=api_key, default_project=project)
             out = client.request_json(
@@ -1270,7 +1289,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cli_exit.EX_ERR
         # Ensure manifest referent exists (CI must ship both files).
         _ = bundle_path
-        rc = _verify_artifact_digest_continuity(client, artifact_dir=artifact_dir, run_id=run_id)
+        rc = _verify_artifact_digest_continuity(
+            client,
+            artifact_dir=artifact_dir,
+            run_id=run_id,
+            require_export=bool(getattr(args, "require_export", False)),
+        )
         if rc != cli_exit.EX_OK:
             return rc
         code_sum, summary = _compliance_verdict_or_err(client, run_id, timeout=args.timeout)
@@ -1286,12 +1310,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
 
         event_type = (getattr(args, "event_type", None) or "").strip()
         if not event_type:
             print("event type required: pass --event-type", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
 
         try:
             payload_obj = _load_payload_one_of(
@@ -1300,7 +1324,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         except (OSError, json.JSONDecodeError, ValueError, TypeError) as e:
             print(f"invalid payload: {e}", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
 
         event_id = (getattr(args, "event_id", None) or "").strip() or str(uuid.uuid4())
         actor = (getattr(args, "actor", None) or "govai_cli").strip() or "govai_cli"
@@ -1330,12 +1354,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
 
         scan_path = Path(getattr(args, "path", ".")).expanduser()
         if not scan_path.exists():
             print(f"scan path does not exist: {scan_path}", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
 
         try:
             scan = scan_repo(scan_path, include_history=True)
@@ -1347,7 +1371,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         except ValueError as e:
             print(str(e), file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
         except Exception as e:
             print(str(e), file=sys.stderr)
             return cli_exit.EX_ERR
@@ -1434,7 +1458,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         scan_path = Path(getattr(args, "path", ".")).expanduser()
         if not scan_path.exists():
             print(f"scan path does not exist: {scan_path}", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
 
         include_history = not bool(getattr(args, "no_history", False))
         try:
@@ -1468,7 +1492,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required for submission: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
 
         # Backward-compatible fields used by Rust requirement derivation.
         scan_openai = bool(scan.get("openai")) if isinstance(scan, dict) else False
@@ -1515,7 +1539,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
 
         try:
             client = GovAIClient(audit_url, api_key=api_key, default_project=project)
@@ -1586,7 +1610,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
         prev = os.environ.get("RUN_ID")
         try:
             os.environ["RUN_ID"] = run_id
@@ -1607,7 +1631,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
         try:
             export_bundle_mod.main(["govai", run_id])
         except SystemExit as se:
@@ -1621,7 +1645,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
-            return cli_exit.EX_INVALID
+            return cli_exit.EX_USAGE
         try:
             client = GovAIClient(audit_url, api_key=api_key, default_project=project)
             out = export_run(client, run_id, project=getattr(args, "project", None))

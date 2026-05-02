@@ -109,7 +109,9 @@ def bundle_hash_digest(client: GovAIClient, run_id: str) -> dict[str, Any]:
     return raw
 
 
-def fetch_export_evidence_hashes(client: GovAIClient, run_id: str) -> dict[str, Any] | None:
+def fetch_export_evidence_hashes(client: GovAIClient, run_id: str) -> tuple[dict[str, Any] | None, str | None]:
+    """GET /api/export/:run_id → evidence_hashes. Returns (dict, None) or (None, skip_reason)."""
+
     try:
         raw = client.request_json(
             "GET",
@@ -117,8 +119,10 @@ def fetch_export_evidence_hashes(client: GovAIClient, run_id: str) -> dict[str, 
             raise_on_body_ok_false=True,
         )
     except Exception:
-        return None
+        return None, "export not available"
     if not isinstance(raw, dict):
-        return None
+        return None, "export response was not a JSON object"
     eh = raw.get("evidence_hashes")
-    return eh if isinstance(eh, dict) else None
+    if not isinstance(eh, dict):
+        return None, "export response missing evidence_hashes"
+    return eh, None

@@ -231,6 +231,12 @@ Edit `docker-compose.yml` and set:
 - `GOVAI_API_KEYS` (otherwise core audit endpoints are unauthenticated)
 - `GOVAI_BASE_URL` (shown in `GET /status`)
 
+## CI and protected branches (downstream repositories)
+
+- Require **`.github/workflows/compliance.yml`** and the **artefact-bound** hosted job (**`govai-compliance-gate`**: **`submit-evidence-pack` + `verify-evidence-pack`**) for merges that must mean “CI evidence was posted to the hosted ledger and evaluated **VALID**”. See **[github-action.md](github-action.md)**.
+- Do **not** treat **`.github/workflows/govai-smoke.yml`** (manual **synthetic** smoke) or **`govai check` alone** as a production compliance gate.
+- In automation (CI wait loops, load balancers), use **`GET /ready`** for **readiness**; **`GET /status`** and **`GET /health`** are not substitutes for database, migrations, and ledger writability.
+
 ## Notes / pending
 
 - `GET /usage` is **implemented** already.

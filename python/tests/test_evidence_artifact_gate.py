@@ -96,6 +96,14 @@ def test_check_verify_artifacts_digest_mismatch_errors(
     assert "hosted events_content_sha256" in err.lower() or "expected=" in err
 
 
+def test_fetch_export_evidence_hashes_returns_skip_reason_on_http_failure() -> None:
+    cli = MagicMock()
+    cli.request_json.side_effect = OSError("network down")
+    got, reason = eag.fetch_export_evidence_hashes(cli, "r1")
+    assert got is None
+    assert reason == "export not available"
+
+
 def test_submit_evidence_pack_missing_bundle_errors(tmp_path: Path) -> None:
     code = main(
         [

@@ -17,9 +17,9 @@ Implemented scope:
 
 GovAI is a CI compliance gate for AI systems with audit evidence export.
 
-**Production semantics** (recommended for release / promoted branches): artefact-bound flow — **`govai submit-evidence-pack`** replays CI-generated **`events`**, **`govai verify-evidence-pack`** demands hosted **`events_content_sha256`** ( **`GET /bundle-hash`** ) match **`evidence_digest_manifest.json`**, **then** **`GET /compliance-summary`** **`VALID`**. **`events_content_sha256`** is the portable digest tying the ledger export to CI outputs.
+**Production semantics** (recommended for release / promoted branches): artefact-bound flow — **`govai submit-evidence-pack`** replays CI-generated **`events`**, **`govai verify-evidence-pack`** **requires** hosted **`events_content_sha256`** from **`GET /bundle-hash`** to match **`evidence_digest_manifest.json`**, **then** **`GET /compliance-summary`** **`VALID`**. A cross-check against **`GET /api/export/:run_id`** is **optional** by default (if the export is unavailable, the CLI logs that the cross-check was skipped). Pass **`--require-export`** to treat a missing or inconsistent export as exit code **1** (ERROR), not a silent pass.
 
-Synthetic smoke or **`govai check`** without digest verification proves policy reachability for *some* evidence stream, **not** that *your CI bundle* was cryptographically anchored on the ledger. Use **`.github/workflows/compliance.yml`** / **`govai-compliance-gate`** (this repo) or the published composite action wired to **`artifacts_path`** for the authoritative production path.
+Synthetic smoke or **`govai check`** without digest verification proves policy reachability for *some* evidence stream, **not** that *your CI bundle* was cryptographically anchored on the ledger. The authoritative production gate in this repository is **`.github/workflows/compliance.yml`** (job **`govai-compliance-gate`**) and the root **`action.yml`** / **`.github/actions/govai-check`** composite action when wired to real CI **`artifacts_path`**. Do **not** treat **`.github/workflows/govai-smoke.yml`** (manual smoke only) or **`govai check` alone** as a production release gate. Every protected-branch merge that ships report evidence should require a workflow that runs hosted **`submit-evidence-pack`** + **`verify-evidence-pack`** (same semantics as the production gate).
 
 Core HTTP surface:
 
@@ -102,7 +102,7 @@ Limits are exposed via GET /usage.
 - **Storage:** append-only JSONL ledger files.
   - Dev default: relative to process cwd (local-friendly).
   - Staging/prod: requires `GOVAI_LEDGER_DIR` pointing to a **persistent** directory (service fails fast otherwise).
-- **Other:** `GET /status` (`ok`, `policy_version`, `environment`); `GET /`, `/health` — service metadata (`GET /` is **internal** per OpenAPI).
+- **Other:** `GET /status` (`ok`, `policy_version`, `environment`); `GET /ready` — **readiness** (Postgres + migrations + ledger writable; use this in CI and load balancers, not `/status` or `/health` for that purpose); `GET /`, `/health` — service metadata / liveness (`GET /` is **internal** per OpenAPI).
 
 Authenticated routes (Supabase JWT; **stable** enterprise surface): `GET /api/me`, `POST /api/assessments`, `/api/compliance-workflow*` — see OpenAPI.
 

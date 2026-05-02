@@ -3,7 +3,7 @@
 This repository publishes a reusable **composite GitHub Action** that installs the GovAI CLI from **PyPI** (`aigov-py==0.2.0`) and runs the **production semantic path**:
 
 1. `govai submit-evidence-pack` — replays CI-generated evidence events from `<artifacts_path>/<run_id>.json` to the hosted ledger.
-2. `govai verify-evidence-pack` — requires hosted **`events_content_sha256`** (from **`GET /bundle-hash`**) to match **`evidence_digest_manifest.json`** from CI, plus a **`VALID`** compliance verdict from **`GET /compliance-summary`**.
+2. `govai verify-evidence-pack` — **mandatory:** hosted **`GET /bundle-hash`** digest **`events_content_sha256`** matches **`evidence_digest_manifest.json`**. **Optional** unless **`--require-export`** (or action input **`require_export: true`**): cross-check **`GET /api/export/:run_id`** against that digest. **Then** a **`VALID`** compliance verdict from **`GET /compliance-summary`**.
 
 A green job using **this action** therefore means CI artefacts were anchored by digest on the ledger and evaluated as **`VALID`** — **not** merely that the hosted API accepted an ad-hoc or synthetic submission.
 
@@ -17,14 +17,21 @@ Authoritative artefact-bound production gate for this repo: **`.github/workflows
 
 ## Configure branch protection so this job is required before merges
 
-Point required checks at the workflow/job that invokes this action **with real CI artefacts**.
+**Required (production):** require the **`.github/workflows/compliance.yml`** workflow and, specifically, a job that runs the same artefact-bound path as **`govai-compliance-gate`** (hosted **`submit-evidence-pack` + `verify-evidence-pack`** with real CI artefacts). You may also require the composite action from this repo with downloaded artefacts if that is your only hosted gate.
+
+**Do not** treat the following as sufficient for production on their own:
+
+- **`.github/workflows/govai-smoke.yml`** — manual **synthetic** smoke only (`workflow_dispatch`), not an artefact-bound merge gate.
+- **`govai check`** (or a job that only runs **`check`**) — policy readout **without** cryptographic binding to CI **`evidence_digest_manifest.json`**.
+
+Point required checks at the workflow/job that invokes **`submit-evidence-pack` + `verify-evidence-pack`** **with real CI artefacts**.
 
 ## Action behaviour
 
 - Sets up **Python 3.11**
 - Installs **`aigov-py==0.2.0`** from PyPI
 - Validates **`artifacts_path`** is an existing directory
-- Runs **`submit-evidence-pack`** then **`verify-evidence-pack`** with **`--path`** and **`--run-id`**
+- Runs **`submit-evidence-pack`** then **`verify-evidence-pack`** with **`--path`** and **`--run-id`** (pass **`require_export: true`** to add **`--require-export`**)
 - Exit codes propagated from **`verify-evidence-pack`**: **`1`** ERROR (infra/digest/export), **`2`** INVALID, **`3`** BLOCKED, **`4`** USAGE (`python/aigov_py/cli_exit.py`)
 
 ## Official action reference
@@ -42,6 +49,7 @@ Publish path (example):
 | **`base_url`** | Yes | GovAI audit base URL (**`GOVAI_AUDIT_BASE_URL`**). |
 | **`api_key`** | Yes | Bearer token (**`GOVAI_API_KEY`** secret). |
 | **`project`** | No (default **`github-actions`**) | **`X-GovAI-Project`** header. |
+| **`require_export`** | No (default **`false`**) | When **`true`**, passes **`--require-export`** so a missing or failed **`/api/export`** cross-check fails the step (exit **1**). |
 
 ## Required repository secrets / variables
 
