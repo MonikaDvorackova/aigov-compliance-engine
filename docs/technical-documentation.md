@@ -17,12 +17,16 @@ Implemented scope:
 
 GovAI is a CI compliance gate for AI systems with audit evidence export.
 
-It:
+**Production semantics** (recommended for release / promoted branches): artefact-bound flow — **`govai submit-evidence-pack`** replays CI-generated **`events`**, **`govai verify-evidence-pack`** demands hosted **`events_content_sha256`** ( **`GET /bundle-hash`** ) match **`evidence_digest_manifest.json`**, **then** **`GET /compliance-summary`** **`VALID`**. **`events_content_sha256`** is the portable digest tying the ledger export to CI outputs.
+
+Synthetic smoke or **`govai check`** without digest verification proves policy reachability for *some* evidence stream, **not** that *your CI bundle* was cryptographically anchored on the ledger. Use **`.github/workflows/compliance.yml`** / **`govai-compliance-gate`** (this repo) or the published composite action wired to **`artifacts_path`** for the authoritative production path.
+
+Core HTTP surface:
 
 - accepts evidence via POST /evidence
 - enforces policy constraints at write time
 - produces deterministic decision via GET /compliance-summary
-- blocks CI if verdict != VALID
+- **production gate**: artefact-bound submit + verify (digest + VALID), not **`check`** alone
 - exports audit data via GET /api/export/:run_id
 
 Guarantees:
@@ -93,7 +97,7 @@ Limits are exposed via GET /usage.
 - **Ingest:** `POST /evidence` — body: `EvidenceEvent` (`event_id`, `event_type`, `ts_utc`, `actor`, `system`, `run_id`, `payload`).
 - **Usage / export:** `GET /usage`, `GET /api/export/:run_id`.
 - **Chain:** `GET /verify`, `GET /verify-log`
-- **Bundle:** `GET /bundle?run_id=…`, `GET /bundle-hash?run_id=…`
+- **Bundle:** `GET /bundle?run_id=…`, `GET /bundle-hash?run_id=…` (also returns **`events_content_sha256`** — portable SHA-256 over canonicalised evidence events minus server `environment`; see **`bundle::portable_evidence_digest_v1`** — used for artefact-bound production gates alongside legacy **`bundle_sha256`** tied to **`log_path` / tier** metadata)
 - **Summary:** `GET /compliance-summary?run_id=…` — `ok`, `schema_version` (`aigov.compliance_summary.v2`), `policy_version`, `run_id`; when `ok` is true — `verdict` (`VALID` / `INVALID` / `BLOCKED`) and `current_state` (inner `schema_version`: `aigov.compliance_current_state.v2`, same projection as bundle `identifiers` for canonical fields).
 - **Storage:** append-only JSONL ledger files.
   - Dev default: relative to process cwd (local-friendly).

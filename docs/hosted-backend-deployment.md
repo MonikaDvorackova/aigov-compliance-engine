@@ -15,6 +15,8 @@ Goal for “hosted mode”: customers call your hosted URL and **do not run Rust
   - [ ] Ingress routes allowed for:
     - [ ] `POST /evidence`
     - [ ] `GET /compliance-summary`
+    - [ ] `GET /bundle-hash` (returns `bundle_sha256` and **`events_content_sha256`** for artefact-bound CI gates — schema **`aigov.evidence_digest.v1`**)
+    - [ ] `GET /api/export/:run_id` (optional cross-check from `verify-evidence-pack`: `evidence_hashes.events_content_sha256`)
     - [ ] `GET /status`
     - [ ] `GET /usage`
   - [ ] **Liveness** probe: **`GET /health`** (process is up — no dependency checks).
@@ -117,8 +119,10 @@ In the Python terminal SDK, they configure:
 Use the **`aigov_audit`** binary (repo build output: `./aigov_audit`). Typical **Railway Start Command**:
 
 ```bash
-sh -c 'mkdir -p /tmp/govai-ledger; GOVAI_LEDGER_DIR=/tmp/govai-ledger AIGOV_BIND="0.0.0.0:$PORT" ./aigov_audit'
+sh -c 'mkdir -p /var/lib/govai/ledger; GOVAI_LEDGER_DIR=/var/lib/govai/ledger AIGOV_BIND="0.0.0.0:$PORT" ./aigov_audit'
 ```
+
+Mount **`GOVAI_LEDGER_DIR`** to a Railway volume or other durable filesystem. Do **not** use **`/tmp`** or any ephemeral-only path for real audit tiers: **`AIGOV_ENVIRONMENT=staging`** / **`prod`** requires a persistent ledger directory. **Losing or wiping `GOVAI_LEDGER_DIR` invalidates append-only audit continuity guarantees.**
 
 Set at least:
 

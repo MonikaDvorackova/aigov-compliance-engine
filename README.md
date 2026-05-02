@@ -79,7 +79,7 @@ See docs/pilot-onboarding.md for private pilot setup.
 
 **Indicative tiers** (no self-service checkout or automated billing on this site):
 
-- **Free — €0:** local testing and evaluation, limited runs, PyPI CLI (`aigov-py==0.1.1`), audit evidence export.
+- **Free — €0:** local testing and evaluation, limited runs, PyPI CLI (`aigov-py==0.2.0`), audit evidence export.
 - **Pro — €199/month:** production CI, higher run/event limits, GitHub Action, hosted audit endpoint, standard support.
 - **Enterprise — Custom:** regulated or larger teams, custom limits, self-hosted or dedicated deployment, SSO/access control where supported, audit and procurement support.
 
@@ -102,7 +102,7 @@ Not eligible for promotion. Deployment halted.
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.1.1"
+python -m pip install "aigov-py==0.2.0"
 ```
 
 **Repository contributors** (editable install from a clone of this repo):
@@ -234,32 +234,21 @@ If you are onboarding a new pilot customer, follow `docs/hosted-pilot-runbook.md
 - Variable `GOVAI_RUN_ID`: `<your evidence run id>` (not GitHub’s `github.run_id`)
 - Secret `GOVAI_API_KEY`: `<your API key>` (required; missing key fails CI immediately)
 
-2) Add this workflow file to your repo at `.github/workflows/govai-check.yml`:
+2) Wire the **composite action** after you have a directory of CI evidence artefacts (`evidence_digest_manifest.json` and `<run_id>.json`). Example step (paths depend on your artefact download layout):
 
 ```yaml
-name: GovAI compliance gate
-
-on:
-  pull_request:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-jobs:
-  govai-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: GovAI compliance check (must be VALID)
+      - name: GovAI artefact-bound gate (submit + verify digest + VALID)
         uses: Kovali/GovAI@v1
         with:
           run_id: ${{ vars.GOVAI_RUN_ID }}
+          artifacts_path: ${{ github.workspace }}/downloaded-artifacts
           base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}
           api_key: ${{ secrets.GOVAI_API_KEY }}
 ```
 
-See `docs/github-action.md` for the action behavior details (strict fail-fast on missing config).
+In **this** repo, **`.github/workflows/compliance.yml`** is the production artefact-bound gate; **`.github/workflows/govai-smoke.yml`** is an optional **manual synthetic smoke** workflow only.
+
+See `docs/github-action.md` for inputs, exit codes, and hosted semantics.
 
 ### First-time end-to-end (reach `BLOCKED` then `VALID`)
 
@@ -267,7 +256,7 @@ To validate your setup before relying on the CI gate, run the hosted determinist
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.1.1"
+python -m pip install "aigov-py==0.2.0"
 
 export GOVAI_AUDIT_BASE_URL="https://<your GovAI audit API base URL>"
 export GOVAI_API_KEY="YOUR_API_KEY"

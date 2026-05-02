@@ -22,6 +22,7 @@ from govai import (
 
 from aigov_py import cli_config
 from aigov_py import cli_exit
+from aigov_py import evidence_artifact_gate as eag
 from aigov_py.client import GovaiClient
 from aigov_py.discovery_scan import scan_repo
 from aigov_py.prototype_domain import (
@@ -33,6 +34,14 @@ from aigov_py.prototype_domain import (
 from aigov_py.types import AssessmentCreate, GovaiError
 
 # Thin wrappers — same package
+
+
+class GovaiArgumentParser(argparse.ArgumentParser):
+    """argparse wired to ``EX_USAGE`` (4), keeping policy verdict exits on 2/3 only."""
+
+    def error(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        self.exit(cli_exit.EX_USAGE, f"{self.prog}: error: {message}\n")
 from aigov_py import export_bundle as export_bundle_mod
 from aigov_py import fetch_bundle_from_govai
 from aigov_py import report as report_mod
@@ -44,8 +53,10 @@ def _system_exit_code(se: SystemExit) -> int:
     if c is None:
         return cli_exit.EX_OK
     if isinstance(c, int):
+        if c == 2:
+            return cli_exit.EX_USAGE
         return c
-    return cli_exit.EX_INVALID
+    return cli_exit.EX_USAGE
 
 
 def _config_path_from_args(ns: argparse.Namespace) -> Path | None:
@@ -255,6 +266,85 @@ def _print_check_failure_details(summary: dict[str, Any], verdict: str) -> None:
                 print(f"  - {reason}")
 
 
+def _exit_for_compliance_verdict(verdict: str) -> int:
+    if verdict == "VALID":
+        return cli_exit.EX_OK
+    if verdict == "BLOCKED":
+        return cli_exit.EX_BLOCKED
+    return cli_exit.EX_INVALID
+
+
+def _verify_artifact_digest_continuity(
+    client: GovAIClient,
+    *,
+    artifact_dir: Path,
+    run_id: str,
+) -> int:
+    try:
+        man = eag.load_manifest(artifact_dir)
+    except (OSError, json.JSONDecodeError, TypeError, FileNotFoundError) as exc:
+        print(f"ERROR: cannot read digest manifest: {exc}", file=sys.stderr)
+        return cli_exit.EX_ERR
+    mr = str(man.get("run_id") or "").strip()
+    if mr != run_id.strip():
+        print(
+            f"ERROR: manifest run_id mismatch (manifest={mr!r} expected={run_id!r})",
+            file=sys.stderr,
+        )
+        return cli_exit.EX_ERR
+    expected = str(man.get("events_content_sha256") or "").strip().lower()
+    if len(expected) != 64:
+        print("ERROR: manifest events_content_sha256 missing or not a 64-char hex digest", file=sys.stderr)
+        return cli_exit.EX_ERR
+    try:
+        got_body = eag.bundle_hash_digest(client, run_id)
+    except Exception as exc:
+        print(f"ERROR: /bundle-hash failed: {exc}", file=sys.stderr)
+        return cli_exit.EX_ERR
+    got = str(got_body.get("events_content_sha256") or "").strip().lower()
+    if got != expected:
+        print(
+            "ERROR: hosted events_content_sha256 does not match CI evidence_digest_manifest.json "
+            f"(expected={expected} actual={got})",
+            file=sys.stderr,
+        )
+        return cli_exit.EX_ERR
+
+    export_hashes = eag.fetch_export_evidence_hashes(client, run_id)
+    if isinstance(export_hashes, dict):
+        ex = str(export_hashes.get("events_content_sha256") or "").strip().lower()
+        if ex and ex != got:
+            print(
+                "ERROR: /api/export evidence_hashes.events_content_sha256 disagrees with /bundle-hash "
+                f"(export={ex} bundle_hash={got})",
+                file=sys.stderr,
+            )
+            return cli_exit.EX_ERR
+    return cli_exit.EX_OK
+
+
+def _compliance_verdict_or_err(client: GovAIClient, run_id: str, *, timeout: float) -> tuple[int, dict[str, Any] | None]:
+    try:
+        summary = get_compliance_summary(client, run_id, timeout=timeout)
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        return cli_exit.EX_ERR, None
+    if not isinstance(summary, dict):
+        print("error: expected object from /compliance-summary", file=sys.stderr)
+        return cli_exit.EX_ERR, None
+    if summary.get("ok") is False:
+        print(
+            summary.get("message") or summary.get("error") or "error: /compliance-summary failed",
+            file=sys.stderr,
+        )
+        return cli_exit.EX_ERR, None
+    verdict = summary.get("verdict")
+    if not isinstance(verdict, str) or not verdict.strip():
+        print("error: /compliance-summary missing verdict", file=sys.stderr)
+        return cli_exit.EX_ERR, None
+    return cli_exit.EX_OK, summary
+
+
 def run_demo_deterministic(*, timeout_sec: float) -> int:
     """
     ``govai run demo-deterministic``: deterministic, hosted-friendly demo flow.
@@ -270,7 +360,7 @@ def run_demo_deterministic(*, timeout_sec: float) -> int:
 
     Requirements:
     - Must not require local Postgres when hosted env vars are provided.
-    - Requires GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY; if missing, exit 2 with clear instructions.
+    - Requires GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY; if missing, exit 4 with clear instructions.
     """
     base_url = _require_env_nonempty("GOVAI_AUDIT_BASE_URL")
     api_key = _require_env_nonempty("GOVAI_API_KEY")
@@ -289,7 +379,7 @@ def run_demo_deterministic(*, timeout_sec: float) -> int:
             "This demo does not need local Postgres when GOVAI_AUDIT_BASE_URL points to a hosted GovAI audit service.",
             file=sys.stderr,
         )
-        return cli_exit.EX_INVALID
+        return cli_exit.EX_USAGE
 
     actor = (os.environ.get("AIGOV_ACTOR") or "govai_demo").strip() or "govai_demo"
     system = (os.environ.get("AIGOV_SYSTEM") or "govai_demo_cli").strip() or "govai_demo_cli"
@@ -749,11 +839,11 @@ def run_demo(audit_url: str, api_key: str | None) -> int:
 
     verdict = verdict.strip()
     print(verdict)
-    return cli_exit.EX_OK if verdict == "VALID" else cli_exit.EX_ERR
+    return _exit_for_compliance_verdict(verdict)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
+def build_parser() -> GovaiArgumentParser:
+    p = GovaiArgumentParser(
         prog="govai",
         description=f"GovAI Terminal SDK — audit service workflow and assessment API (v{__version__}).",
     )
@@ -834,7 +924,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     s_check = sub.add_parser(
         "check",
-        help="Check compliance decision (VALID / INVALID / BLOCKED). Exit 0 only if VALID.",
+        help="Check compliance decision (VALID / INVALID / BLOCKED). Exit 0 only if VALID "
+        "(2=INVALID · 3=BLOCKED · 1=infra/api error · 4=usage). Use verify-evidence-pack for production artefact gates.",
     )
     s_check.add_argument(
         "--run-id",
@@ -843,6 +934,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run UUID (overrides positional / GOVAI_RUN_ID / RUN_ID).",
     )
     s_check.add_argument("run_id", nargs="?", default=None, help="Run UUID (fallback: env GOVAI_RUN_ID or RUN_ID).")
+    s_check.add_argument(
+        "--verify-artifacts",
+        dest="verify_artifacts_dir",
+        type=Path,
+        default=None,
+        help="Require evidence_digest_manifest.json under this directory to match hosted /bundle-hash "
+        "(after verdict check).",
+    )
+
+    s_submit_pack = sub.add_parser(
+        "submit-evidence-pack",
+        help="POST every event from CI evidence bundle JSON (<dir>/<run_id>.json) to the audit API.",
+    )
+    s_submit_pack.add_argument(
+        "--path",
+        dest="evidence_pack_dir",
+        required=True,
+        type=Path,
+        help="Directory containing <run_id>.json (from CI evidence_pack artifacts).",
+    )
+    s_submit_pack.add_argument("--run-id", default=None, help="Run id (fallback: env GOVAI_RUN_ID or RUN_ID).")
+
+    s_verify_pack = sub.add_parser(
+        "verify-evidence-pack",
+        help="Hosted gate: hosted /bundle-hash events_content_sha256 + export + compliance-summary VALID.",
+    )
+    s_verify_pack.add_argument(
+        "--path",
+        dest="verify_pack_dir",
+        required=True,
+        type=Path,
+        help="Directory with evidence_digest_manifest.json and <run_id>.json (CI artifacts).",
+    )
+    s_verify_pack.add_argument("--run-id", default=None, help="Run id (fallback: env GOVAI_RUN_ID or RUN_ID).")
 
     s_submit = sub.add_parser("submit-evidence", help="Submit one evidence event to POST /evidence.")
     s_submit.add_argument("--run-id", default=None, help="Run UUID (fallback: env GOVAI_RUN_ID or RUN_ID).")
@@ -1080,32 +1205,82 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_id = opt or _resolve_run_id(args)
         if not run_id:
             print("run id required", file=sys.stderr)
-            return cli_exit.EX_INVALID
-        try:
-            client = GovAIClient(audit_url, api_key=api_key, default_project=project)
-            summary = get_compliance_summary(client, run_id, timeout=args.timeout)
-        except Exception as e:
-            print(str(e), file=sys.stderr)
-            return cli_exit.EX_ERR
+            return cli_exit.EX_USAGE
 
-        if not isinstance(summary, dict):
-            print("error: expected object from /compliance-summary", file=sys.stderr)
-            return cli_exit.EX_ERR
+        client = GovAIClient(audit_url, api_key=api_key, default_project=project)
+        vad = getattr(args, "verify_artifacts_dir", None)
+        if vad is not None:
+            artifact_dir = Path(vad).expanduser().resolve()
+            rc = _verify_artifact_digest_continuity(client, artifact_dir=artifact_dir, run_id=run_id)
+            if rc != cli_exit.EX_OK:
+                return rc
 
-        if summary.get("ok") is False:
-            print(summary.get("message") or summary.get("error") or "error: /compliance-summary failed", file=sys.stderr)
-            return cli_exit.EX_ERR
+        code_sum, summary = _compliance_verdict_or_err(client, run_id, timeout=args.timeout)
+        if code_sum != cli_exit.EX_OK or summary is None:
+            return code_sum
 
-        verdict = summary.get("verdict")
-        if not isinstance(verdict, str) or not verdict.strip():
-            print("error: /compliance-summary missing verdict", file=sys.stderr)
-            return cli_exit.EX_ERR
-
-        verdict = verdict.strip()
+        verdict = str(summary.get("verdict") or "").strip()
         print(verdict)
         if verdict in ("BLOCKED", "INVALID"):
             _print_check_failure_details(summary, verdict)
-        return cli_exit.EX_OK if verdict == "VALID" else cli_exit.EX_INVALID
+
+        return _exit_for_compliance_verdict(verdict)
+
+    if args.cmd == "submit-evidence-pack":
+        run_id = _resolve_run_id(args)
+        if not run_id:
+            print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
+            return cli_exit.EX_USAGE
+        base = Path(getattr(args, "evidence_pack_dir")).expanduser().resolve()
+        try:
+            bundle, _path = eag.load_bundle(run_id, base)
+        except (OSError, json.JSONDecodeError, TypeError, FileNotFoundError) as exc:
+            print(f"ERROR: cannot load evidence bundle: {exc}", file=sys.stderr)
+            return cli_exit.EX_ERR
+        client = GovAIClient(audit_url, api_key=api_key, default_project=project)
+
+        def _progress(i: int, n: int, et: str) -> None:
+            print(f"[{i}/{n}] POST /evidence ({et})")
+
+        try:
+            eag.submit_evidence_bundle_events(client, bundle=bundle, progress=_progress)
+        except (GovAIAPIError, GovAIHTTPError) as exc:
+            print(f"ERROR: evidence submit failed: {exc}", file=sys.stderr)
+            return cli_exit.EX_ERR
+        except (TypeError, ValueError) as exc:
+            print(f"ERROR: invalid evidence bundle: {exc}", file=sys.stderr)
+            return cli_exit.EX_ERR
+        except Exception as exc:
+            print(f"ERROR: unexpected failure: {exc}", file=sys.stderr)
+            return cli_exit.EX_ERR
+        print("submitted evidence pack")
+        return cli_exit.EX_OK
+
+    if args.cmd == "verify-evidence-pack":
+        run_id = _resolve_run_id(args)
+        if not run_id:
+            print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
+            return cli_exit.EX_USAGE
+        artifact_dir = Path(getattr(args, "verify_pack_dir")).expanduser().resolve()
+        client = GovAIClient(audit_url, api_key=api_key, default_project=project)
+        try:
+            _b, bundle_path = eag.load_bundle(run_id, artifact_dir)
+        except (OSError, json.JSONDecodeError, TypeError, FileNotFoundError) as exc:
+            print(f"ERROR: cannot load evidence bundle: {exc}", file=sys.stderr)
+            return cli_exit.EX_ERR
+        # Ensure manifest referent exists (CI must ship both files).
+        _ = bundle_path
+        rc = _verify_artifact_digest_continuity(client, artifact_dir=artifact_dir, run_id=run_id)
+        if rc != cli_exit.EX_OK:
+            return rc
+        code_sum, summary = _compliance_verdict_or_err(client, run_id, timeout=args.timeout)
+        if code_sum != cli_exit.EX_OK or summary is None:
+            return code_sum
+        verdict = str(summary.get("verdict") or "").strip()
+        print(verdict)
+        if verdict in ("BLOCKED", "INVALID"):
+            _print_check_failure_details(summary, verdict)
+        return _exit_for_compliance_verdict(verdict)
 
     if args.cmd == "submit-evidence":
         run_id = _resolve_run_id(args)
@@ -1488,7 +1663,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2), file=sys.stderr)
         return cli_exit.EX_ERR
 
-    return cli_exit.EX_INVALID
+    return cli_exit.EX_ERR
 
 
 if __name__ == "__main__":

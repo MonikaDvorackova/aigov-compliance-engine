@@ -45,6 +45,8 @@ def test_subcommand_help() -> None:
         "fetch-bundle",
         "compliance-summary",
         "check",
+        "submit-evidence-pack",
+        "verify-evidence-pack",
         "submit-evidence",
         "report",
         "export-bundle",
@@ -242,6 +244,11 @@ def test_verify_json_mocked_requests(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert code == cli_exit.EX_OK
 
 
+def test_unknown_subcommand_exits_usage() -> None:
+    code = main(["not-a-valid-subcommand"])
+    assert code == cli_exit.EX_USAGE
+
+
 def test_missing_run_id_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GOVAI_RUN_ID", raising=False)
     monkeypatch.delenv("RUN_ID", raising=False)
@@ -283,7 +290,7 @@ def test_check_blocked_prints_missing_evidence(capsys: pytest.CaptureFixture[str
     }
     with patch("aigov_py.cli.get_compliance_summary", return_value=s):
         code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
-    assert code == cli_exit.EX_INVALID
+    assert code == cli_exit.EX_BLOCKED
     out = capsys.readouterr().out
     lines = [ln.strip() for ln in out.strip().splitlines()]
     assert lines[0] == "BLOCKED"
@@ -299,7 +306,7 @@ def test_check_blocked_prints_missing_requirement_ids_from_api_missing(capsys: p
     }
     with patch("aigov_py.cli.get_compliance_summary", return_value=s):
         code = main(["--audit-base-url", "http://audit.test", "check", "r1"])
-    assert code == cli_exit.EX_INVALID
+    assert code == cli_exit.EX_BLOCKED
     out = capsys.readouterr().out
     assert out.strip().splitlines()[0].strip() == "BLOCKED"
     assert "missing (requirement ids):" in out
@@ -318,11 +325,11 @@ def test_missing_evidence_from_summary_union_api_fields() -> None:
     assert cli_mod._missing_evidence_from_summary(legacy) == ["bar_ev"]
 
 
-def test_check_exits_invalid_no_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_exits_usage_no_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GOVAI_RUN_ID", raising=False)
     monkeypatch.delenv("RUN_ID", raising=False)
     code = main(["--audit-base-url", "http://audit.test", "check"])
-    assert code == cli_exit.EX_INVALID
+    assert code == cli_exit.EX_USAGE
 
 
 def test_check_run_id_flag_overrides_positional(capsys: pytest.CaptureFixture[str]) -> None:
