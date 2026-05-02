@@ -12,7 +12,7 @@ Date: 2026-05-01
 - **Workflow / CI artefacts**
   - **`compliance.yml` `evidence_pack`**: writes **`evidence_digest_manifest.json`** via **`python -m aigov_py.write_digest_manifest`** (local audit hits **`GET /bundle-hash`**). Manifest is uploaded beside **`${run_id}.json`** (exported bundle from the same ledger).
   - **`compliance.yml` `govai-compliance-gate`** (push **`main`** only): **downloads artefacts**, fails if bundle or manifest missing, runs **`govai submit-evidence-pack`** then **`govai verify-evidence-pack`** instead of scripted curl demos.
-  - **`govai-smoke.yml`** (manual dispatch): labelled **synthetic smoke** only; **not** the production artefact replay path.
+  - **`govai-check.yml`**: header + step captions state **synthetic** evidence only; **not** the production artefact replay path.
 
 ## Artifact continuity verification
 
@@ -44,7 +44,7 @@ GitHub Actions for this YAML path was **not** re-run locally (infra-specific).
 
 **Why artefact-bound is meaningfully tighter**
 
-Synthetic replay (**`govai-smoke.yml`** style **or legacy hosted curl blocks**) proves that *some* valid sequence can satisfy policy for *some* `run_id`; it proves nothing about the exact events your pipeline wrote to **`docs/evidence/<run_id>.json`**. Artefact-bound flow ties the hosted ledger to those JSON payloads and to a cryptographic digest anchored at CI time (**`events_content_sha256` / manifest**).
+Synthetic replay (**`govai-check.yml`** style **or legacy hosted curl blocks**) proves that *some* valid sequence can satisfy policy for *some* `run_id`; it proves nothing about the exact events your pipeline wrote to **`docs/evidence/<run_id>.json`**. Artefact-bound flow ties the hosted ledger to those JSON payloads and to a cryptographic digest anchored at CI time (**`events_content_sha256` / manifest**).
 
 **Remaining risks**
 
@@ -58,7 +58,7 @@ Synthetic replay (**`govai-smoke.yml`** style **or legacy hosted curl blocks**) 
 ## Changed files
 
 - `.github/workflows/compliance.yml`
-- `.github/workflows/govai-smoke.yml` (manual smoke only)
+- `.github/workflows/govai-check.yml`
 - `python/aigov_py/cli.py`
 - `python/aigov_py/cli_exit.py`
 - `python/aigov_py/evidence_artifact_gate.py`
