@@ -47,6 +47,15 @@ def test_evidence_pack_waits_on_ready_not_status() -> None:
     assert "${AUDIT_URL%/}/status" not in block
 
 
+def test_evidence_pack_prebuilds_audit_binary_before_ready_loop() -> None:
+    """Avoid racing GET /ready against a cold `cargo run` compile (PR #237 evidence_pack failure)."""
+    text = _compliance_yml()
+    idx = text.index("  evidence_pack:")
+    block = text[idx : idx + 14000]
+    assert "cargo build --locked --bin aigov_audit" in block
+    assert "rust/target/debug/aigov_audit" in block
+
+
 def test_hosted_compliance_gate_uses_pypi_pin_not_editable_install() -> None:
     lines = _compliance_yml().splitlines()
     block = _workflow_job_declaration_body(lines, "govai-compliance-gate")

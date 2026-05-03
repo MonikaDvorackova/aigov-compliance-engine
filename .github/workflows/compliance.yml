@@ -299,6 +299,14 @@ jobs:
 
           sqlx migrate run --source "${GITHUB_WORKSPACE}/.aigov_ci_migrations" --database-url "${DATABASE_URL}"
 
+      - name: Build local audit server (aigov_audit)
+        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          # Pre-compile so Start audit service does not race GET /ready against a cold `cargo run` compile.
+          cargo build --locked --bin aigov_audit
+
       - id: start_audit_service
         name: Start audit service
         if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
@@ -319,7 +327,13 @@ jobs:
           echo "AIGOV_BIND=${AIGOV_BIND}"
           ls -ld "$GOVAI_LEDGER_DIR"
 
-          # Start server in background with required env.
+          AUDIT_BIN="${GITHUB_WORKSPACE}/rust/target/debug/aigov_audit"
+          if [ ! -x "${AUDIT_BIN}" ]; then
+            echo "::error::Missing audit binary at ${AUDIT_BIN} (build step must succeed first)."
+            exit 1
+          fi
+
+          # Start pre-built server in background (same env as fetch_bundle / POST /evidence).
           # NOTE: do NOT weaken tenant isolation; ledger tenant is derived from the server-controlled API key mapping.
           nohup env \
             GOVAI_LEDGER_DIR="${GOVAI_LEDGER_DIR}" \
@@ -328,12 +342,12 @@ jobs:
             AIGOV_BIND="${AIGOV_BIND}" \
             DATABASE_URL="${DATABASE_URL}" \
             GOVAI_AUTO_MIGRATE="${GOVAI_AUTO_MIGRATE}" \
-            bash -lc 'cd rust && cargo run --locked' \
+            "${AUDIT_BIN}" \
             > "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" 2>&1 &
 
           # Robust readiness loop: HTTP 200 on /ready (DB + migrations + ledger), not mere liveness /health.
           ready="0"
-          for i in {1..240}; do
+          for i in {1..360}; do
             code="$(curl -sS -o /tmp/govai_ready_body -w "%{http_code}" "${AUDIT_URL%/}/ready" || true)"
             if [ "${code}" = "200" ]; then
               ready="1"
