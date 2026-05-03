@@ -50,7 +50,7 @@ def test_evidence_pack_waits_on_ready_not_status() -> None:
 def test_hosted_compliance_gate_uses_pypi_pin_not_editable_install() -> None:
     lines = _compliance_yml().splitlines()
     block = _workflow_job_declaration_body(lines, "govai-compliance-gate")
-    assert 'aigov-py==0.2.0' in block
+    assert 'aigov-py==0.2.1' in block
     assert "pip install -e ./python" not in block
 
 
