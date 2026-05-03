@@ -53,3 +53,30 @@ grep -R "aigov-py==" . --glob '!**/node_modules/**' --glob '!**/target/**' --glo
 - Single subscription item id for metered usage; multi-item plans need manual or future extension.
 - No UI, no tax, no invoice PDF handling in-app.
 - `team_billing` / `team_subscriptions` (0012) remain unused by this path; consolidation would be a future migration if product requires UUID teams instead of string ledger tenants.
+
+## Evaluation gate
+
+Verification performed for this change:
+
+- `cd rust && cargo test --lib -q`
+- `cd rust && cargo test billing -q`
+- `cd python && python -m pytest -q`
+
+Expected result:
+
+- Rust library tests pass.
+- Billing integration tests pass.
+- Python tests pass.
+- Stripe webhook, checkout, billing status, usage reporting, and billing enforcement behavior are covered by tests.
+
+## Human approval gate
+
+This change must be reviewed before merge because it modifies billing, tenant scoped usage reporting, webhook processing, and hosted API enforcement behavior.
+
+Required reviewer checks:
+
+- Stripe webhook signature verification is enforced.
+- Duplicate Stripe events are idempotent.
+- Billing usage reports cannot double charge the same tenant, unit, and period.
+- Billing enforcement does not apply to `/health`, `/ready`, `/stripe/webhook`, `/billing/checkout-session`, or `/billing/status`.
+- Tenant isolation remains derived from API key identity, not `X-GovAI-Project`.
