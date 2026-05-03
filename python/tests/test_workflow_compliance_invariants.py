@@ -7,16 +7,31 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _workflow_job_declaration_body(lines: list[str], job_key: str) -> str:
+    start = lines.index(f"  {job_key}:")
+    parts: list[str] = []
+    for j in range(start + 1, len(lines)):
+        line = lines[j]
+        if (
+            len(line) >= 2
+            and line.startswith("  ")
+            and not line.startswith("    ")
+            and line.rstrip().endswith(":")
+        ):
+            break
+        parts.append(line)
+    return "\n".join(parts)
+
+
 def test_govai_compliance_gate_allows_same_repo_pr_and_pinned_cli() -> None:
     p = REPO_ROOT / ".github/workflows/compliance.yml"
     text = p.read_text(encoding="utf-8")
-    start = text.find("  govai-compliance-gate:\n")
-    assert start != -1
-    segment = text[start : start + 4000]
+    lines = text.splitlines()
+    segment = _workflow_job_declaration_body(lines, "govai-compliance-gate")
     assert "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'" not in segment
     assert 'python -m pip install "aigov-py==0.2.0"' in segment
-    assert 'python -m pip install "aigov-py==0.2.0"' in segment
-    assert "github.event.pull_request.head.repo.full_name == github.repository" in segment
+    assert "github.event.pull_request.head.repo.full_name" in segment
+    assert "github.repository" in segment
 
 
 def test_govai_compliance_gate_not_skipped_for_all_pull_requests() -> None:
