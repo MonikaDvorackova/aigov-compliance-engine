@@ -95,7 +95,7 @@ jobs:
     name: reports_present
     runs-on: ubuntu-latest
     needs: [changes]
-    if: ${{ always() }}
+    if: always() && !cancelled()
     steps:
       - name: Branch protection prelude (upstream must succeed)
         run: |
@@ -119,7 +119,7 @@ jobs:
     name: report_gate
     runs-on: ubuntu-latest
     needs: [changes, reports_present]
-    if: ${{ always() }}
+    if: always() && !cancelled()
     env:
       BASE_SHA: ${{ needs.changes.outputs.base_sha }}
       HEAD_SHA: ${{ needs.changes.outputs.head_sha }}
@@ -159,7 +159,7 @@ jobs:
     name: report_content
     runs-on: ubuntu-latest
     needs: [changes, report_gate]
-    if: ${{ always() }}
+    if: always() && !cancelled()
     steps:
       - name: Branch protection prelude (upstream must succeed)
         run: |
@@ -181,7 +181,7 @@ jobs:
     name: make_verify
     runs-on: ubuntu-latest
     needs: [report_content]
-    if: ${{ always() }}
+    if: always() && !cancelled()
     steps:
       - name: Branch protection prelude (upstream must succeed)
         run: |
@@ -217,7 +217,7 @@ jobs:
     name: evidence_pack
     runs-on: ubuntu-latest
     needs: [changes, make_verify]
-    if: ${{ always() }}
+    if: always() && !cancelled()
     services:
       postgres:
         image: postgres:16
@@ -629,47 +629,90 @@ PY
     name: govai-hosted-gate-unavailable-fork-pr
     runs-on: ubuntu-latest
     needs: [evidence_pack]
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && needs.evidence_pack.outputs.run_id != '' && needs.evidence_pack.result == 'success' }}
+    if: always() && !cancelled()
     steps:
-      - name: Fail closed (fork PR cannot run hosted artefact-bound gate)
+      - name: Fork PR fail-closed when hosted gate would apply
         run: |
           set -euo pipefail
+          if [ "${{ needs.evidence_pack.result }}" != "success" ]; then
+            echo "evidence_pack not successful (${{ needs.evidence_pack.result }}); fork PR block not applicable."
+            exit 0
+          fi
+          rid="${{ needs.evidence_pack.outputs.run_id }}"
+          if [ -z "${rid}" ]; then
+            echo "No run_id; fork PR block not applicable."
+            exit 0
+          fi
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Not a pull_request; fork PR block not applicable."
+            exit 0
+          fi
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+            echo "In-repository PR; fork PR block not applicable."
+            exit 0
+          fi
           echo "::error::Hosted artefact-bound GovAI validation cannot run on pull requests from forks (repository secrets are not available). Push your branch to ${{ github.repository }} and open an in-repository pull request, or ask a maintainer to validate from a trusted branch."
           exit 1
 
-  # Hosted artefact-bound gate: runs for push/workflow_dispatch, and for in-repo PRs only.
-  # Fork PRs: secrets are unavailable — sibling job govai-compliance-gate-fork-pr-block fails closed
-  # when a run_id exists so the workflow cannot pass green without maintainer/repo-side validation.
+  # Hosted artefact-bound gate: job always runs (check is never skipped). Prelude fails closed on
+  # evidence_pack failure, fork PR + non-empty run_id, or unsupported events; otherwise sets run_hosted
+  # and skips hosted steps when no run_id / sentinel run_id.
   govai-compliance-gate:
     name: govai-compliance-gate
     runs-on: ubuntu-latest
     needs: [evidence_pack]
-    if: >-
-      ${{
-        needs.evidence_pack.result == 'success'
-        && needs.evidence_pack.outputs.run_id != ''
-        && needs.evidence_pack.outputs.run_id != 'normalized-api-errors'
-        && (
-             github.event_name == 'push'
-          || github.event_name == 'workflow_dispatch'
-          || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
-        )
-      }}
+    if: always() && !cancelled()
     env:
       GOVAI_AUDIT_BASE_URL: ${{ vars.GOVAI_AUDIT_BASE_URL }}
       GOVAI_API_KEY: ${{ secrets.GOVAI_API_KEY }}
       GOVAI_RUN_ID: ${{ needs.evidence_pack.outputs.run_id }}
       GOVAI_PROJECT: github-actions
     steps:
+      - id: gate_pre
+        name: Preconditions (always emit check; skip hosted when N/A)
+        shell: bash
+        env:
+          EP_RESULT: ${{ needs.evidence_pack.result }}
+          RUN_ID: ${{ needs.evidence_pack.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "${EP_RESULT}" != "success" ]; then
+            echo "::error::Upstream job evidence_pack=${EP_RESULT}. GovAI hosted gate cannot run."
+            exit 1
+          fi
+          if [ -z "${RUN_ID}" ] || [ "${RUN_ID}" = "normalized-api-errors" ]; then
+            echo "No artefact-bound hosted gate required (empty or sentinel run_id)."
+            echo "run_hosted=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          ev="${{ github.event_name }}"
+          if [ "${ev}" = "pull_request" ]; then
+            if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+              echo "::error::Hosted artefact-bound GovAI validation cannot run on pull requests from forks (repository secrets are not available). Push your branch to ${{ github.repository }} and open an in-repository pull request, or ask a maintainer to validate from a trusted branch."
+              exit 1
+            fi
+            echo "run_hosted=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          if [ "${ev}" = "push" ] || [ "${ev}" = "workflow_dispatch" ]; then
+            echo "run_hosted=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo "::error::Hosted GovAI gate with run_id is not supported for event '${ev}'."
+          exit 1
+
       - uses: actions/checkout@v4
+        if: steps.gate_pre.outputs.run_hosted == 'true'
 
       - name: Download CI evidence artefacts
+        if: steps.gate_pre.outputs.run_hosted == 'true'
         uses: actions/download-artifact@v4
         with:
           name: evidence_packs
           path: ${{ github.workspace }}/.aigov_ci_artifacts
 
       - name: Require evidence bundle + digest manifest from evidence_pack
+        if: steps.gate_pre.outputs.run_hosted == 'true'
         shell: bash
         env:
           GOVAI_RUN_ID: ${{ needs.evidence_pack.outputs.run_id }}
@@ -682,6 +725,7 @@ PY
             || { echo "::error::Missing evidence bundle CI artefact (${GOVAI_RUN_ID}.json) — production gate aborted."; exit 1; }
 
       - name: Require hosted GovAI configuration
+        if: steps.gate_pre.outputs.run_hosted == 'true'
         shell: bash
         env:
           GOVAI_AUDIT_BASE_URL: ${{ vars.GOVAI_AUDIT_BASE_URL }}
@@ -703,10 +747,12 @@ PY
           fi
 
       - uses: actions/setup-python@v5
+        if: steps.gate_pre.outputs.run_hosted == 'true'
         with:
           python-version: "3.11"
 
       - name: Install GovAI CLI (pinned release — same as public action users)
+        if: steps.gate_pre.outputs.run_hosted == 'true'
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
@@ -714,6 +760,7 @@ PY
           govai --help >/dev/null
 
       - name: Artifact-bound hosted gate (submit CI bundle + digest continuity + VALID)
+        if: steps.gate_pre.outputs.run_hosted == 'true'
         env:
           GOVAI_AUDIT_BASE_URL: ${{ vars.GOVAI_AUDIT_BASE_URL }}
           GOVAI_API_KEY: ${{ secrets.GOVAI_API_KEY }}
@@ -759,7 +806,7 @@ PY
     name: upload_evidence_packs
     runs-on: ubuntu-latest
     needs: [evidence_pack]
-    if: ${{ always() }}
+    if: always() && !cancelled()
     steps:
       - name: Branch protection prelude (upstream must succeed)
         run: |
