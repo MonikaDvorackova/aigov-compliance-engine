@@ -1,58 +1,92 @@
 ## Summary
 
-This report documents a **controlled failure injection** systems-validation experiment used to show that **artifact-bound decision-level gates** detect operational failures that **model-centric baseline validation** alone can miss.
+This report documents **Experiment 1** in the paper’s evaluation suite: **controlled failure injection** used to evaluate **policy conformance** and **enforcement correctness** for an evidence-gated decision record under a **closed synthetic schema**.
 
-The experiment is **not an ML experiment**. It does not train models or score model quality; it validates **system invariants** consistent with production-grade evidence flow: **evidence pack artefacts**, a portable **`events_content_sha256`** digest, **submit-evidence-pack** / **verify-evidence-pack** style checks, and **compliance-summary** semantics **`VALID` / `BLOCKED` / `INVALID`**.
+**Experiment 2** (artifact-level replay) lives in `python/aigov_py/experiments/artifact_bundle_replay.py`: concrete `{run_id}.json` bundles, digest manifests, and audit-export stubs on disk; run `govai experiment artifact-bundle-replay --output experiments/output`. **Experiment 3** (repository prevalence) is `experiments/repository_prevalence_check.py` with the coding rubric in `docs/reports/repository-prevalence-coding-rubric.md`.
 
-The script generates **exactly 900 deterministic runs** (no randomness, no network I/O):
+The experiment is **not an ML experiment**. It does not train models, estimate deployment failure rates, or measure predictive accuracy. It is **synthetic**, **deterministic**, and **specification-driven**: each scenario’s **expected verdict** comes from the machine-readable **scenario rubric** (`python/aigov_py/experiments/scenario_rubric.json`), not from the gate implementation. Synthetic observables are built in `python/aigov_py/experiments/scenario_fields.py` (decoupled from gate output); the gate consumes that field bundle and is compared to the rubric.
 
-- **100 valid runs**
-- **100 noisy but valid runs** (irrelevant metadata perturbation affecting the baseline only; all artifact-bound and decision predicates remain satisfied)
-- **700 injected-failure runs** (**7 failure types × 100 each**)
+When injected violations are constructed to match the declared invariants in the rubric, **perfect agreement with the rubric is the expected outcome** for the full gate—this is **enforcement correctness**, not benchmark performance.
 
-Synthetic data are produced locally. This work has **no production impact**: **no Rust changes**, **no API or backend logic changes**, and **no CI workflow changes**.
+The script generates **deterministic runs** (no randomness, no network I/O): **22 scenarios × 100 replicates = 2200** rows by default (`REPLICATES_PER_SCENARIO` in `controlled_failure_injection.py`).
 
-Outputs are written to `experiments/output/`:
+Synthetic data are produced locally. This work has **no production impact** on Rust, APIs, backend logic, or CI workflows unless you explicitly wire outputs elsewhere.
 
-- `experiments/output/failure_injection_runs.json`
-- `experiments/output/failure_injection_runs.csv`
-- `experiments/output/failure_injection_summary.csv`
-- `experiments/output/failure_injection_table.tex`
+Outputs are written to `experiments/output/` (and mirrored where noted):
 
-## Evaluation gate
+- `controlled_failure_injection.json` / `.csv` / `_full.csv` / `_summary.csv`
+- `failure_injection_results.csv` (same rows as `controlled_failure_injection.csv`; paper-facing results export)
+- `failure_injection_summary.json` (aggregate metrics and metadata for the paper bundle)
+- `failure_injection_runs.json` / `failure_injection_runs.csv` / `failure_injection_summary.csv` (legacy filenames)
+- `failure_injection_scenarios_table.tex`, `failure_injection_outcomes_table.tex`, `failure_injection_ablation_table.tex`
+- `failure_injection_table.tex` (legacy alias of the outcomes table)
+- `scenario_rubric.json` (copy of the machine-readable rubric for reproducibility)
 
-The **decision gate** applies **artifact-bound production semantics** over each run record, in order:
+## Baselines
+
+**Baseline 1 (model-centric):** `model_validation == "passed"` ⇒ `VALID`, else `INVALID`.
+
+**Baseline 2 (pipeline completeness):** `VALID` only if `model_validation == "passed"`, `evaluation_result == "pass"`, `run_available`, `evidence_complete`, and `approval == "granted"`. It deliberately does **not** enforce digest checks, evidence-pack presence, artifact-bound verification, policy-version match, approval freshness or causal ordering, or run-scoped digest continuity—so contrast with the full gate remains interpretable.
+
+## Decision gate (full)
+
+Order of evaluation (fail-closed; see `decision_gate_verdict` in `gate_model.py`):
 
 1. If **`evaluation_result == "fail"`** → **`INVALID`**
-2. Else if **`run_available` is false** → **`BLOCKED`**
-3. Else if **`evidence_pack_present` is not true** → **`BLOCKED`** (missing or unusable evidence pack artefact)
-4. Else if **`events_content_sha256_match` is not true** → **`BLOCKED`** (portable events digest mismatch vs pack)
-5. Else if **`export_digest_match` is not true** → **`BLOCKED`** (export-bound digest mismatch)
-6. Else if **`artifact_bound_verification` is not true** → **`BLOCKED`** (verify-evidence-pack / binding step failed)
-7. Else if **`evidence_complete` is not true** → **`BLOCKED`**
-8. Else if **`ai_discovery_present` is not true** → **`BLOCKED`**
-9. Else if **`approval != "granted"`** → **`BLOCKED`**
-10. Else if **`trace_consistent` is not true** → **`BLOCKED`**
-11. Else → **`VALID`**
+2. Else if **`evaluation_internal_consistent` is false** → **`BLOCKED`** (conflicting evaluation signals; documented in the rubric JSON `policy_notes.inconsistent_evaluation_result`)
+3. Else if **`run_available` is false** → **`BLOCKED`**
+4. Else if **`evidence_pack_present` is not true** → **`BLOCKED`**
+5. Else if **`events_content_sha256_match` is not true** → **`BLOCKED`**
+6. Else if **`export_digest_match` is not true** → **`BLOCKED`**
+7. Else if **`artifact_bound_verification` is not true** → **`BLOCKED`**
+8. Else if **`policy_version_match` is not true** → **`BLOCKED`**
+9. Else if **`evidence_complete` is not true** → **`BLOCKED`**
+10. Else if **`ai_discovery_present` is not true** → **`BLOCKED`**
+11. Else if **`approval != "granted"`** → **`BLOCKED`**
+12. Else if **`approval_is_stale` is true** → **`BLOCKED`**
+13. Else if **`causal_evaluation_before_approval` is not true** → **`BLOCKED`** (approval recorded before evaluation)
+14. Else if **`run_id_matches_decision_scope` is not true** → **`BLOCKED`**
+15. Else if **`trace_consistent` is not true** → **`BLOCKED`**
+16. Else → **`VALID`**
 
-The **baseline** is unchanged from the prior experiment framing: **`model_validation == "passed"` ⇒ `baseline_verdict == "VALID"`**, else **`INVALID`**. Injected failures use **`model_validation == "passed"`** so baseline false negatives are visible when decision-level semantics fail.
+**Events digest policy** (rubric `policy_notes.events_digest`): digest is defined over a **canonical multiset** of events (sorted by `event_id`); reordering that preserves the canonical projection leaves **`events_content_sha256_match` true** (`reordered_required_events` scenarios).
 
-Summary metrics include at minimum **`baseline_false_negative_rate`**, **`decision_gate_detection_rate`**, **`valid_retention_rate`**, **`artifact_bound_verification_failure_rate`**, and **`digest_mismatch_detection_rate`** (see script for exact definitions).
+## Metrics (overall summary)
 
-## Human approval gate
+Reported in `controlled_failure_injection.json` → `summary.overall`:
 
-The gate requires **`approval == "granted"`**. The **`missing_approval_record`** failure type deterministically sets approval to **`"missing"`**, yielding **`BLOCKED`** under the production gate while the baseline may still emit **`VALID`** when **`model_validation`** passed—illustrating the human-approval strand of the combined evaluation and accountability surface.
+- **`baseline_1_false_negative_rate`**, **`baseline_2_false_negative_rate`** on injected-violation rows
+- **`gate_detection_rate`** (non-`VALID` rate on injected violations)
+- **`valid_retention_rate`**, **`false_blocking_rate`** on should-pass rows
+- **`verdict_classification_accuracy`**, **`invalid_vs_blocked_match_rate`**
+- **`artifact_continuity_failure_detection_rate`**, **`digest_mismatch_detection_rate`**, **`approval_ordering_violation_detection_rate`**
+- **`ablations`**: ablated gates vs rubric (`verdict_classification_accuracy` per ablation)
+
+## Ablations
+
+Offline ablations disable clauses of the full gate (see `GateAblation` in `gate_model.py` and `_ablation_presets` in `controlled_failure_injection.py`). They are **illustrative** of which predicates carry rubric satisfaction under this closed schema.
+
+## Repository prevalence (separate script)
+
+The **repository prevalence** check (`experiments/repository_prevalence_check.py`) remains **illustrative and non-representative**; it must not be read as statistical generalization about all public ML repositories.
 
 ## Determinism and reproducibility
 
-Regenerate artefacts from the repository root (**offline**):
+From the repository root (**offline**), with `python/` on `PYTHONPATH` (the entrypoint inserts `python/` automatically):
 
 ```bash
 python experiments/failure_injection_experiment.py
 ```
 
+Equivalent via the `govai` CLI (editable install of `aigov-py`):
+
+```bash
+govai experiment controlled-failure-injection --output experiments/output
+```
+
 ## Limitations
 
 - **Synthetic enumerated runs**, not sampled from production logs.
-- **Boolean field model** abstracts real artefact manifests and crypto checks.
-- Intended for **paper-ready systems illustration**, not regulated certification evidence.
+- **Closed boolean / scalar field model** abstracts real artefact manifests and cryptographic checks; digest and artifact fields are **observables**, not recomputed from raw bytes in this harness.
+- **Rubric is the oracle** for expected `VALID` / `INVALID` / `BLOCKED`; the experiment measures **agreement with that published policy**, not independent real-world labels.
+- Intended for **systems-methodology illustration**, not regulated certification evidence.

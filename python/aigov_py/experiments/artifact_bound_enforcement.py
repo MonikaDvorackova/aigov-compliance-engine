@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from aigov_py.canonical_json import canonical_dumps
-from aigov_py.experiments.gate_model import decision_gate_verdict, make_base_fields
+from aigov_py.experiments.gate_model import decision_gate_verdict_from_fields, make_base_fields
 
 
 @dataclass(frozen=True)
@@ -82,18 +82,7 @@ def _merged_fields(sc: ArtifactScenario, *, run_id: str) -> dict[str, object]:
 
 def gate_result_for_scenario(sc: ArtifactScenario, *, run_id: str) -> str:
     fields = _merged_fields(sc, run_id=run_id)
-    return decision_gate_verdict(
-        evaluation_result=fields["evaluation_result"],  # type: ignore[arg-type]
-        run_available=bool(fields["run_available"]),
-        evidence_pack_present=bool(fields["evidence_pack_present"]),
-        events_content_sha256_match=bool(fields["events_content_sha256_match"]),
-        export_digest_match=bool(fields["export_digest_match"]),
-        artifact_bound_verification=bool(fields["artifact_bound_verification"]),
-        evidence_complete=bool(fields["evidence_complete"]),
-        ai_discovery_present=bool(fields["ai_discovery_present"]),
-        approval=str(fields["approval"]),
-        trace_consistent=bool(fields["trace_consistent"]),
-    )
+    return decision_gate_verdict_from_fields(fields)
 
 
 def build_rows() -> list[dict[str, Any]]:

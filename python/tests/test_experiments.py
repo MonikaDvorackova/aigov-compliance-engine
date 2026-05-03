@@ -10,23 +10,41 @@ from aigov_py.experiments import artifact_bound_enforcement as abe_mod
 from aigov_py.experiments import controlled_failure_injection as cfi_mod
 from aigov_py.experiments import real_world_ci_injection as rwci_mod
 from aigov_py.experiments import real_world_ci_runner as rwci_runner_mod
-from aigov_py.experiments.gate_model import FAILURE_TAXONOMY
+from aigov_py.experiments import scenario_fields as sf_mod
+from aigov_py.experiments.gate_model import (
+    FAILURE_TAXONOMY,
+    decision_gate_verdict_from_fields,
+    expected_verdict_from_rubric,
+    rubric_scenarios,
+)
 
 
 def test_cfi_deterministic_row_count() -> None:
     runs = cfi_mod.generate_runs()
-    assert len(runs) == 900
+    assert len(runs) == 2200
     assert runs[0].run_id == "cfi-0001"
-    assert runs[-1].run_id == "cfi-0900"
+    assert runs[-1].run_id == "cfi-2200"
 
 
-def test_cfi_expected_vs_gate_always_match() -> None:
+def test_cfi_rubric_oracle_matches_gate_on_all_runs() -> None:
     for r in cfi_mod.generate_runs():
-        assert r.expected_gate_verdict == r.gate_verdict
+        assert r.expected_gate_verdict == expected_verdict_from_rubric(r.condition)
+        assert r.gate_verdict == r.expected_gate_verdict
+        assert r.gate_matches_rubric is True
 
 
-def test_failure_taxonomy_covers_seven_classes() -> None:
-    assert len(FAILURE_TAXONOMY) == 7
+def test_failure_taxonomy_is_injected_violation_only() -> None:
+    assert len(FAILURE_TAXONOMY) == 17
+    injected_names = {str(x["scenario_name"]) for x in rubric_scenarios() if x.get("injected_violation")}
+    assert set(FAILURE_TAXONOMY) == injected_names
+
+
+def test_scenario_constructors_satisfy_rubric() -> None:
+    for row in rubric_scenarios():
+        name = str(row["scenario_name"])
+        fields = sf_mod.fields_for_scenario(name)
+        got = decision_gate_verdict_from_fields(fields)
+        assert got == str(row["expected_verdict"]), name
 
 
 def test_cfi_csv_json_structure(tmp_path: Path) -> None:
@@ -35,14 +53,22 @@ def test_cfi_csv_json_structure(tmp_path: Path) -> None:
 
     with open(paths["csv"], newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
-    assert len(rows) == 900
+    assert len(rows) == 2200
     for row in rows:
-        assert set(row.keys()) == {"run_id", "condition", "expected_label", "gate_label"}
+        assert set(row.keys()) == {
+            "run_id",
+            "condition",
+            "expected_label",
+            "gate_label",
+            "pipeline_baseline_label",
+            "gate_matches_rubric",
+        }
         assert row["expected_label"] == row["gate_label"]
+        assert row["gate_matches_rubric"] == "True"
 
     payload = json.loads(Path(paths["json"]).read_text(encoding="utf-8"))
     assert "runs" in payload and "summary" in payload
-    assert len(payload["runs"]) == 900
+    assert len(payload["runs"]) == 2200
     assert "overall" in payload["summary"]
 
 
