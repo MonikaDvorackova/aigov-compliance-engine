@@ -238,6 +238,7 @@ jobs:
       GOVAI_AUDIT_BASE_URL: http://127.0.0.1:8088
       GOVAI_API_KEY: ci-test-api-key
       GOVAI_PROJECT: github-actions
+      AIGOV_COMPLIANCE_FETCH_STRICT: "1"
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
       GOVAI_AUTO_MIGRATE: "true"
       BASE_SHA: ${{ needs.changes.outputs.base_sha }}
@@ -431,7 +432,7 @@ jobs:
             echo ""
           }
 
-          assert_real_ci_evidence () {
+          enforce_evidence_bundle_for_upload () {
             local rid="$1"
             (
               cd python
@@ -525,8 +526,9 @@ jobs:
             make promote RUN_ID="${RUN_ID}"
 
             make report_prepare RUN_ID="${RUN_ID}"
-            assert_real_ci_evidence "${RUN_ID}"
+            enforce_evidence_bundle_for_upload "${RUN_ID}"
             make evidence_pack RUN_ID="${RUN_ID}"
+            enforce_evidence_bundle_for_upload "${RUN_ID}"
 
             cp "docs/reports/${RUN_ID}.md" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
             cp "docs/audit/${RUN_ID}.json" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
@@ -577,8 +579,9 @@ jobs:
             make promote RUN_ID="${RUN_ID}"
 
             make report_prepare RUN_ID="${RUN_ID}"
-            assert_real_ci_evidence "${RUN_ID}"
+            enforce_evidence_bundle_for_upload "${RUN_ID}"
             make evidence_pack RUN_ID="${RUN_ID}"
+            enforce_evidence_bundle_for_upload "${RUN_ID}"
 
             cp "docs/reports/${RUN_ID}.md" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
             cp "docs/audit/${RUN_ID}.json" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true

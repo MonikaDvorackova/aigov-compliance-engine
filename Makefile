@@ -171,8 +171,13 @@ ensure_evidence: require_run ensure_dirs
 		exit 2; \
 	fi; \
 	cd python && . .venv/bin/activate && \
-	AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.fetch_bundle_from_govai $(RUN_ID) || \
-	AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.ci_fallback $(RUN_ID)
+	if [ "$${AIGOV_COMPLIANCE_FETCH_STRICT:-}" = "1" ]; then \
+		echo "ensure_evidence: strict fetch (no ci_fallback) RUN_ID=$(RUN_ID)"; \
+		AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.fetch_bundle_from_govai $(RUN_ID); \
+	else \
+		AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.fetch_bundle_from_govai $(RUN_ID) || \
+		AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.ci_fallback $(RUN_ID); \
+	fi
 
 # ================================
 # Report flow

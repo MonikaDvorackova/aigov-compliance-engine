@@ -81,12 +81,20 @@ def test_evidence_pack_job_exports_govai_auth_for_bundle_fetch() -> None:
     block = text[idx : idx + 9000]
     assert "GOVAI_API_KEY: ci-test-api-key" in block
     assert "GOVAI_AUDIT_BASE_URL: http://127.0.0.1:8088" in block
+    assert 'AIGOV_COMPLIANCE_FETCH_STRICT: "1"' in block
 
 
-def test_evidence_pack_rejects_fallback_only_before_evidence_pack() -> None:
+def test_evidence_pack_enforces_non_fallback_before_and_after_evidence_pack() -> None:
     text = _compliance_yml()
-    assert "assert_real_ci_evidence" in text
+    assert "enforce_evidence_bundle_for_upload" in text
     assert "python -m aigov_py.assert_ci_evidence_bundle" in text
+    assert text.count("enforce_evidence_bundle_for_upload") >= 4
+
+
+def test_makefile_ensure_evidence_strict_disables_ci_fallback() -> None:
+    makefile = (_repo_root() / "Makefile").read_text(encoding="utf-8")
+    assert "AIGOV_COMPLIANCE_FETCH_STRICT" in makefile
+    assert "no ci_fallback" in makefile
 
 
 def test_release_promotion_evidence_path_posts_ai_discovery() -> None:
@@ -94,7 +102,7 @@ def test_release_promotion_evidence_path_posts_ai_discovery() -> None:
     rp = text.index('if [[ "${EMITTED_RUN_ID}" == release-promotion-* ]]; then')
     seg = text[rp : rp + 2200]
     assert 'post_local_ev "ai_discovery_reported"' in seg
-    assert "assert_real_ci_evidence" in seg
+    assert "enforce_evidence_bundle_for_upload" in seg
     assert "make evidence_pack RUN_ID=" in seg
 
 

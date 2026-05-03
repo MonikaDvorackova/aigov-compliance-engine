@@ -41,10 +41,27 @@ def _request_headers() -> Dict[str, str]:
     return h
 
 
-def _get_json(url: str) -> Dict[str, Any]:
-    r = requests.get(url, headers=_request_headers(), timeout=15)
-    r.raise_for_status()
-    return r.json()
+def _get_json(url: str, *, what: str) -> Dict[str, Any]:
+    try:
+        r = requests.get(url, headers=_request_headers(), timeout=15)
+        body = (r.text or "")[:4000]
+        if not r.ok:
+            print(
+                f"::error::{what}: HTTP {r.status_code} GET {url!r}\n{body}",
+                file=sys.stderr,
+            )
+            r.raise_for_status()
+        try:
+            return r.json()
+        except ValueError as e:
+            print(f"::error::{what}: invalid JSON from GET {url!r}\n{body}", file=sys.stderr)
+            raise SystemExit(1) from e
+    except requests.RequestException as e:
+        print(f"::error::{what}: request failed GET {url!r}: {e}", file=sys.stderr)
+        resp = getattr(e, "response", None)
+        if resp is not None and getattr(resp, "text", None):
+            print((resp.text or "")[:4000], file=sys.stderr)
+        raise SystemExit(1) from e
 
 
 def main(argv: list[str]) -> None:
@@ -60,11 +77,12 @@ def main(argv: list[str]) -> None:
     bundle_url = f"{endpoint}/bundle?run_id={q}"
     digest_url = f"{endpoint}/bundle-hash?run_id={q}"
 
-    bundle = _get_json(bundle_url)
+    bundle = _get_json(bundle_url, what="fetch_bundle_from_govai /bundle")
     if not bundle.get("ok"):
-        raise SystemExit(f"bundle fetch failed: {bundle}")
+        print(f"::error::bundle JSON ok=false: {bundle}", file=sys.stderr)
+        raise SystemExit(1)
 
-    digest = _get_json(digest_url)
+    digest = _get_json(digest_url, what="fetch_bundle_from_govai /bundle-hash")
     if not digest.get("ok"):
         raise SystemExit(f"bundle-hash fetch failed: {digest}")
 
