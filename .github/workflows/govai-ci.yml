@@ -50,15 +50,16 @@ jobs:
       - name: Start audit service
         run: make audit_bg
 
-      - name: Wait for audit /status
+      - name: Wait for audit readiness (GET /ready)
         run: |
-          for i in $(seq 1 30); do
-            if curl -fsS --max-time 2 "http://127.0.0.1:8088/status"; then
+          for i in $(seq 1 60); do
+            code="$(curl -sS -o /tmp/govai_ready_body -w "%{http_code}" --max-time 2 "http://127.0.0.1:8088/ready" || true)"
+            if [ "${code}" = "200" ]; then
               exit 0
             fi
-            sleep 1
+            sleep 0.5
           done
-          echo "audit /status not reachable"
+          echo "audit GET /ready did not return HTTP 200 (/health and /status are not substitutes for readiness)"
           exit 1
           
       - name: Run blocked deployment example (should fail)

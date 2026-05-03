@@ -45,6 +45,8 @@ If you joined from Discord:
 
 ## Product Scope
 
+**Protected branches:** merges that must imply artefact-bound hosted validation should require **`.github/workflows/compliance.yml`** (**`govai-compliance-gate`**) — not **`govai-smoke.yml`** (manual smoke only) or **`govai check` alone**. Details: **[docs/github-action.md](docs/github-action.md)**.
+
 It:
 
 - accepts evidence via POST /evidence

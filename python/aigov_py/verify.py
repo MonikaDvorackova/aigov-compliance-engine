@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from aigov_py.fetch_bundle_from_govai import audit_base_url
+
 
 def repo_root() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -19,10 +21,22 @@ def load_json(path: str) -> Optional[Dict[str, Any]]:
         return json.load(f)
 
 
+def _audit_request_headers() -> Dict[str, str]:
+    """Same defaults as fetch_bundle_from_govai / write_digest_manifest (tenant-scoped routes)."""
+    h: Dict[str, str] = {"Accept": "application/json"}
+    key = (os.environ.get("GOVAI_API_KEY") or "ci-test-api-key").strip()
+    if key:
+        h["Authorization"] = f"Bearer {key}"
+    proj = (os.environ.get("GOVAI_PROJECT") or "github-actions").strip()
+    if proj:
+        h["X-GovAI-Project"] = proj
+    return h
+
+
 def verify(run_id: str, *, as_json: bool = False) -> int:
     root = repo_root()
     mode = os.environ.get("AIGOV_MODE", "ci")
-    endpoint = (os.environ.get("AIGOV_AUDIT_ENDPOINT") or os.environ.get("AIGOV_AUDIT_URL") or "http://127.0.0.1:8088").rstrip("/")
+    endpoint = audit_base_url()
 
     audit_path = os.path.join(root, "docs", "audit", f"{run_id}.json")
     evidence_path = os.path.join(root, "docs", "evidence", f"{run_id}.json")
@@ -65,7 +79,11 @@ def verify(run_id: str, *, as_json: bool = False) -> int:
     # --- GOVERNANCE LOG VERIFICATION ---
     ledger_derived = isinstance(evidence, dict) and bool(evidence.get("log_path"))
     try:
-        r = requests.get(f"{endpoint}/verify-log", timeout=15)
+        r = requests.get(
+            f"{endpoint}/verify-log",
+            headers=_audit_request_headers(),
+            timeout=15,
+        )
         r.raise_for_status()
         verdict = r.json()
         if verdict.get("ok") is True:

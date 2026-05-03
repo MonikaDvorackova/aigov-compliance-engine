@@ -57,7 +57,7 @@ audit:
 
 audit_bg:
 	@set -euo pipefail; \
-	if curl -fsS --max-time 1 "$(AUDIT_URL)/status" >/dev/null 2>&1; then \
+	if curl -fsS --max-time 1 "$(AUDIT_URL)/ready" >/dev/null 2>&1; then \
 		echo "aigov_audit already running on $(AUDIT_URL)"; \
 		exit 0; \
 	fi; \
@@ -69,10 +69,10 @@ audit_bg:
 	echo "starting aigov_audit in background on $(AUDIT_URL)"; \
 	echo "log: $(AUDIT_LOG)"; \
 	: > "$(AUDIT_LOG)"; \
-	nohup bash -lc 'cd rust && cargo run' >>"$(AUDIT_LOG)" 2>&1 & echo $$! >"$(AUDIT_PIDFILE)"; \
-	for i in 1 2 3 4 5 6 7 8 9 10 11 12; do \
-		if curl -fsS --max-time 1 "$(AUDIT_URL)/status" >/dev/null 2>&1; then \
-			echo "ready on $(AUDIT_URL)"; \
+	nohup bash -lc 'cd rust && GOVAI_AUTO_MIGRATE=true cargo run' >>"$(AUDIT_LOG)" 2>&1 & echo $$! >"$(AUDIT_PIDFILE)"; \
+	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do \
+		if curl -fsS --max-time 1 "$(AUDIT_URL)/ready" >/dev/null 2>&1; then \
+			echo "ready (GET /ready) on $(AUDIT_URL)"; \
 			exit 0; \
 		fi; \
 		sleep 0.5; \
@@ -142,8 +142,8 @@ require_run:
 	fi
 
 check_audit:
-	@curl -fsS --max-time 1 $(AUDIT_URL)/status >/dev/null 2>&1 || ( \
-		echo "Audit service not reachable on $(AUDIT_URL)"; \
+	@curl -fsS --max-time 1 $(AUDIT_URL)/ready >/dev/null 2>&1 || ( \
+		echo "Audit service not reachable or not ready on $(AUDIT_URL) (expected GET /ready HTTP 200)"; \
 		echo "Start it with: make audit_bg"; \
 		exit 2; \
 	)
@@ -171,8 +171,13 @@ ensure_evidence: require_run ensure_dirs
 		exit 2; \
 	fi; \
 	cd python && . .venv/bin/activate && \
-	AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.fetch_bundle_from_govai $(RUN_ID) || \
-	AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.ci_fallback $(RUN_ID)
+	if [ "$${AIGOV_COMPLIANCE_FETCH_STRICT:-}" = "1" ]; then \
+		echo "ensure_evidence: strict fetch (no ci_fallback) RUN_ID=$(RUN_ID)"; \
+		AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.fetch_bundle_from_govai $(RUN_ID); \
+	else \
+		AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.fetch_bundle_from_govai $(RUN_ID) || \
+		AIGOV_MODE=$(AIGOV_MODE) python -m aigov_py.ci_fallback $(RUN_ID); \
+	fi
 
 # ================================
 # Report flow

@@ -10,7 +10,7 @@ Date: 2026-05-01
   - **`GET /bundle-hash`** now returns **`events_content_sha256`**, **`evidence_digest_schema`**, beside existing **`bundle_sha256`** (still includes tier / `log_path` metadata — not suitable alone for CI→hosted equality).
   - **`GET /api/export/:run_id`** embeds **`evidence_hashes.events_content_sha256`** for optional cross-consistency checks from the CLI.
 - **Workflow / CI artefacts**
-  - **`compliance.yml` `evidence_pack`**: writes **`evidence_digest_manifest.json`** via **`python -m aigov_py.write_digest_manifest`** (local audit hits **`GET /bundle-hash`**). Manifest is uploaded beside **`${run_id}.json`** (exported bundle from the same ledger).
+  - **`compliance.yml` `evidence_pack`**: writes **`evidence_digest_manifest.json`** via **`python -m aigov_py.write_digest_manifest`** (local audit hits **`GET /bundle-hash`**). Manifest is uploaded beside **`${run_id}.json`** (exported bundle from the same ledger). For non–release-promotion changes, emitted **`run_id`** is **`basename-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}`** so hosted ledger rows are not reused across workflow reruns while the PR still carries a single committed **`docs/reports/<basename>.md`** (CI copies it to **`docs/reports/<run_id>.md`** before **`make run`**).
   - **`compliance.yml` `govai-compliance-gate`** (push **`main`** only): **downloads artefacts**, fails if bundle or manifest missing, runs **`govai submit-evidence-pack`** then **`govai verify-evidence-pack`** instead of scripted curl demos.
   - **`govai-check.yml`**: header + step captions state **synthetic** evidence only; **not** the production artefact replay path.
 
@@ -52,6 +52,7 @@ Synthetic replay (**`govai-check.yml`** style **or legacy hosted curl blocks**) 
 - **Policy skew**: tier differences (**dev CI** ingest vs hosted **prod**) can reject otherwise identical payloads; failure is surfaced as ingestion / verdict errors (**not masked**).
 - **Digest scope**: portability intentionally hashes evidence **excluding** **`environment`**; it does **not** replace **`bundle_sha256`** for bundle documents that intentionally bind **`policy_version`** and **`log_path`**.
 - **Trust boundary**: artefacts are GitHub artefacts; compromise of **`evidence_digest_manifest.json`** or bundle JSON between jobs invalidates continuity — mitigated by guarded paths + strict missing-file failures.
+- **Release promotion (`staging` → `main`)**: uses synthetic **`release-promotion-<run>-<attempt>`** ids; **`make report_prepare`** must sync **`docs/evidence/<run_id>.json`** from the local audit ledger via **`fetch_bundle_from_govai`** (with the same **`GOVAI_API_KEY` / `AUDIT_URL`** as **`POST /evidence`**). CI asserts the bundle is not **`ci_fallback_only`** before **`make evidence_pack`** so the hosted digest gate matches a full lifecycle.
 
 ---
 

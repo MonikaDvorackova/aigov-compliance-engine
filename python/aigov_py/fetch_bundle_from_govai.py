@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any, Dict
+from urllib.parse import quote
 
 import requests
 
@@ -17,22 +18,50 @@ def _evidence_path(run_id: str) -> Path:
     return _repo_root() / "docs" / "evidence" / f"{run_id}.json"
 
 
-def _audit_endpoint() -> str:
-    # Prefer the same env var names used by other scripts/Makefile.
-    return (os.environ.get("AIGOV_AUDIT_ENDPOINT") or os.environ.get("AIGOV_AUDIT_URL") or "http://127.0.0.1:8088").rstrip("/")
+def audit_base_url() -> str:
+    """Resolve GovAI audit base URL consistently with write_digest_manifest / Makefile defaults."""
+    return (
+        os.environ.get("AIGOV_AUDIT_ENDPOINT")
+        or os.environ.get("AIGOV_AUDIT_URL")
+        or os.environ.get("GOVAI_AUDIT_BASE_URL")
+        or os.environ.get("AUDIT_URL")
+        or "http://127.0.0.1:8088"
+    ).rstrip("/")
 
 
-def _auth_headers() -> Dict[str, str]:
-    key = (os.environ.get("GOVAI_API_KEY") or "").strip()
-    if not key:
-        return {}
-    return {"Authorization": f"Bearer {key}"}
+def _request_headers() -> Dict[str, str]:
+    """Headers for authenticated tenant-scoped bundle export (matches CI curl defaults)."""
+    h: Dict[str, str] = {"Accept": "application/json"}
+    key = (os.environ.get("GOVAI_API_KEY") or "ci-test-api-key").strip()
+    if key:
+        h["Authorization"] = f"Bearer {key}"
+    proj = (os.environ.get("GOVAI_PROJECT") or "github-actions").strip()
+    if proj:
+        h["X-GovAI-Project"] = proj
+    return h
 
 
-def _get_json(url: str) -> Dict[str, Any]:
-    r = requests.get(url, headers=_auth_headers() or None, timeout=15)
-    r.raise_for_status()
-    return r.json()
+def _get_json(url: str, *, what: str) -> Dict[str, Any]:
+    try:
+        r = requests.get(url, headers=_request_headers(), timeout=15)
+        body = (r.text or "")[:4000]
+        if not r.ok:
+            print(
+                f"::error::{what}: HTTP {r.status_code} GET {url!r}\n{body}",
+                file=sys.stderr,
+            )
+            r.raise_for_status()
+        try:
+            return r.json()
+        except ValueError as e:
+            print(f"::error::{what}: invalid JSON from GET {url!r}\n{body}", file=sys.stderr)
+            raise SystemExit(1) from e
+    except requests.RequestException as e:
+        print(f"::error::{what}: request failed GET {url!r}: {e}", file=sys.stderr)
+        resp = getattr(e, "response", None)
+        if resp is not None and getattr(resp, "text", None):
+            print((resp.text or "")[:4000], file=sys.stderr)
+        raise SystemExit(1) from e
 
 
 def main(argv: list[str]) -> None:
@@ -43,15 +72,17 @@ def main(argv: list[str]) -> None:
     if not run_id:
         raise SystemExit("run_id is required")
 
-    endpoint = _audit_endpoint()
-    bundle_url = f"{endpoint}/bundle?run_id={run_id}"
-    digest_url = f"{endpoint}/bundle-hash?run_id={run_id}"
+    endpoint = audit_base_url()
+    q = quote(run_id, safe="")
+    bundle_url = f"{endpoint}/bundle?run_id={q}"
+    digest_url = f"{endpoint}/bundle-hash?run_id={q}"
 
-    bundle = _get_json(bundle_url)
+    bundle = _get_json(bundle_url, what="fetch_bundle_from_govai /bundle")
     if not bundle.get("ok"):
-        raise SystemExit(f"bundle fetch failed: {bundle}")
+        print(f"::error::bundle JSON ok=false: {bundle}", file=sys.stderr)
+        raise SystemExit(1)
 
-    digest = _get_json(digest_url)
+    digest = _get_json(digest_url, what="fetch_bundle_from_govai /bundle-hash")
     if not digest.get("ok"):
         raise SystemExit(f"bundle-hash fetch failed: {digest}")
 
