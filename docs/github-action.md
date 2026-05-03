@@ -44,7 +44,7 @@ Publish path (example):
 
 | Input | Required | Purpose |
 |--------|----------|---------|
-| **`run_id`** | Yes | Same id as `docs/reports/<run_id>.md` / CI artefacts `<run_id>.json`. Not GitHub’s numeric `github.run_id` unless that is deliberately your ledger id. |
+| **`run_id`** | Yes | Must match the ledger id and CI artefact names: **`docs/reports/<run_id>.md`**, **`<run_id>.json`**, and the digest manifest. Composite-action callers supply any id they control (UUID, product id, etc.). **This repo’s `compliance.yml`** emits **`basename-${{ github.run_id }}-${{ github.run_attempt }}`** for hosted runs (one **`docs/reports/<basename>.md`** per PR; CI copies it to **`docs/reports/<run_id>.md`** before **`make run`**) so workflow reruns do not reuse a stale hosted ledger row for the same basename. |
 | **`artifacts_path`** | Yes | Directory containing **`evidence_digest_manifest.json`** and `<run_id>.json` (e.g. from **`actions/download-artifact`**). **`events_content_sha256`** in the manifest is the **source-of-truth** digest checked against **`GET /bundle-hash`**. |
 | **`base_url`** | Yes | GovAI audit base URL (**`GOVAI_AUDIT_BASE_URL`**). |
 | **`api_key`** | Yes | Bearer token (**`GOVAI_API_KEY`** secret). |

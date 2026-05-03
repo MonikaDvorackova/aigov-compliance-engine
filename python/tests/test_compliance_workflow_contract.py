@@ -67,6 +67,14 @@ def test_workflow_still_uses_editable_for_repo_local_ci_build() -> None:
     assert "pip install -e ." in text
 
 
+def test_govai_emit_run_id_appends_github_workflow_identity() -> None:
+    """Hosted ledger run_id must differ per workflow run while basename PR rules stay strict."""
+    text = _compliance_yml()
+    assert 'echo "run_id=${only}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in text
+    assert 'RUN_ID="${EMITTED_RUN_ID}"' in text
+    assert 'cp "docs/reports/${REPORT_BASENAME}.md" "docs/reports/${RUN_ID}.md"' in text
+
+
 def test_compliance_pull_request_trigger_has_no_activity_types_filter() -> None:
     """A narrow `types:` list can skip runs so the PR head SHA never gets required check-runs."""
     text = _compliance_yml()

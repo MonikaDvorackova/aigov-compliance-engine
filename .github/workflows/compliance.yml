@@ -389,7 +389,9 @@ jobs:
             exit 1
           fi
           only="$(printf '%s\n' "${SORTED_UNIQ}" | awk 'NF{print; exit}')"
-          echo "run_id=${only}" >> "${OUT}"
+          # Ledger run_id must be unique per workflow run (rerun-safe hosted digest continuity).
+          # Committed report stays docs/reports/<basename>.md; evidence_pack copies it to <basename>-<run>-<attempt>.md before make.
+          echo "run_id=${only}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "${OUT}"
 
       - name: Enforce emitted run_id when docs/reports changed
         if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
@@ -533,7 +535,20 @@ jobs:
           REPORTS_CHANGED="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- 'docs/reports/**' || true)"
           printf '%s\n' "${REPORTS_CHANGED}" | while IFS= read -r report; do
             [ -n "${report}" ] || continue
-            RUN_ID="$(basename "${report}" .md)"
+            REPORT_BASENAME="$(basename "${report}" .md)"
+            RUN_ID="${EMITTED_RUN_ID}"
+            case "${RUN_ID}" in
+              "${REPORT_BASENAME}"-*) ;;
+              *)
+                echo "::error::Emitted run_id '${RUN_ID}' does not match report basename '${REPORT_BASENAME}' (expected prefix '${REPORT_BASENAME}-')."
+                exit 1
+                ;;
+            esac
+            test -f "docs/reports/${REPORT_BASENAME}.md" || {
+              echo "::error::Missing docs/reports/${REPORT_BASENAME}.md"
+              exit 1
+            }
+            cp "docs/reports/${REPORT_BASENAME}.md" "docs/reports/${RUN_ID}.md"
 
             cd python
             . .venv/bin/activate
