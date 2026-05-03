@@ -18,13 +18,19 @@ Use **one** value for `GOVAI_RUN_ID` end-to-end: evidence submission → `govai 
 - `GOVAI_AUDIT_BASE_URL` — base URL of your GovAI audit service
 - Optional: `GOVAI_API_KEY` if your endpoint requires a Bearer token
 
+Install pin **must** match `version` in **`python/pyproject.toml`** for the release you use.
+
+**Ledger tenant:** which ledger you read/write is determined **only** by your API key (`GOVAI_API_KEYS_JSON` on the server). The optional **`X-GovAI-Project`** header (and `govai --project`) is **metadata** for usage labels — it does **not** isolate ledger data.
+
+**Stripe billing (hosted operators):** the same ledger tenant id is used as **`client_reference_id`** / subscription **metadata** for Checkout and webhooks. See [billing.md](billing.md) for Checkout (`POST /billing/checkout-session`), status (`GET /billing/status`), usage reporting (`POST /billing/report-usage`), webhooks, and optional **`GOVAI_BILLING_ENFORCEMENT`**.
+
 ## Step-by-step integration
 
 ### Step 1: Install CLI
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.1.1"
+python -m pip install "aigov-py==0.2.1"
 govai --help >/dev/null && echo "GovAI CLI OK"
 ```
 
@@ -112,8 +118,8 @@ Expected stdout and exit codes (the **first line** is always the verdict; additi
 | Verdict | Meaning | Exit code |
 |---------|---------|-----------|
 | `VALID` | Required evidence satisfied; deploy allowed | `0` |
-| `INVALID` | Evidence present but policy rejects the run | non-zero |
-| `BLOCKED` | Not eligible for promotion (missing evidence and/or unmet approval/promotion prerequisites) | non-zero |
+| `INVALID` | **Evaluation explicitly failed** (server `evaluation_passed == false`) | `2` |
+| `BLOCKED` | Missing required evidence **or** missing approval/risk/promotion prerequisites **or** other “not yet eligible” gates | `3` |
 
 After only the single minimal event above, you will usually see:
 
@@ -127,7 +133,9 @@ When your pipeline has submitted all required evidence for the **same** `GOVAI_R
 VALID
 ```
 
-`INVALID` appears when the server has enough evidence to evaluate the run but a policy rule fails (for example evaluation failed or approval denied).
+`INVALID` appears when the server records an explicit evaluation failure. `BLOCKED` covers missing evidence and “not yet approved / not yet promoted” states (see `blocked_reasons` / `missing_evidence` on `GET /compliance-summary`).
+
+Billing / usage trace APIs: **[billing.md](billing.md)**.
 
 ### Step 6: Export evidence
 
@@ -147,7 +155,7 @@ Output: one JSON file with the run decision and hashes.
 ## Troubleshooting
 
 - **`govai: command not found`**
-  - Re-run `python -m pip install "aigov-py==0.1.1"` and ensure the directory shown by `python3 -m site --user-base`/bin is on `PATH`, or use `python3 -m pip install --user "aigov-py==0.1.1"`.
+  - Re-run `python -m pip install "aigov-py==0.2.1"` and ensure the directory shown by `python3 -m site --user-base`/bin is on `PATH`, or use `python3 -m pip install --user "aigov-py==0.2.1"`.
 
 - **Network errors (timeout / connection refused / DNS failure)**
   - Verify `GOVAI_AUDIT_BASE_URL` is correct and reachable from your network or CI runner.

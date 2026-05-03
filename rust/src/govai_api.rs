@@ -1,6 +1,16 @@
 use crate::api_usage::key_fingerprint;
 use crate::api_usage::ApiUsageState;
 use crate::audit_api_key;
+use crate::audit_store;
+use crate::billing_trace;
+use crate::decision_evaluations;
+use crate::decision_runtime::{
+    blocked_reasons_from_state, build_decision_surface, compliance_verdict_from_state,
+    get_decision_latency_json, policy_compatibility_overlay, policy_strictness_from_env,
+    project_compliance_at_request_time, record_decision_latency_snapshot, DecisionEvaluateRequest,
+};
+use crate::stripe_billing;
+use crate::stripe_webhook;
 use crate::auth::{AuthConfig, CurrentUser};
 use crate::bundle;
 use crate::db::{self, DbPool};
@@ -16,7 +26,9 @@ use crate::rbac;
 use crate::schema::EvidenceEvent;
 use crate::verify_chain;
 
+use axum::body::Bytes;
 use axum::extract::{Path, Query, Request, State};
+use axum::response::IntoResponse;
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::routing::{get, post};
@@ -26,6 +38,8 @@ use serde_json::json;
 use std::cmp::Ordering;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
+
+use chrono::{DateTime, Datelike, TimeZone, Utc};
 
 use crate::api_error::{api_error, api_error_with};
 use crate::ledger_storage;
@@ -270,9 +284,13 @@ struct AuditState {
     metering: MeteringConfig,
 }
 
-fn tenant_log_path(audit: &AuditState, headers: &HeaderMap) -> Result<String, String> {
+/// Returns `(ledger_file_path, ledger_tenant_id)`; tenant id is API-key-derived only.
+fn tenant_log_path(audit: &AuditState, headers: &HeaderMap) -> Result<(String, String), String> {
     let tenant_id = project::require_tenant_id_for_ledger(headers, audit.deployment_env)?;
-    Ok(project::resolve_ledger_path(audit.ledger_base, &tenant_id))
+    Ok((
+        project::resolve_ledger_path(audit.ledger_base, &tenant_id),
+        tenant_id,
+    ))
 }
 
 /// Ingest phases after [`crate::audit_api_key::gate_audit_routes`]:
@@ -287,7 +305,7 @@ async fn ingest(
     headers: HeaderMap,
     Json(mut event): Json<EvidenceEvent>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let log_path = match tenant_log_path(&audit, &headers) {
+    let (log_path, ledger_tid) = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
             return api_err(
@@ -561,6 +579,8 @@ async fn ingest(
                     .await;
                 }
 
+                billing_trace::record_evidence_ingest_unit(&audit.pool, &ledger_tid, &run_id).await;
+
                 let nr1 = new_run_ids + if is_new_run { 1 } else { 0 };
                 let ev1 = evidence_events + 1;
                 let warnings = metering::basic_warnings(plan, limits, nr1, ev1, is_new_run);
@@ -614,6 +634,8 @@ async fn ingest(
                         );
                     }
                 }
+
+                billing_trace::record_evidence_ingest_unit(&audit.pool, &ledger_tid, &run_id).await;
 
                 (
                     StatusCode::OK,
@@ -853,7 +875,7 @@ async fn verify(
     State(audit): State<AuditState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let log_path = match tenant_log_path(&audit, &headers) {
+    let (log_path, _) = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
             return api_err(
@@ -889,7 +911,7 @@ async fn bundle_route(
     headers: HeaderMap,
     Query(q): Query<BundleQuery>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let log_path = match tenant_log_path(&audit, &headers) {
+    let (log_path, _) = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
             return api_err(
@@ -1039,7 +1061,7 @@ async fn export_run_route(
         );
     }
 
-    let log_path = match tenant_log_path(&audit, &headers) {
+    let (log_path, _) = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("export_run_route: tenant_log_path: {e}");
@@ -1302,7 +1324,7 @@ async fn bundle_hash_route(
     headers: HeaderMap,
     Query(q): Query<BundleHashQuery>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let log_path = match tenant_log_path(&audit, &headers) {
+    let (log_path, _) = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("bundle_hash_route: tenant_log_path: {e}");
@@ -1374,7 +1396,7 @@ async fn verify_log(
     State(audit): State<AuditState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let log_path = match tenant_log_path(&audit, &headers) {
+    let (log_path, _) = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
             return api_err(
@@ -1474,6 +1496,399 @@ async fn readiness_check(
     )
 }
 
+async fn stripe_webhook_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let sig = headers
+        .get(axum::http::HeaderName::from_static("stripe-signature"))
+        .and_then(|v| v.to_str().ok());
+    let (status, j) =
+        stripe_webhook::handle_stripe_webhook(&audit.pool, body.as_ref(), sig).await;
+    (status, Json(j))
+}
+
+#[derive(Deserialize)]
+struct BillingUsageSummaryQuery {
+    /// RFC3339 inclusive lower bound (default: first instant of current UTC month).
+    #[serde(default)]
+    from: Option<String>,
+    /// RFC3339 exclusive upper bound (default: now).
+    #[serde(default)]
+    to: Option<String>,
+    /// e.g. `evidence_event`
+    #[serde(default = "default_billing_unit_param")]
+    unit: String,
+}
+
+fn default_billing_unit_param() -> String {
+    "evidence_event".to_string()
+}
+
+async fn billing_usage_summary_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+    Query(q): Query<BillingUsageSummaryQuery>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let ledger_tid = match project::require_tenant_id_for_ledger(&headers, audit.deployment_env) {
+        Ok(t) => t,
+        Err(e) => {
+            return api_err(
+                StatusCode::BAD_REQUEST,
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+
+    let window_end = match q.to.as_deref() {
+        Some(s) => match DateTime::parse_from_rfc3339(s) {
+            Ok(d) => d.with_timezone(&Utc),
+            Err(_) => {
+                return api_err(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_QUERY",
+                    "Invalid `to` timestamp (expected RFC3339).",
+                    "Use an ISO-8601 / RFC3339 instant, e.g. 2026-05-01T00:00:00Z.",
+                    None,
+                    Some(audit.policy_version),
+                    None,
+                );
+            }
+        },
+        None => Utc::now(),
+    };
+
+    let window_start = match q.from.as_deref() {
+        Some(s) => match DateTime::parse_from_rfc3339(s) {
+            Ok(d) => d.with_timezone(&Utc),
+            Err(_) => {
+                return api_err(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_QUERY",
+                    "Invalid `from` timestamp (expected RFC3339).",
+                    "Use an ISO-8601 / RFC3339 instant, e.g. 2026-05-01T00:00:00Z.",
+                    None,
+                    Some(audit.policy_version),
+                    None,
+                );
+            }
+        },
+        None => Utc
+            .with_ymd_and_hms(window_end.year(), window_end.month(), 1, 0, 0, 0)
+            .single()
+            .unwrap_or_else(Utc::now),
+    };
+
+    if window_start >= window_end {
+        return api_err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_QUERY",
+            "`from` must be strictly before `to`.",
+            "Widen the window or fix the bounds.",
+            None,
+            Some(audit.policy_version),
+            None,
+        );
+    }
+
+    let unit = {
+        let u = q.unit.trim();
+        if u.is_empty() {
+            "evidence_event"
+        } else {
+            u
+        }
+    };
+    match billing_trace::usage_summary_for_tenant(
+        &audit.pool,
+        &ledger_tid,
+        unit,
+        window_start,
+        window_end,
+    )
+    .await
+    {
+        Ok(s) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "tenant_id": s.tenant_id,
+                "billing_unit": s.billing_unit,
+                "usage_count": s.count,
+                "time_window": {
+                    "start": s.window_start.to_rfc3339(),
+                    "end": s.window_end.to_rfc3339()
+                },
+                "traces": s.traces.iter().map(|t| json!({
+                    "tenant_id": t.tenant_id,
+                    "run_id": t.run_id,
+                    "occurred_at": t.occurred_at.to_rfc3339()
+                })).collect::<Vec<_>>()
+            })),
+        ),
+        Err(e) => api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DB_ERROR",
+            "Could not load billing usage summary.",
+            "Retry in a moment. If this persists, contact support.",
+            Some(json!({ "raw": e.to_string() })),
+            Some(audit.policy_version),
+            None,
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct BillingCheckoutRequest {
+    price_id: String,
+    success_url: String,
+    cancel_url: String,
+}
+
+async fn billing_checkout_session_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+    Json(body): Json<BillingCheckoutRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let tenant_id = match project::require_tenant_id_for_ledger(&headers, audit.deployment_env) {
+        Ok(t) => t,
+        Err(e) => {
+            return api_err(
+                StatusCode::BAD_REQUEST,
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+    let sk = match stripe_billing::stripe_secret_key() {
+        Ok(s) => s,
+        Err(msg) => {
+            return api_err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "STRIPE_NOT_CONFIGURED",
+                "Stripe API is not configured on this server.",
+                "Set GOVAI_STRIPE_SECRET_KEY to your Stripe secret key (sk_live_… or sk_test_…).",
+                Some(json!({ "detail": msg })),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+    let price = body.price_id.trim();
+    if price.is_empty() || !price.starts_with("price_") {
+        return api_err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PRICE_ID",
+            "price_id must be a non-empty Stripe Price id (price_…).",
+            "Pass a subscription recurring price from the Stripe Dashboard.",
+            None,
+            Some(audit.policy_version),
+            None,
+        );
+    }
+    if body.success_url.trim().is_empty() || body.cancel_url.trim().is_empty() {
+        return api_err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_URL",
+            "success_url and cancel_url must be non-empty absolute URLs.",
+            "Provide https://… URLs where Stripe should redirect after checkout.",
+            None,
+            Some(audit.policy_version),
+            None,
+        );
+    }
+    match stripe_billing::stripe_create_checkout_session(
+        &sk,
+        price,
+        body.success_url.trim(),
+        body.cancel_url.trim(),
+        &tenant_id,
+    )
+    .await
+    {
+        Ok((session_id, checkout_url)) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "tenant_id": tenant_id,
+                "session_id": session_id,
+                "checkout_url": checkout_url,
+            })),
+        ),
+        Err(e) => api_err(
+            StatusCode::BAD_GATEWAY,
+            "STRIPE_CHECKOUT_FAILED",
+            "Stripe refused or failed to create the Checkout Session.",
+            "Verify price_id, account mode (test vs live), and Stripe logs; then retry.",
+            Some(json!({ "detail": e })),
+            Some(audit.policy_version),
+            None,
+        ),
+    }
+}
+
+async fn billing_status_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let tenant_id = match project::require_tenant_id_for_ledger(&headers, audit.deployment_env) {
+        Ok(t) => t,
+        Err(e) => {
+            return api_err(
+                StatusCode::BAD_REQUEST,
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+    match stripe_billing::billing_status_for_tenant(&audit.pool, &tenant_id).await {
+        Ok(s) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "tenant_id": s.tenant_id,
+                "stripe_customer_id": s.stripe_customer_id,
+                "stripe_subscription_id": s.stripe_subscription_id,
+                "stripe_subscription_item_id": s.stripe_subscription_item_id,
+                "subscription_status": s.subscription_status,
+                "current_period_start": s.current_period_start,
+                "current_period_end": s.current_period_end,
+            })),
+        ),
+        Err(e) => api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DB_ERROR",
+            "Could not load billing status.",
+            "Retry in a moment. If this persists, contact support.",
+            Some(json!({ "raw": e.to_string() })),
+            Some(audit.policy_version),
+            None,
+        ),
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct BillingReportUsageBody {
+    #[serde(default = "default_report_usage_unit")]
+    billing_unit: String,
+}
+
+fn default_report_usage_unit() -> String {
+    "evidence_event".to_string()
+}
+
+async fn billing_report_usage_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+    Json(body): Json<BillingReportUsageBody>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let tenant_id = match project::require_tenant_id_for_ledger(&headers, audit.deployment_env) {
+        Ok(t) => t,
+        Err(e) => {
+            return api_err(
+                StatusCode::BAD_REQUEST,
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+    let unit = body.billing_unit.trim();
+    let unit = if unit.is_empty() {
+        "evidence_event"
+    } else {
+        unit
+    };
+    match stripe_billing::report_usage_for_tenant(&audit.pool, &tenant_id, unit).await {
+        Ok(out) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "idempotent_hit": out.idempotent_hit,
+                "report_id": out.report_id,
+                "quantity": out.quantity,
+                "period_start": out.period_start,
+                "period_end": out.period_end,
+                "status": out.status,
+                "stripe_usage_record_id": out.stripe_usage_record_id,
+            })),
+        ),
+        Err(e) => api_err(
+            StatusCode::BAD_GATEWAY,
+            "STRIPE_USAGE_REPORT_FAILED",
+            "Usage was recorded locally but reporting to Stripe failed.",
+            "Fix Stripe configuration or subscription item id, then POST again (idempotent for the same period).",
+            Some(json!({ "detail": e })),
+            Some(audit.policy_version),
+            None,
+        ),
+    }
+}
+
+async fn billing_enforcement_middleware(
+    State(audit): State<AuditState>,
+    request: Request,
+    next: Next,
+) -> axum::response::Response {
+    let path = request.uri().path();
+    if !stripe_billing::billing_enforcement_enabled() {
+        return next.run(request).await;
+    }
+    if stripe_billing::billing_enforcement_exempt_path(path) {
+        return next.run(request).await;
+    }
+    let headers = request.headers().clone();
+    let tid = match project::require_tenant_id_for_ledger(&headers, audit.deployment_env) {
+        Ok(t) => t,
+        Err(msg) => {
+            return crate::api_error::api_error(
+                StatusCode::BAD_REQUEST,
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `Authorization: Bearer <api_key>`.",
+                Some(json!(msg)),
+            )
+            .into_response();
+        }
+    };
+    match stripe_billing::tenant_subscription_gate(&audit.pool, &tid).await {
+        Ok(true) => next.run(request).await,
+        Ok(false) => crate::api_error::api_error(
+            StatusCode::FORBIDDEN,
+            "BILLING_INACTIVE",
+            "Billing subscription is not active",
+            "Complete Stripe checkout or contact the operator",
+            None,
+        )
+        .into_response(),
+        Err(e) => crate::api_error::api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "BILLING_GATE_ERROR",
+            "Could not verify billing status.",
+            "Retry later or contact support.",
+            Some(json!({ "raw": e.to_string() })),
+        )
+        .into_response(),
+    }
+}
+
 pub fn audit_router(
     log_path: &'static str,
     policy_version: &'static str,
@@ -1499,19 +1914,32 @@ pub fn audit_router(
         async move { crate::audit_api_key::gate_audit_routes(cfg, usage, request, next).await }
     });
 
+    let billing_enforce_layer =
+        middleware::from_fn_with_state(state.clone(), billing_enforcement_middleware);
+
     let unauthenticated = Router::new()
         .route("/ready", get(readiness_check))
+        .route("/stripe/webhook", post(stripe_webhook_route))
         .with_state(state.clone());
 
     let gated = Router::new()
         .route("/evidence", post(ingest))
         .route("/usage", get(usage_route))
+        .route("/decision/evaluate", post(decision_evaluate_route))
+        .route("/decision/latency/latest", get(decision_latency_route))
+        .route("/decision/latency", get(decision_latency_route))
+        .route("/decision/:decision_id", get(decision_get_route))
+        .route("/billing/usage-summary", get(billing_usage_summary_route))
+        .route("/billing/checkout-session", post(billing_checkout_session_route))
+        .route("/billing/status", get(billing_status_route))
+        .route("/billing/report-usage", post(billing_report_usage_route))
         .route("/verify", get(verify))
         .route("/bundle", get(bundle_route))
         .route("/bundle-hash", get(bundle_hash_route))
         .route("/verify-log", get(verify_log))
         .route("/compliance-summary", get(compliance_summary_route))
         .route("/api/export/:run_id", get(export_run_route))
+        .layer(billing_enforce_layer)
         .layer(audit_key_layer)
         .with_state(state.clone());
 
@@ -1520,17 +1948,16 @@ pub fn audit_router(
         .merge(gated)
 }
 
-#[derive(Deserialize)]
-struct ComplianceSummaryQuery {
-    run_id: String,
+async fn decision_latency_route() -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::OK, Json(get_decision_latency_json()))
 }
 
-async fn compliance_summary_route(
+async fn decision_evaluate_route(
     State(audit): State<AuditState>,
     headers: HeaderMap,
-    Query(q): Query<ComplianceSummaryQuery>,
+    Json(body): Json<DecisionEvaluateRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let log_path = match tenant_log_path(&audit, &headers) {
+    let (log_path, _) = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
             return api_err(
@@ -1540,67 +1967,77 @@ async fn compliance_summary_route(
                 "Provide `Authorization: Bearer <api_key>`.",
                 Some(serde_json::Value::String(e)),
                 Some(audit.policy_version),
-                Some(json!({
-                    "schema_version": "aigov.compliance_summary.v2",
-                    "run_id": q.run_id,
-                })),
-            )
+                Some(json!({ "schema_version": "aigov.decision_evaluate.v1" })),
+            );
         }
     };
-    match bundle::collect_events_for_run(&log_path, &q.run_id) {
-        Ok(events) => {
-            if events.is_empty() {
-                return api_err(
-                    StatusCode::NOT_FOUND,
-                    "RUN_NOT_FOUND",
-                    "No events were found for this run_id in the current tenant ledger.",
-                    tenant_scoped_not_found_hint(),
-                    None,
-                    Some(audit.policy_version),
-                    Some(json!({
-                        "schema_version": "aigov.compliance_summary.v2",
-                        "run_id": q.run_id,
-                    })),
-                );
-            }
-            let events = bundle::canonicalize_evidence_events(events);
-            let deployment_environment = audit.deployment_env.as_str();
-            let ledger_environment = events
-                .last()
-                .and_then(|e| e.environment.as_deref())
-                .unwrap_or(deployment_environment);
-            let ledger_environment_note = if ledger_environment == deployment_environment {
-                serde_json::Value::Null
-            } else {
-                json!(format!(
-                    "ledger environment ({ledger_environment}) does not match deployment ({deployment_environment})"
-                ))
-            };
-            let artifact_path = bundle::find_model_artifact_path(&events);
-            let lp = format!("rust/{}", log_path);
-            let bundle_hash = bundle::bundle_sha256(
-                &q.run_id,
-                audit.policy_version,
-                &lp,
-                artifact_path.as_deref(),
-                &events,
+    let run_id = body.run_id.trim();
+    if run_id.is_empty() {
+        return api_err(
+            StatusCode::BAD_REQUEST,
+            "RUN_ID_REQUIRED",
+            "run_id is required in the JSON body.",
+            "POST JSON including {\"run_id\":\"...\"}.",
+            None,
+            Some(audit.policy_version),
+            Some(json!({ "schema_version": "aigov.decision_evaluate.v1" })),
+        );
+    }
+    let refs_ok = body.evidence_refs.is_empty()
+        || body
+            .evidence_refs
+            .iter()
+            .all(|r| r.trim() == run_id);
+    if !refs_ok {
+        return api_err(
+            StatusCode::BAD_REQUEST,
+            "UNSUPPORTED_EVIDENCE_REFS",
+            "Only evidence for the same run_id is supported in this version.",
+            "Omit evidence_refs or set each entry equal to run_id.",
+            None,
+            Some(audit.policy_version),
+            Some(json!({ "schema_version": "aigov.decision_evaluate.v1", "run_id": run_id })),
+        );
+    }
+
+    let decision_id = body
+        .decision_id
+        .clone()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    match project_compliance_at_request_time(
+        &log_path,
+        run_id,
+        audit.policy_version,
+        audit.deployment_env,
+    ) {
+        Ok(core) => {
+            let strict = policy_strictness_from_env();
+            let actionable = build_decision_surface(
+                core.verdict,
+                strict,
+                "request_time",
+                true,
+                &core.derived,
+                &core.blocked_reasons,
             );
-            let derived = projection::derive_current_state_from_events_with_context(
-                &q.run_id,
-                &events,
-                Some(bundle_hash),
-                None,
+            let compat = policy_compatibility_overlay(
+                strict,
+                core.deployment_environment.as_str(),
+                core.ledger_environment.as_str(),
             );
-            let verdict = compliance_verdict_from_state(&derived);
-            let requirements = json!({
-                "required": derived.requirements.required,
-                "satisfied": derived.requirements.satisfied,
-                "missing": derived.requirements.missing,
-                "required_requirements": derived.requirements.required_requirements,
-                "satisfied_requirements": derived.requirements.satisfied_requirements,
-                "missing_requirements": derived.requirements.missing_requirements
-            });
-            let blocked_reasons = blocked_reasons_from_state(&derived);
+
+            record_decision_latency_snapshot(json!({
+                "ok": true,
+                "last": {
+                    "decision_id": decision_id,
+                    "run_id": run_id,
+                    "verdict": core.verdict,
+                    "times_ms": core.timings,
+                }
+            }));
 
             if audit.metering.enabled {
                 let key_hash = match audit_api_key::raw_bearer_token(&headers) {
@@ -1650,16 +2087,159 @@ async fn compliance_summary_route(
                 StatusCode::OK,
                 Json(json!({
                     "ok": true,
+                    "schema_version": "aigov.decision_evaluate.v1",
+                    "evaluation_mode": "request_time",
+                    "policy_version": audit.policy_version,
+                    "policy_strictness": strict,
+                    "policy_compatibility": compat,
+                    "decision": {
+                        "decision_id": decision_id,
+                        "run_id": run_id,
+                        "context": body.context,
+                        "inputs": body.inputs,
+                        "linked_evidence": {
+                            "primary_run_id": run_id,
+                            "evidence_refs": body.evidence_refs,
+                        },
+                    },
+                    "verdict": core.verdict,
+                    "actionable": actionable,
+                    "requirements": core.requirements,
+                    "blocked_reasons": core.blocked_reasons,
+                    "current_state": core.derived,
+                    "timings_ms": core.timings,
+                    "same_projection_as_compliance_summary": true,
+                })),
+            )
+        }
+        Err(e) => api_err(
+            StatusCode::NOT_FOUND,
+            "RUN_NOT_FOUND",
+            "No events were found for this run_id in the current tenant ledger.",
+            tenant_scoped_not_found_hint(),
+            Some(json!({ "raw": e })),
+            Some(audit.policy_version),
+            Some(json!({
+                "schema_version": "aigov.decision_evaluate.v1",
+                "run_id": run_id,
+            })),
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct ComplianceSummaryQuery {
+    run_id: String,
+}
+
+async fn compliance_summary_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+    Query(q): Query<ComplianceSummaryQuery>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let (log_path, _) = match tenant_log_path(&audit, &headers) {
+        Ok(p) => p,
+        Err(e) => {
+            return api_err(
+                StatusCode::BAD_REQUEST,
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
+                Some(audit.policy_version),
+                Some(json!({
+                    "schema_version": "aigov.compliance_summary.v2",
+                    "run_id": q.run_id,
+                })),
+            )
+        }
+    };
+    match project_compliance_at_request_time(
+        &log_path,
+        &q.run_id,
+        audit.policy_version,
+        audit.deployment_env,
+    ) {
+        Ok(core) => {
+            let verdict = core.verdict;
+            let requirements = core.requirements;
+            let blocked_reasons = core.blocked_reasons;
+            let derived = core.derived;
+            let deployment_environment = core.deployment_environment;
+            let ledger_environment = core.ledger_environment;
+            let ledger_environment_note = core.ledger_environment_note;
+
+            if audit.metering.enabled {
+                let key_hash = match audit_api_key::raw_bearer_token(&headers) {
+                    None => {
+                        return api_err(
+                            StatusCode::UNAUTHORIZED,
+                            "MISSING_API_KEY",
+                            "Missing API key.",
+                            "Provide `Authorization: Bearer <api_key>`.",
+                            None,
+                            None,
+                            None,
+                        );
+                    }
+                    Some(t) => key_fingerprint(t),
+                };
+                let team_id = match metering::team_id_for_key_hash(&audit.pool, &key_hash).await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        return api_err(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "METERING_ERROR",
+                            "We could not load metering information for this API key.",
+                            "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+                            Some(json!({ "raw": e.to_string() })),
+                            Some(audit.policy_version),
+                            None,
+                        );
+                    }
+                };
+                if let Some(team_id) = team_id {
+                    let ym = metering::year_month_utc_now();
+                    let _ = metering::increment_team_op_counter(
+                        &audit.pool,
+                        team_id,
+                        ym,
+                        metering::TeamOpCounter::ComplianceCheck,
+                    )
+                    .await;
+                }
+            } else {
+                let tenant_id = project::billing_tenant_id(&headers);
+                let _ = evidence_usage::increment_compliance_check_usage(&audit.pool, &tenant_id).await;
+            }
+
+            let strict = policy_strictness_from_env();
+            let actionable = build_decision_surface(
+                verdict,
+                strict,
+                "ledger_projection",
+                true,
+                &derived,
+                blocked_reasons.as_slice(),
+            );
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "ok": true,
                     "schema_version": "aigov.compliance_summary.v2",
                     "policy_version": audit.policy_version,
+                    "policy_strictness": strict,
+                    "evaluation_mode": "ledger_projection",
                     "deployment_environment": deployment_environment,
                     "ledger_environment": ledger_environment,
                     "ledger_environment_note": ledger_environment_note,
                     "run_id": q.run_id,
                     "verdict": verdict,
+                    "actionable": actionable,
                     "requirements": requirements,
                     "blocked_reasons": blocked_reasons,
                     "current_state": derived,
+                    "same_projection_as_compliance_summary": true,
                 })),
             )
         }
@@ -1678,141 +2258,10 @@ async fn compliance_summary_route(
     }
 }
 
-fn compliance_verdict_from_state(state: &projection::ComplianceCurrentState) -> &'static str {
-    // Authoritative rule order (server-side): evaluation → approval → promotion.
-    // - INVALID: evaluation explicitly failed.
-    // - VALID: evaluation passed, risk reviewed + human approved (approve), and promotion executed.
-    // - BLOCKED: anything else (missing prerequisites / missing required evidence / not yet promoted).
-    if state.model.evaluation_passed == Some(false) {
-        return "INVALID";
-    }
-
-    // Discovery-driven evidence gates (and mandatory discovery completion): additive enforcement.
-    if !state.requirements.missing.is_empty() {
-        return "BLOCKED";
-    }
-
-    let eval_ok = state.model.evaluation_passed == Some(true);
-    let risk_ok = state.approval.risk_review_decision.as_deref() == Some("approve");
-    let approval_ok = state.approval.human_approval_decision.as_deref() == Some("approve");
-    let promoted =
-        state.model.promotion.model_promoted_present && state.model.promotion.state == "promoted";
-
-    if eval_ok && risk_ok && approval_ok && promoted {
-        "VALID"
-    } else {
-        "BLOCKED"
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct BlockedReason {
-    code: String,
-    message: String,
-}
-
-fn blocked_reasons_from_state(state: &projection::ComplianceCurrentState) -> Vec<BlockedReason> {
-    let missing: std::collections::BTreeSet<&str> = state
-        .requirements
-        .missing
-        .iter()
-        .map(|s| s.as_str())
-        .collect();
-
-    // Stable order and stable messages (contract).
-    let mut out: Vec<BlockedReason> = Vec::new();
-    let ordered: [(&str, &str); 5] = [
-        (
-            "ai_discovery_completed",
-            "AI discovery scan must be completed before compliance decision.",
-        ),
-        (
-            "model_registered",
-            "Detected OpenAI usage requires model registration.",
-        ),
-        (
-            "usage_policy_defined",
-            "Detected OpenAI usage requires usage policy definition.",
-        ),
-        (
-            "evaluation_completed",
-            "Detected AI system requires evaluation evidence.",
-        ),
-        (
-            "model_artifact_documented",
-            "Detected model artifact requires documentation.",
-        ),
-    ];
-
-    for (code, message) in ordered {
-        if missing.contains(code) {
-            out.push(BlockedReason {
-                code: code.to_string(),
-                message: message.to_string(),
-            });
-        }
-    }
-
-    // Additive: lifecycle / promotion gates.
-    //
-    // `compliance_verdict_from_state` can return BLOCKED even when discovery-driven evidence is
-    // complete (missing is empty). In that case we must surface why the run is blocked.
-    //
-    // Stable order contract:
-    // evaluation → risk review → human approval → promotion execution.
-    if compliance_verdict_from_state(state) == "BLOCKED" && missing.is_empty() {
-        if state.model.evaluation_passed.is_none() {
-            out.push(BlockedReason {
-                code: "evaluation_required".to_string(),
-                message: "Evaluation must be reported (passed=true) before promotion readiness.".to_string(),
-            });
-        }
-
-        if state.approval.risk_review_decision.as_deref() != Some("approve") {
-            out.push(BlockedReason {
-                code: "awaiting_risk_review".to_string(),
-                message: "Risk assessment review must be approved before promotion readiness.".to_string(),
-            });
-        }
-
-        if state.approval.human_approval_decision.as_deref() != Some("approve") {
-            out.push(BlockedReason {
-                code: "approval_required".to_string(),
-                message: "Human approval is required before promotion readiness.".to_string(),
-            });
-        }
-
-        if !(state.model.promotion.model_promoted_present && state.model.promotion.state == "promoted")
-        {
-            let code = match state.model.promotion.state.as_str() {
-                "awaiting_risk_review" => "awaiting_risk_review",
-                "awaiting_human_approval" => "approval_required",
-                "awaiting_evaluation_passed" => "evaluation_required",
-                "awaiting_promotion_execution" => "awaiting_promotion_execution",
-                _ => "promotion_not_ready",
-            };
-            let message = match state.model.promotion.state.as_str() {
-                "awaiting_promotion_execution" => {
-                    "Promotion evidence (model_promoted) has not been recorded yet.".to_string()
-                }
-                "promoted" => "Promotion has been executed.".to_string(),
-                other => format!("Promotion is not complete: state={other}."),
-            };
-            // Avoid duplicating the same code when earlier gates already emitted it.
-            if !out.iter().any(|r| r.code == code) {
-                out.push(BlockedReason {
-                    code: code.to_string(),
-                    message,
-                });
-            }
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod discovery_enforcement_tests {
     use super::*;
+    use crate::decision_runtime::{blocked_reasons_from_state, compliance_verdict_from_state};
     use crate::schema::EvidenceEvent;
     use serde_json::json;
 
@@ -2079,7 +2528,7 @@ mod discovery_enforcement_tests {
     }
 
     #[test]
-    fn explicit_failed_evaluation_overrides_success() {
+    fn conflicting_pass_and_fail_evaluations_are_blocked_inconsistent() {
         let run_id = "run_eval_fail_overrides";
         let mut events = base_valid_bundle(run_id);
         events.push(ev(
@@ -2088,7 +2537,7 @@ mod discovery_enforcement_tests {
             "d1",
             json!({ "openai": false, "transformers": false, "model_artifacts": false }),
         ));
-        // Later evaluation explicitly fails.
+        // Later evaluation explicitly fails while an earlier report passed → inconsistent ledger, not a single failed read.
         events.push(ev(
             run_id,
             "evaluation_reported",
@@ -2106,6 +2555,45 @@ mod discovery_enforcement_tests {
         let state =
             projection::derive_current_state_from_events_with_context(run_id, &events, None, None);
         assert!(state.requirements.missing.is_empty());
+        assert!(state.model.evaluation_inconsistent);
+        assert_eq!(state.model.evaluation_passed, None);
+        assert_eq!(compliance_verdict_from_state(&state), "BLOCKED");
+        let reasons = blocked_reasons_from_state(&state);
+        let codes: Vec<&str> = reasons.iter().map(|r| r.code.as_str()).collect();
+        assert!(
+            codes.contains(&"evaluation_inconsistent"),
+            "expected evaluation_inconsistent in {codes:?}"
+        );
+    }
+
+    #[test]
+    fn single_explicit_failed_evaluation_is_invalid() {
+        let run_id = "run_eval_fail_only";
+        let events = vec![
+            ev(
+                run_id,
+                "ai_discovery_reported",
+                "d0",
+                json!({ "openai": false, "transformers": false, "model_artifacts": false }),
+            ),
+            ev(
+                run_id,
+                "evaluation_reported",
+                "e1",
+                json!({
+                    "ai_system_id": "ai1",
+                    "dataset_id": "d1",
+                    "model_version_id": "m1",
+                    "metric": "acc",
+                    "value": 0.1,
+                    "threshold": 0.8,
+                    "passed": false,
+                }),
+            ),
+        ];
+        let state =
+            projection::derive_current_state_from_events_with_context(run_id, &events, None, None);
+        assert!(!state.model.evaluation_inconsistent);
         assert_eq!(state.model.evaluation_passed, Some(false));
         assert_eq!(compliance_verdict_from_state(&state), "INVALID");
     }

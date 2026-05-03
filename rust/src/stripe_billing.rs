@@ -1,0 +1,594 @@
+//! Ledger-tenant Stripe billing: checkout sessions, webhook-driven account rows, metered usage reports, enforcement gate.
+
+use crate::billing_trace;
+use crate::db::DbPool;
+use chrono::{DateTime, Datelike, TimeZone, Utc};
+use serde_json::Value;
+use sqlx::Row;
+
+const ACTIVE_STATUSES: &[&str] = &["active", "trialing"];
+
+fn enc_val(s: &str) -> String {
+    urlencoding::encode(s).into_owned()
+}
+
+pub fn billing_enforcement_enabled() -> bool {
+    matches!(
+        std::env::var("GOVAI_BILLING_ENFORCEMENT")
+            .map(|s| s.trim().to_ascii_lowercase())
+            .unwrap_or_default()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+/// Paths that remain reachable without an active/trialing subscription when enforcement is on.
+pub fn billing_enforcement_exempt_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/billing/checkout-session" | "/billing/status" | "/stripe/webhook"
+    )
+}
+
+pub fn stripe_secret_key() -> Result<String, String> {
+    let s = std::env::var("GOVAI_STRIPE_SECRET_KEY")
+        .map_err(|_| "GOVAI_STRIPE_SECRET_KEY is not set".to_string())?;
+    let t = s.trim();
+    if t.is_empty() {
+        return Err("GOVAI_STRIPE_SECRET_KEY is empty".into());
+    }
+    Ok(t.to_string())
+}
+
+pub fn subscription_status_is_active(status: &str) -> bool {
+    ACTIVE_STATUSES.contains(&status.to_ascii_lowercase().as_str())
+}
+
+/// Returns true if tenant may use billable hosted APIs (active or trialing subscription row).
+pub async fn tenant_subscription_gate(pool: &DbPool, tenant_id: &str) -> Result<bool, sqlx::Error> {
+    let row: Option<(String,)> = sqlx::query_as(
+        r#"
+        select subscription_status
+        from public.tenant_billing_accounts
+        where tenant_id = $1
+        "#,
+    )
+    .bind(tenant_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((status,)) = row else {
+        return Ok(false);
+    };
+    Ok(subscription_status_is_active(status.as_str()))
+}
+
+fn jstr(v: &Value, path: &[&str]) -> Option<String> {
+    let mut cur = v;
+    for p in path {
+        cur = cur.get(*p)?;
+    }
+    cur.as_str().map(|s| s.to_string())
+}
+
+fn jstr_opt(v: &Value, path: &[&str]) -> Option<String> {
+    jstr(v, path).filter(|s| !s.is_empty())
+}
+
+fn unix_ts_to_utc(ts: i64) -> DateTime<Utc> {
+    Utc.timestamp_opt(ts, 0).single().unwrap_or_else(Utc::now)
+}
+
+/// Upsert tenant billing row by tenant_id (primary key).
+pub async fn upsert_tenant_billing_account(
+    pool: &DbPool,
+    tenant_id: &str,
+    stripe_customer_id: Option<&str>,
+    stripe_subscription_id: Option<&str>,
+    stripe_subscription_item_id: Option<&str>,
+    subscription_status: &str,
+    current_period_start: Option<DateTime<Utc>>,
+    current_period_end: Option<DateTime<Utc>>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        insert into public.tenant_billing_accounts (
+          tenant_id, stripe_customer_id, stripe_subscription_id, stripe_subscription_item_id,
+          subscription_status, current_period_start, current_period_end, updated_at
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, now())
+        on conflict (tenant_id) do update set
+          stripe_customer_id = coalesce(excluded.stripe_customer_id, public.tenant_billing_accounts.stripe_customer_id),
+          stripe_subscription_id = coalesce(excluded.stripe_subscription_id, public.tenant_billing_accounts.stripe_subscription_id),
+          stripe_subscription_item_id = coalesce(excluded.stripe_subscription_item_id, public.tenant_billing_accounts.stripe_subscription_item_id),
+          subscription_status = excluded.subscription_status,
+          current_period_start = coalesce(excluded.current_period_start, public.tenant_billing_accounts.current_period_start),
+          current_period_end = coalesce(excluded.current_period_end, public.tenant_billing_accounts.current_period_end),
+          updated_at = now()
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(stripe_customer_id)
+    .bind(stripe_subscription_id)
+    .bind(stripe_subscription_item_id)
+    .bind(subscription_status)
+    .bind(current_period_start)
+    .bind(current_period_end)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn find_tenant_by_stripe_customer(pool: &DbPool, customer_id: &str) -> Result<Option<String>, sqlx::Error> {
+    let r: Option<(String,)> = sqlx::query_as(
+        r#"select tenant_id from public.tenant_billing_accounts where stripe_customer_id = $1 limit 1"#,
+    )
+    .bind(customer_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(r.map(|t| t.0))
+}
+
+fn first_subscription_item_id(sub: &Value) -> Option<String> {
+    sub.get("items")?
+        .get("data")?
+        .as_array()?
+        .first()?
+        .get("id")?
+        .as_str()
+        .map(|s| s.to_string())
+}
+
+async fn resolve_tenant_from_subscription(pool: &DbPool, sub: &Value) -> Result<Option<String>, sqlx::Error> {
+    if let Some(t) = jstr_opt(sub, &["metadata", "tenant_id"]) {
+        return Ok(Some(t));
+    }
+    if let Some(cust) = jstr_opt(sub, &["customer"]) {
+        return find_tenant_by_stripe_customer(pool, &cust).await;
+    }
+    Ok(None)
+}
+
+pub async fn process_checkout_session_completed(pool: &DbPool, obj: &Value) -> Result<(), String> {
+    let tenant_id = jstr_opt(obj, &["client_reference_id"])
+        .or_else(|| jstr_opt(obj, &["metadata", "tenant_id"]))
+        .ok_or_else(|| {
+            "checkout.session.completed: missing client_reference_id and metadata.tenant_id".to_string()
+        })?;
+    let customer = jstr_opt(obj, &["customer"]);
+    let subscription = jstr_opt(obj, &["subscription"]);
+    upsert_tenant_billing_account(
+        pool,
+        &tenant_id,
+        customer.as_deref(),
+        subscription.as_deref(),
+        None,
+        if subscription.is_some() {
+            "incomplete"
+        } else {
+            "none"
+        },
+        None,
+        None,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn process_subscription_object(
+    pool: &DbPool,
+    sub: &Value,
+    deleted: bool,
+) -> Result<(), String> {
+    let Some(tenant_id) = resolve_tenant_from_subscription(pool, sub)
+        .await
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(());
+    };
+    let customer = jstr_opt(sub, &["customer"]);
+    let sub_id = jstr(sub, &["id"]).ok_or_else(|| "subscription missing id".to_string())?;
+    let item_id = first_subscription_item_id(sub);
+    if deleted {
+        upsert_tenant_billing_account(
+            pool,
+            &tenant_id,
+            customer.as_deref(),
+            Some(&sub_id),
+            item_id.as_deref(),
+            "canceled",
+            None,
+            None,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    let status = jstr(sub, &["status"]).unwrap_or_else(|| "none".into());
+    let cps = sub
+        .get("current_period_start")
+        .and_then(Value::as_i64)
+        .map(unix_ts_to_utc);
+    let cpe = sub
+        .get("current_period_end")
+        .and_then(Value::as_i64)
+        .map(unix_ts_to_utc);
+    upsert_tenant_billing_account(
+        pool,
+        &tenant_id,
+        customer.as_deref(),
+        Some(&sub_id),
+        item_id.as_deref(),
+        &status,
+        cps,
+        cpe,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn process_invoice(pool: &DbPool, inv: &Value, paid: bool) -> Result<(), String> {
+    let Some(customer_id) = jstr_opt(inv, &["customer"]) else {
+        return Ok(());
+    };
+    let Some(tenant_id) = find_tenant_by_stripe_customer(pool, &customer_id)
+        .await
+        .map_err(|e| e.to_string())?
+    else {
+        // No GovAI tenant mapped to this Stripe customer yet — not an error for the webhook.
+        return Ok(());
+    };
+    let inv_status = if paid { "paid" } else { "failed" };
+    sqlx::query(
+        r#"
+        update public.tenant_billing_accounts
+        set billing_invoice_status = $2,
+            subscription_status = case when $3 = true then subscription_status else 'past_due' end,
+            updated_at = now()
+        where tenant_id = $1
+        "#,
+    )
+    .bind(&tenant_id)
+    .bind(inv_status)
+    .bind(paid)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Side effects after a verified Stripe event is first persisted (idempotent at event id level).
+pub async fn process_stripe_webhook(pool: &DbPool, event: &Value) -> Result<(), String> {
+    let typ = jstr(event, &["type"]).ok_or_else(|| "missing type".to_string())?;
+    let obj = event
+        .get("data")
+        .and_then(|d| d.get("object"))
+        .ok_or_else(|| "missing data.object".to_string())?;
+    match typ.as_str() {
+        "checkout.session.completed" => process_checkout_session_completed(pool, obj).await,
+        "customer.subscription.created" | "customer.subscription.updated" => {
+            process_subscription_object(pool, obj, false).await
+        }
+        "customer.subscription.deleted" => process_subscription_object(pool, obj, true).await,
+        "invoice.paid" => process_invoice(pool, obj, true).await,
+        "invoice.payment_failed" => process_invoice(pool, obj, false).await,
+        _ => Ok(()),
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct TenantBillingStatusJson {
+    pub tenant_id: String,
+    pub stripe_customer_id: Option<String>,
+    pub stripe_subscription_id: Option<String>,
+    pub stripe_subscription_item_id: Option<String>,
+    pub subscription_status: String,
+    pub current_period_start: Option<String>,
+    pub current_period_end: Option<String>,
+}
+
+pub async fn billing_status_for_tenant(
+    pool: &DbPool,
+    tenant_id: &str,
+) -> Result<TenantBillingStatusJson, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        select stripe_customer_id, stripe_subscription_id, stripe_subscription_item_id,
+               subscription_status, current_period_start, current_period_end
+        from public.tenant_billing_accounts
+        where tenant_id = $1
+        "#,
+    )
+    .bind(tenant_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some(r) = row else {
+        return Ok(TenantBillingStatusJson {
+            tenant_id: tenant_id.to_string(),
+            stripe_customer_id: None,
+            stripe_subscription_id: None,
+            stripe_subscription_item_id: None,
+            subscription_status: "none".into(),
+            current_period_start: None,
+            current_period_end: None,
+        });
+    };
+    Ok(TenantBillingStatusJson {
+        tenant_id: tenant_id.to_string(),
+        stripe_customer_id: r.try_get::<Option<String>, _>("stripe_customer_id").ok().flatten(),
+        stripe_subscription_id: r.try_get::<Option<String>, _>("stripe_subscription_id").ok().flatten(),
+        stripe_subscription_item_id: r
+            .try_get::<Option<String>, _>("stripe_subscription_item_id")
+            .ok()
+            .flatten(),
+        subscription_status: r
+            .try_get::<String, _>("subscription_status")
+            .unwrap_or_else(|_| "none".into()),
+        current_period_start: r
+            .try_get::<Option<DateTime<Utc>>, _>("current_period_start")
+            .ok()
+            .flatten()
+            .map(|d| d.to_rfc3339()),
+        current_period_end: r
+            .try_get::<Option<DateTime<Utc>>, _>("current_period_end")
+            .ok()
+            .flatten()
+            .map(|d| d.to_rfc3339()),
+    })
+}
+
+/// Stripe Checkout Session (subscription mode). Returns (session_id, checkout_url).
+pub async fn stripe_create_checkout_session(
+    secret_key: &str,
+    price_id: &str,
+    success_url: &str,
+    cancel_url: &str,
+    tenant_id: &str,
+) -> Result<(String, String), String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    // Keys use Stripe bracket notation; encode values only.
+    let body = format!(
+        "mode=subscription&success_url={}&cancel_url={}&client_reference_id={}&metadata[tenant_id]={}&subscription_data[metadata][tenant_id]={}&line_items[0][price]={}&line_items[0][quantity]=1",
+        enc_val(success_url),
+        enc_val(cancel_url),
+        enc_val(tenant_id),
+        enc_val(tenant_id),
+        enc_val(tenant_id),
+        enc_val(price_id),
+    );
+    let resp = client
+        .post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(secret_key, Some(""))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("stripe http: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("stripe checkout error {status}: {text}"));
+    }
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("stripe json: {e}"))?;
+    let id = jstr(&v, &["id"]).ok_or_else(|| format!("stripe response missing id: {text}"))?;
+    let url = jstr(&v, &["url"]).ok_or_else(|| format!("stripe response missing url: {text}"))?;
+    Ok((id, url))
+}
+
+/// POST usage record; returns usage record id from Stripe.
+pub async fn stripe_create_usage_record(
+    secret_key: &str,
+    subscription_item_id: &str,
+    quantity: i64,
+) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let body = format!("quantity={}&action=set", enc_val(&quantity.to_string()));
+    let url = format!(
+        "https://api.stripe.com/v1/subscription_items/{subscription_item_id}/usage_records"
+    );
+    let resp = client
+        .post(&url)
+        .basic_auth(secret_key, Some(""))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("stripe http: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("stripe usage_record error {status}: {text}"));
+    }
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("stripe json: {e}"))?;
+    jstr(&v, &["id"]).ok_or_else(|| format!("stripe usage_record missing id: {text}"))
+}
+
+/// Current billing window: subscription period if known, else UTC calendar month-to-date.
+pub async fn resolve_usage_period_for_tenant(
+    pool: &DbPool,
+    tenant_id: &str,
+) -> Result<(DateTime<Utc>, DateTime<Utc>), sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        select current_period_start, current_period_end
+        from public.tenant_billing_accounts
+        where tenant_id = $1
+        "#,
+    )
+    .bind(tenant_id)
+    .fetch_optional(pool)
+    .await?;
+    let now = Utc::now();
+    if let Some(r) = row {
+        let cps: Option<DateTime<Utc>> = r.try_get("current_period_start").ok().flatten();
+        let cpe: Option<DateTime<Utc>> = r.try_get("current_period_end").ok().flatten();
+        if let (Some(start), Some(end)) = (cps, cpe) {
+            if start < end {
+                return Ok((start, end));
+            }
+        }
+    }
+    let month_start = Utc
+        .with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
+        .single()
+        .unwrap_or(now);
+    Ok((month_start, now))
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ReportUsageOutcome {
+    pub idempotent_hit: bool,
+    pub report_id: Option<uuid::Uuid>,
+    pub quantity: i64,
+    pub period_start: String,
+    pub period_end: String,
+    pub status: String,
+    pub stripe_usage_record_id: Option<String>,
+}
+
+/// Idempotent usage report + optional Stripe metered push.
+pub async fn report_usage_for_tenant(
+    pool: &DbPool,
+    tenant_id: &str,
+    billing_unit: &str,
+) -> Result<ReportUsageOutcome, String> {
+    let (period_start, period_end) = resolve_usage_period_for_tenant(pool, tenant_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let qty = billing_trace::count_units_for_tenant(pool, tenant_id, billing_unit, period_start, period_end)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let item_id: Option<String> = sqlx::query_scalar(
+        r#"select stripe_subscription_item_id from public.tenant_billing_accounts where tenant_id = $1"#,
+    )
+    .bind(tenant_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .flatten();
+
+    let new_report_id: Option<uuid::Uuid> = sqlx::query_scalar(
+        r#"
+        insert into public.billing_usage_reports
+          (tenant_id, billing_unit, quantity, period_start, period_end, stripe_subscription_item_id, status, updated_at)
+        values ($1, $2, $3, $4, $5, $6, 'pending', now())
+        on conflict (tenant_id, billing_unit, period_start, period_end) do nothing
+        returning id
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(billing_unit)
+    .bind(qty)
+    .bind(period_start)
+    .bind(period_end)
+    .bind(item_id.as_deref())
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if new_report_id.is_none() {
+        let row = sqlx::query(
+            r#"
+            select id, status, stripe_usage_record_id, quantity
+            from public.billing_usage_reports
+            where tenant_id = $1 and billing_unit = $2 and period_start = $3 and period_end = $4
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(billing_unit)
+        .bind(period_start)
+        .bind(period_end)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let rid: uuid::Uuid = row.try_get::<uuid::Uuid, _>("id").map_err(|e| e.to_string())?;
+        let status: String = row.try_get("status").map_err(|e| e.to_string())?;
+        let sur: Option<String> = row.try_get("stripe_usage_record_id").unwrap_or(None);
+        let stored_qty: i64 = row.try_get("quantity").unwrap_or(qty);
+        return Ok(ReportUsageOutcome {
+            idempotent_hit: true,
+            report_id: Some(rid),
+            quantity: stored_qty,
+            period_start: period_start.to_rfc3339(),
+            period_end: period_end.to_rfc3339(),
+            status,
+            stripe_usage_record_id: sur,
+        });
+    }
+
+    let rid = new_report_id.unwrap();
+
+    if let Some(ref sid) = item_id {
+        let secret = stripe_secret_key()?;
+        match stripe_create_usage_record(&secret, sid, qty).await {
+            Ok(usage_id) => {
+                sqlx::query(
+                    r#"
+                    update public.billing_usage_reports
+                    set status = 'reported', stripe_usage_record_id = $2, last_error = null, updated_at = now()
+                    where id = $1
+                    "#,
+                )
+                .bind(rid)
+                .bind(&usage_id)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                return Ok(ReportUsageOutcome {
+                    idempotent_hit: false,
+                    report_id: Some(rid),
+                    quantity: qty,
+                    period_start: period_start.to_rfc3339(),
+                    period_end: period_end.to_rfc3339(),
+                    status: "reported".into(),
+                    stripe_usage_record_id: Some(usage_id),
+                });
+            }
+            Err(e) => {
+                sqlx::query(
+                    r#"
+                    update public.billing_usage_reports
+                    set status = 'failed', last_error = $2, updated_at = now()
+                    where id = $1
+                    "#,
+                )
+                .bind(rid)
+                .bind(&e)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                return Err(e);
+            }
+        }
+    }
+
+    sqlx::query(
+        r#"
+        update public.billing_usage_reports
+        set status = 'recorded_local', last_error = 'no stripe_subscription_item_id on tenant', updated_at = now()
+        where id = $1
+        "#,
+    )
+    .bind(rid)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(ReportUsageOutcome {
+        idempotent_hit: false,
+        report_id: Some(rid),
+        quantity: qty,
+        period_start: period_start.to_rfc3339(),
+        period_end: period_end.to_rfc3339(),
+        status: "recorded_local".into(),
+        stripe_usage_record_id: None,
+    })
+}
