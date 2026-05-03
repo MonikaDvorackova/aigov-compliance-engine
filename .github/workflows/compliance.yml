@@ -235,6 +235,9 @@ jobs:
       run_id: ${{ steps.govai_emit_run_id.outputs.run_id }}
     env:
       AUDIT_URL: http://127.0.0.1:8088
+      GOVAI_AUDIT_BASE_URL: http://127.0.0.1:8088
+      GOVAI_API_KEY: ci-test-api-key
+      GOVAI_PROJECT: github-actions
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
       GOVAI_AUTO_MIGRATE: "true"
       BASE_SHA: ${{ needs.changes.outputs.base_sha }}
@@ -428,6 +431,16 @@ jobs:
             echo ""
           }
 
+          assert_real_ci_evidence () {
+            local rid="$1"
+            (
+              cd python
+              . .venv/bin/activate
+              cd "${GITHUB_WORKSPACE}"
+              python -m aigov_py.assert_ci_evidence_bundle "${rid}"
+            )
+          }
+
           post_local_ev () {
             local name="$1"
             local body="$2"
@@ -512,6 +525,7 @@ jobs:
             make promote RUN_ID="${RUN_ID}"
 
             make report_prepare RUN_ID="${RUN_ID}"
+            assert_real_ci_evidence "${RUN_ID}"
             make evidence_pack RUN_ID="${RUN_ID}"
 
             cp "docs/reports/${RUN_ID}.md" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
@@ -526,8 +540,8 @@ jobs:
               --run-id "${RUN_ID}" \
               --out-dir "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" \
               --audit-url "${AUDIT_URL}" \
-              --api-key "ci-test-api-key" \
-              --project "github-actions"
+              --api-key "${GOVAI_API_KEY:-ci-test-api-key}" \
+              --project "${GOVAI_PROJECT:-github-actions}"
 
             exit 0
           fi
@@ -563,6 +577,7 @@ jobs:
             make promote RUN_ID="${RUN_ID}"
 
             make report_prepare RUN_ID="${RUN_ID}"
+            assert_real_ci_evidence "${RUN_ID}"
             make evidence_pack RUN_ID="${RUN_ID}"
 
             cp "docs/reports/${RUN_ID}.md" "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/" || true
@@ -577,8 +592,8 @@ jobs:
               --run-id "${RUN_ID}" \
               --out-dir "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" \
               --audit-url "${AUDIT_URL}" \
-              --api-key "ci-test-api-key" \
-              --project "github-actions"
+              --api-key "${GOVAI_API_KEY:-ci-test-api-key}" \
+              --project "${GOVAI_PROJECT:-github-actions}"
           done
 
       - name: GovAI check (local audit, must be VALID)

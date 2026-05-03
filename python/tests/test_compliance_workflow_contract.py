@@ -75,6 +75,35 @@ def test_govai_emit_run_id_appends_github_workflow_identity() -> None:
     assert 'cp "docs/reports/${REPORT_BASENAME}.md" "docs/reports/${RUN_ID}.md"' in text
 
 
+def test_evidence_pack_job_exports_govai_auth_for_bundle_fetch() -> None:
+    text = _compliance_yml()
+    idx = text.index("  evidence_pack:")
+    block = text[idx : idx + 9000]
+    assert "GOVAI_API_KEY: ci-test-api-key" in block
+    assert "GOVAI_AUDIT_BASE_URL: http://127.0.0.1:8088" in block
+
+
+def test_evidence_pack_rejects_fallback_only_before_evidence_pack() -> None:
+    text = _compliance_yml()
+    assert "assert_real_ci_evidence" in text
+    assert "python -m aigov_py.assert_ci_evidence_bundle" in text
+
+
+def test_release_promotion_evidence_path_posts_ai_discovery() -> None:
+    text = _compliance_yml()
+    rp = text.index('if [[ "${EMITTED_RUN_ID}" == release-promotion-* ]]; then')
+    seg = text[rp : rp + 2200]
+    assert 'post_local_ev "ai_discovery_reported"' in seg
+    assert "assert_real_ci_evidence" in seg
+    assert "make evidence_pack RUN_ID=" in seg
+
+
+def test_release_promotion_emit_run_id_stays_unique_per_workflow_run() -> None:
+    lines = _compliance_yml().splitlines()
+    body = _workflow_job_declaration_body(lines, "evidence_pack")
+    assert "echo \"run_id=release-promotion-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\"" in body
+
+
 def test_compliance_pull_request_trigger_has_no_activity_types_filter() -> None:
     """A narrow `types:` list can skip runs so the PR head SHA never gets required check-runs."""
     text = _compliance_yml()

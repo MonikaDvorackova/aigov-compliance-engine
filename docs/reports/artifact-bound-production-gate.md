@@ -52,6 +52,7 @@ Synthetic replay (**`govai-check.yml`** style **or legacy hosted curl blocks**) 
 - **Policy skew**: tier differences (**dev CI** ingest vs hosted **prod**) can reject otherwise identical payloads; failure is surfaced as ingestion / verdict errors (**not masked**).
 - **Digest scope**: portability intentionally hashes evidence **excluding** **`environment`**; it does **not** replace **`bundle_sha256`** for bundle documents that intentionally bind **`policy_version`** and **`log_path`**.
 - **Trust boundary**: artefacts are GitHub artefacts; compromise of **`evidence_digest_manifest.json`** or bundle JSON between jobs invalidates continuity — mitigated by guarded paths + strict missing-file failures.
+- **Release promotion (`staging` → `main`)**: uses synthetic **`release-promotion-<run>-<attempt>`** ids; **`make report_prepare`** must sync **`docs/evidence/<run_id>.json`** from the local audit ledger via **`fetch_bundle_from_govai`** (with the same **`GOVAI_API_KEY` / `AUDIT_URL`** as **`POST /evidence`**). CI asserts the bundle is not **`ci_fallback_only`** before **`make evidence_pack`** so the hosted digest gate matches a full lifecycle.
 
 ---
 
