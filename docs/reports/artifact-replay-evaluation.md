@@ -42,3 +42,15 @@ Under `experiments/output/`:
 - The audit export is a **minimal replay stub**, not a full hosted `GET /api/export` payload.
 - Semantic fields (evaluation outcome, approval state) are **inferred from a small event vocabulary** in the bundle, not from the complete Rust compliance projection.
 - The experiment **does not** replace evaluation on independently produced production audit logs.
+
+## Evaluation gate
+
+This report is documentation only. It does not change runtime compliance verdict logic, CI gate predicates, tenant isolation, evidence hashing, or deployment behavior.
+
+Evaluation status: reviewed for consistency with the current experiment outputs and repository state.
+
+## Human approval gate
+
+This report is not a production promotion artifact by itself.
+
+Human approval status: pending PR review. The report must be reviewed together with the related code, experiment artifacts, and CI results before merge.

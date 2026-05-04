@@ -38,3 +38,15 @@ Running `python experiments/repository_prevalence_check.py` writes `experiments/
 - **Non-random sample**; counts are **illustrative**, not population prevalence.
 - Codings can become **stale** as repositories evolve; the committed snapshot is frozen until manually updated.
 - Signals are **coarse**; two coders might disagree on edge cases—inter-rater review is not automated here.
+
+## Evaluation gate
+
+This report is documentation only. It does not change runtime compliance verdict logic, CI gate predicates, tenant isolation, evidence hashing, or deployment behavior.
+
+Evaluation status: reviewed for consistency with the current experiment outputs and repository state.
+
+## Human approval gate
+
+This report is not a production promotion artifact by itself.
+
+Human approval status: pending PR review. The report must be reviewed together with the related code, experiment artifacts, and CI results before merge.

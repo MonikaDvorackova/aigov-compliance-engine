@@ -90,3 +90,15 @@ govai experiment controlled-failure-injection --output experiments/output
 - **Closed boolean / scalar field model** abstracts real artefact manifests and cryptographic checks; digest and artifact fields are **observables**, not recomputed from raw bytes in this harness.
 - **Rubric is the oracle** for expected `VALID` / `INVALID` / `BLOCKED`; the experiment measures **agreement with that published policy**, not independent real-world labels.
 - Intended for **systems-methodology illustration**, not regulated certification evidence.
+
+## Evaluation gate
+
+This report is documentation only. It does not change runtime compliance verdict logic, CI gate predicates, tenant isolation, evidence hashing, or deployment behavior.
+
+Evaluation status: reviewed for consistency with the current experiment outputs and repository state.
+
+## Human approval gate
+
+This report is not a production promotion artifact by itself.
+
+Human approval status: pending PR review. The report must be reviewed together with the related code, experiment artifacts, and CI results before merge.
