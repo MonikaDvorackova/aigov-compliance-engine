@@ -18,6 +18,7 @@ GovAI:
 - returns a deterministic compliance decision via `GET /compliance-summary`
 - supports CI gating by failing unless verdict is `VALID`
 - exports machine-readable audit evidence via `GET /api/export/:run_id`
+- optional **hosted Stripe billing** (operator-configured): Checkout, signed **`POST /stripe/webhook`** processing, **`GET /billing/status`**, Customer Portal session, invoice listing, usage reporting to Stripe, reconciliation data, and optional subscription enforcement via `GOVAI_BILLING_ENFORCEMENT` — see **[billing.md](billing.md)**.
 
 GovAI does **not** generate missing evidence and is **not** a legal certification.
 
@@ -40,7 +41,7 @@ GovAI does **not** generate missing evidence and is **not** a legal certificatio
 - **Customer onboarding (hosted, ~10 minutes — canonical)**: [customer-onboarding-10min.md](customer-onboarding-10min.md)
 - **Legacy quickstart (HTTP-first / older flow)**: [customer-quickstart.md](customer-quickstart.md)
 
-Pricing for the pilot is agreed directly (no self-serve checkout or automated billing in this repo).
+Pilot packaging and limits are still often agreed with the operator; **self-serve product signup** is not the full story yet. Where Stripe is enabled, billing automation follows **[billing.md](billing.md)** (Checkout, webhooks, usage reporting, optional enforcement).
 
 ## Quickstart links
 
@@ -66,6 +67,7 @@ Pricing for the pilot is agreed directly (no self-serve checkout or automated bi
 
 ## More docs
 
+- [billing.md](billing.md) (Stripe + hosted billing)
 - [common-errors.md](common-errors.md)
 - [policy-contract.md](policy-contract.md)
 - [technical-documentation.md](technical-documentation.md)

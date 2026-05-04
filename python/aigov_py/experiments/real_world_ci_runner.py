@@ -78,7 +78,7 @@ def govai_pip_install_snippet() -> str:
             f"@{git_sha}#subdirectory=python"
         )
         return f'python -m pip install --upgrade pip\npip install "{url}"'
-    return "python -m pip install --upgrade pip\npip install aigov-py==0.2.0"
+    return "python -m pip install --upgrade pip\npip install aigov-py==0.2.1"
 
 
 def _require_env() -> None:

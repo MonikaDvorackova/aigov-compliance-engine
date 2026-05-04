@@ -5,8 +5,9 @@ This runbook makes the hosted-pilot path repeatable enough for teaching pilots (
 It assumes **hosted pilots with manual or semi-automated onboarding**:
 
 - no self-serve signup yet
-- no billing yet
 - the operator must provide a hosted URL and API key
+
+**Stripe billing (optional):** if you charge via Stripe, configure the checklist below and read **[billing.md](billing.md)** end-to-end.
 
 ---
 
@@ -18,6 +19,16 @@ It assumes **hosted pilots with manual or semi-automated onboarding**:
   - Plain Postgres providers (for example Railway) are supported; you do not need to manually create `auth` schema or `auth.users`.
 
 Reference: `docs/hosted-backend-deployment.md`.
+
+### Stripe operator checklist (when billing is enabled)
+
+- **`GOVAI_STRIPE_SECRET_KEY`** — Stripe secret key (test or live) for Checkout, portal, invoices, and metered usage API calls.
+- **`GOVAI_STRIPE_WEBHOOK_SECRET`** — signing secret from the Stripe Dashboard (or `stripe listen`); required for **`POST /stripe/webhook`**.
+- **Webhook URL** — `https://<audit-host>/stripe/webhook` with the event types listed in **[billing.md](billing.md)**.
+- **Price IDs ↔ billing units** — set `GOVAI_STRIPE_PRICE_*` env vars (per unit) as documented in **[billing.md](billing.md)** so subscription line items map to GovAI units.
+- **`GOVAI_BILLING_ENFORCEMENT`** — `off` (default) or `on` (`1` / `true` / `yes` / `on`) to gate billable hosted routes on an active/trialing subscription row.
+
+Full behaviour, endpoints, and limitations: **[billing.md](billing.md)**.
 
 ---
 
