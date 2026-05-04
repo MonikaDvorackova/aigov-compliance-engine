@@ -81,3 +81,29 @@ Commands run locally:
 - Stripe **usage records** require compatible metered prices on subscription items.
 - Attribution coverage starts from deployment of this version forward unless backfilled.
 - Process-wide `GOVAI_API_KEYS_JSON` init: run billing integration tests with `--test-threads=1` if other tests conflict in one process.
+
+## Evaluation gate
+
+Verification performed for this change:
+
+- `cd rust && cargo test -q`
+- `cd python && python -m pytest -q`
+
+Expected result:
+
+- Rust library and integration tests pass.
+- Python tests pass.
+- Billing product tests cover Stripe billing units, usage reporting, invoices, portal session behavior, reconciliation, and enforcement behavior.
+
+## Human approval gate
+
+This change must be reviewed before merge because it modifies hosted billing, customer-facing billing flows, tenant-scoped billing state, usage attribution, and dashboard billing UX.
+
+Required reviewer checks:
+
+- Billing remains tenant-scoped by ledger tenant identity.
+- Stripe customer, subscription, and subscription item mappings cannot cross tenant boundaries.
+- Usage reporting is idempotent per tenant, billing unit, and billing period.
+- Billing portal and invoice endpoints do not expose another tenant's Stripe data.
+- Billing enforcement does not block health, readiness, webhook, checkout, status, or portal bootstrap paths.
+- Customer documentation does not claim unavailable decision-runtime endpoints.
