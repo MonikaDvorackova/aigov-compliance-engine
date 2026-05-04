@@ -33,6 +33,9 @@ AUDIT_PORT ?= 8088
 AUDIT_PIDFILE ?= .aigov_audit.pid
 AUDIT_LOG ?= .aigov_audit.log
 
+# Explicit binary: this crate ships multiple `[[bin]]` targets; `cargo run` without `--bin` fails.
+AIGOV_AUDIT_BIN ?= aigov_audit
+
 # ================================
 # Env debug
 # ================================
@@ -53,7 +56,7 @@ gate:
 # ================================
 
 audit:
-	cd rust && cargo run
+	cd rust && cargo run --bin $(AIGOV_AUDIT_BIN) --locked
 
 audit_bg:
 	@set -euo pipefail; \
@@ -66,19 +69,21 @@ audit_bg:
 		echo "port $(AUDIT_PORT) already in use by: $$PIDS"; \
 		exit 2; \
 	fi; \
-	echo "starting aigov_audit in background on $(AUDIT_URL)"; \
+	echo "building $(AIGOV_AUDIT_BIN) ($(CURDIR)/rust) ..."; \
+	cd rust && cargo build --bin $(AIGOV_AUDIT_BIN) --locked; \
+	echo "starting $(AIGOV_AUDIT_BIN) in background on $(AUDIT_URL)"; \
 	echo "log: $(AUDIT_LOG)"; \
 	: > "$(AUDIT_LOG)"; \
-	nohup bash -lc 'cd rust && GOVAI_AUTO_MIGRATE=true cargo run' >>"$(AUDIT_LOG)" 2>&1 & echo $$! >"$(AUDIT_PIDFILE)"; \
-	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do \
+	nohup env GOVAI_AUTO_MIGRATE=true bash -lc "cd '$(CURDIR)/rust' && exec ./target/debug/$(AIGOV_AUDIT_BIN)" >>"$(AUDIT_LOG)" 2>&1 & echo $$! >"$(AUDIT_PIDFILE)"; \
+	for i in $$(seq 1 60); do \
 		if curl -fsS --max-time 1 "$(AUDIT_URL)/ready" >/dev/null 2>&1; then \
 			echo "ready (GET /ready) on $(AUDIT_URL)"; \
 			exit 0; \
 		fi; \
 		sleep 0.5; \
 	done; \
-	echo "start failed, last log lines:"; \
-	tail -n 120 "$(AUDIT_LOG)" || true; \
+	echo "start failed, tail $(AUDIT_LOG):"; \
+	tail -n 200 "$(AUDIT_LOG)" || true; \
 	exit 1
 
 audit_stop:
