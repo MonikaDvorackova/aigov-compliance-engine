@@ -4,8 +4,6 @@ This report documents an **illustrative, offline prevalence-style summary** over
 
 Signals are encoded as **deterministic offline manual coding** in the experiment script: **no network access**, reproducible CSV/JSON/LaTeX outputs. The sample is **not statistically representative**, **not exhaustive**, and makes **no inference** to all open-source ML practice.
 
-Field-level definitions and **True/False** rules for each signal are written in the transparent coding rubric: [`repository-prevalence-coding-rubric.md`](repository-prevalence-coding-rubric.md).
-
 Run `experiments/repository_prevalence_check.py` from the repo root to regenerate artefacts. **No Rust, API/backend, or CI workflow changes** are involved; results have **no production impact**.
 
 ## Evaluation gate
@@ -42,11 +40,9 @@ The curated rows include **`explicit_approval_gate_present`** as one decision-fa
 Paths relative to repo root:
 
 - `experiments/output/repository_prevalence_repos.csv`
-- `experiments/output/repository_prevalence_by_repo.csv` (same rows as `repos.csv`; per-repository table for paper appendices)
 - `experiments/output/repository_prevalence_repos.json`
 - `experiments/output/repository_prevalence_summary.csv`
 - `experiments/output/repository_prevalence_table.tex` (Signal / Repositories / Rate; mean score uses `---` in the repositories column)
-- `experiments/output/repository_prevalence_repro.json` (generation metadata and rubric pointer)
 
 Regenerate (**offline**):
 
