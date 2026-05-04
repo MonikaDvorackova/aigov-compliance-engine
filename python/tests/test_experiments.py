@@ -113,7 +113,7 @@ def test_rwci_runner_parse_verdict() -> None:
 def test_rwci_runner_govai_workflow_pinned_and_has_check() -> None:
     yml = rwci_runner_mod.govai_audit_workflow_yaml("missing_evidence")
     assert "GovAI Audit Injection" in yml
-    assert "pip install aigov-py==0.2.0" in yml
+    assert "pip install aigov-py==0.2.1" in yml
     assert "govai check" in yml
     assert "emit_scenario.py" in yml
     assert "pip install aigov-py\n" not in yml
@@ -131,7 +131,7 @@ def test_rwci_pip_snippet_default_version(monkeypatch) -> None:
     monkeypatch.delenv("RWCI_GOVAI_PIP_SPEC", raising=False)
     monkeypatch.delenv("RWCI_AIGOV_GIT_COMMIT", raising=False)
     s = rwci_runner_mod.govai_pip_install_snippet()
-    assert "aigov-py==0.2.0" in s
+    assert "aigov-py==0.2.1" in s
 
 
 def test_rwci_pip_snippet_git_option(monkeypatch) -> None:

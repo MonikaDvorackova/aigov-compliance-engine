@@ -31,7 +31,7 @@ inputs:
     description: >-
       When true, pass --require-export to verify-evidence-pack (fail if /api/export cross-check is unavailable).
     required: false
-    default: "false"
+    default: "true"
 
 runs:
   using: "composite"
