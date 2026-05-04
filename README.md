@@ -79,9 +79,9 @@ Non-guarantees:
 
 See docs/pilot-onboarding.md for private pilot setup.
 
-**Indicative tiers** (no self-service checkout or automated billing on this site):
+**Indicative tiers** (no self-service checkout UI on this site; minimal Stripe webhook + usage trace APIs exist — see `docs/billing.md`):
 
-- **Free — €0:** local testing and evaluation, limited runs, PyPI CLI (`aigov-py==0.2.0`), audit evidence export.
+- **Free — €0:** local testing and evaluation, limited runs, PyPI CLI (`aigov-py==0.2.1`), audit evidence export.
 - **Pro — €199/month:** production CI, higher run/event limits, GitHub Action, hosted audit endpoint, standard support.
 - **Enterprise — Custom:** regulated or larger teams, custom limits, self-hosted or dedicated deployment, SSO/access control where supported, audit and procurement support.
 
@@ -91,10 +91,10 @@ VALID:
 All required evidence present. Deployment allowed.
 
 INVALID:  
-Evidence present but fails policy. Deployment rejected.
+Server verdict when **evaluation explicitly failed** (`evaluation_passed == false`). Deployment rejected.
 
 BLOCKED:  
-Not eligible for promotion. Deployment halted.
+Not eligible for promotion: **missing required evidence**, **missing risk/human approval**, **not yet promoted**, or other prerequisites (digest/export/trace) not satisfied. Deployment halted.
 
 `BLOCKED` can occur when required evidence is missing **or** when approval/promotion prerequisites are not satisfied (in that case `missing_evidence` can be `[]`; see `blocked_reasons`).
 
@@ -104,7 +104,7 @@ Not eligible for promotion. Deployment halted.
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.2.0"
+python -m pip install "aigov-py==0.2.1"
 ```
 
 **Repository contributors** (editable install from a clone of this repo):
@@ -127,6 +127,9 @@ Quickstarts:
 - `docs/quickstart-5min.md` (local demo)
 - `docs/customer-quickstart.md` (legacy customer / CI quickstart)
 - `docs/pilot-onboarding.md` (private pilot onboarding)
+- `docs/billing.md` (minimal Stripe webhook + usage summary)
+- `docs/product/differentiation.md` (GovAI as **decision enforcement** vs supply-chain attestation)
+- `docs/product/examples/runtime_gate_service.py` (non-CI runtime gate calling `POST /decision/evaluate`)
 
 ## Hosted pilot prerequisites
 
@@ -140,6 +143,8 @@ Repeatable operator + customer steps (pilot runbook):
 
 - `docs/hosted-pilot-runbook.md`
 
+**Runtime policy compatibility (optional):** set `GOVAI_POLICY_STRICTNESS` to `strict` (default), `warning`, or `soft_block`. This adjusts **`policy_compatibility`** hints on `POST /decision/evaluate`; it does **not** silently weaken INVALID or change verdict strings.
+
 Minimum hosted-pilot path (what must exist before a new pilot user can reach `VALID`):
 
 - **How a pilot user gets `base_url`**: the operator provides a hosted HTTPS audit API base URL (the GovAI audit service), for example `https://audit.example.com`.
@@ -152,7 +157,7 @@ Minimum hosted-pilot path (what must exist before a new pilot user can reach `VA
 
 ## Canonical flow (discovery → requirements → BLOCKED → evidence → VALID → export → CI)
 
-GovAI is designed around **one evidence run id** (`run_id`) and **one authoritative decision endpoint** (`GET /compliance-summary`).
+GovAI is designed around **one evidence run id** (`run_id`) and **one authoritative decision projection** (same engine for `GET /compliance-summary` and **`POST /decision/evaluate`**). Prefer **`POST /decision/evaluate`** for **runtime** enforcement paths (services, gateways); use CI gates when you also need artefact-bound digests.
 
 Canonical customer flow:
 
@@ -217,7 +222,7 @@ Because:
 
 Non-happy paths:
 
-- INVALID → evaluation or risk conditions not met
+- INVALID → evaluation explicitly failed
 - BLOCKED → not eligible for promotion (missing evidence and/or missing approval/promotion prerequisites)
 
 ## CI Integration
@@ -258,7 +263,7 @@ To validate your setup before relying on the CI gate, run the hosted determinist
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.2.0"
+python -m pip install "aigov-py==0.2.1"
 
 export GOVAI_AUDIT_BASE_URL="https://<your GovAI audit API base URL>"
 export GOVAI_API_KEY="YOUR_API_KEY"
