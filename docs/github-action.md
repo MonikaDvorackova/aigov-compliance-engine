@@ -7,6 +7,8 @@ This repository publishes a reusable **composite GitHub Action** that installs t
 
 **PyPI pin:** the install pin **must** match `version` in `python/pyproject.toml` for the tag you use; drift breaks CI vs local reproducibility.
 
+**Export cross-check (`require_export`):** the composite action defaults **`require_export`** to **`true`**, so **`verify-evidence-pack`** runs with **`--require-export`**. That is part of the **full audit guarantee** in CI: hosted **`GET /api/export/:run_id`** must be available and consistent with the digest chain, not only **`GET /compliance-summary`**. Set **`require_export: false`** only when you explicitly accept a weaker gate.
+
 **Ledger tenant vs `X-GovAI-Project`:** ledger isolation is derived **only** from the API key (`GOVAI_API_KEYS_JSON`). The `project` input sets **`X-GovAI-Project`** for optional metadata / usage labels; it **does not** isolate ledger data.
 
 A green job using **this action** therefore means CI artefacts were anchored by digest on the ledger and evaluated as **`VALID`** — **not** merely that the hosted API accepted an ad-hoc or synthetic submission.

@@ -152,7 +152,7 @@ Minimum hosted-pilot path (what must exist before a new pilot user can reach `VA
 - **How a pilot user creates/receives `run_id`**: the pilot user generates a UUID (or the operator provides one). The same `run_id` must be reused for evidence submission, the CI gate, and export.
 - **How evidence is submitted**: evidence events are appended to the hosted audit service via `POST /evidence` (either via `govai run demo-deterministic` for onboarding, or via your CI/app pipeline emitting evidence events).
 - **How the run reaches `VALID`**: the run transitions `BLOCKED → VALID` only after all required evidence is appended for the same `run_id` and policy rules pass; the authoritative source is `GET /compliance-summary`.
-- **How CI gate checks `VALID`**: the GitHub Action runs `govai check`, which calls `GET /compliance-summary` and passes only when the server returns `VALID`.
+- **How CI gate checks `VALID`**: the **published composite GitHub Action** (root `action.yml`) runs **`govai submit-evidence-pack`** then **`govai verify-evidence-pack`** (digest continuity via hosted **`GET /bundle-hash`**, then **`GET /compliance-summary`** for a **`VALID`** verdict). By default it passes **`--require-export`** so **`GET /api/export/:run_id`** must cross-check unless callers set **`require_export: false`**. See **`docs/github-action.md`**.
 
 ## Canonical flow (discovery → requirements → BLOCKED → evidence → VALID → export → CI)
 
@@ -166,7 +166,7 @@ Canonical customer flow:
 4. **The customer submits the missing evidence** for the same `run_id` (additional events are appended via `POST /evidence`).
 5. **The run becomes `VALID`** once the required evidence is present and policy rules pass (the authoritative source is still `GET /compliance-summary`).
 6. **The customer exports audit JSON** for archiving and review (`govai export-run` or `GET /api/export/<run_id>`).
-7. **The CI gate passes only on `VALID`** (`govai check` exits 0 only when the server verdict is `VALID`; otherwise it fails the job).
+7. **The CI gate passes only on `VALID`** for the artefact-bound path above (verify exit **`0`** only when digest + export rules (if required) + verdict **`VALID`**). For a **lighter** readout without digest/export binding, **`govai check`** still calls **`GET /compliance-summary`** and exits non-zero unless the verdict is **`VALID`** — that is not the same guarantee as **`verify-evidence-pack`**.
 
 ## Why GovAI
 
@@ -226,7 +226,9 @@ Non-happy paths:
 
 ## CI Integration
 
-Use `govai check` to gate deployments. It does not compute compliance locally — it calls `GET /compliance-summary` and exits non-zero unless the server verdict is `VALID`.
+For **production** merges, prefer the **artefact-bound** path: **`submit-evidence-pack`** + **`verify-evidence-pack`** (as in **`docs/github-action.md`** and this repo’s **`compliance.yml`**), including export cross-check when **`require_export`** is left at its default **`true`** on the composite action.
+
+**`govai check`** is a **convenience readout**: it does not bind CI artefacts to the ledger digest; it calls **`GET /compliance-summary`** and exits non-zero unless the server verdict is **`VALID`**. Use it for quick checks or smoke, not as a substitute for **`verify-evidence-pack`** when you need cryptographic continuity to CI outputs.
 
 Use **one** GovAI evidence run id (`GOVAI_RUN_ID`) for every evidence submission, the gate, and export.
 

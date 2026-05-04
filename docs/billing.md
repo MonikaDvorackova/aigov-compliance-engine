@@ -74,7 +74,12 @@ Events that cannot be mapped (e.g. invoice for an unknown Stripe customer) **do 
    - Inserts **`billing_usage_reports`** with unique `(tenant_id, billing_unit, period_start, period_end)` — **idempotent** (second call returns `idempotent_hit: true`).
    - If `stripe_subscription_item_id` is set and `GOVAI_STRIPE_SECRET_KEY` is configured, posts a **usage record** (`action=set`) and stores `stripe_usage_record_id`.
    - If no subscription item id, status **`recorded_local`** (quantity stored only).
-   - On Stripe API failure: row **`failed`**, structured **502** `STRIPE_USAGE_REPORT_FAILED`; safe to retry.
+   - On Stripe API failure: row **`failed`**, structured **502** `STRIPE_USAGE_REPORT_FAILED`.
+
+**Retries and Stripe failures**
+
+- **Safe against duplicate charging:** repeating **`POST /billing/report-usage`** for the same tenant, unit, and billing window hits the same **`billing_usage_reports`** row (**idempotency**); it does **not** create a second row or a second metered push for that period by default.
+- **Not automatic recovery:** if the first attempt left the row in **`failed`**, a later retry returns the existing row (**`idempotent_hit: true`**) without automatically re-calling Stripe until you add an explicit operator or product recovery path (for example fixing config and clearing/advancing state). **Idempotency prevents double charge; it does not guarantee automatic completion** after an external Stripe outage or misconfiguration.
 
 ## Billing enforcement
 
