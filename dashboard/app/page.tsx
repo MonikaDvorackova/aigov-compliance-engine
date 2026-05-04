@@ -279,7 +279,7 @@ export default function Page() {
             Run AI compliance checks in CI
           </div>
           <div style={{ marginTop: 4, fontSize: 12.5, lineHeight: 1.45, color: "var(--govai-text-secondary)" }}>
-            Official package <span style={{ fontFamily: "ui-monospace, monospace" }}>aigov-py==0.2.0</span> on PyPI.
+            Official package <span style={{ fontFamily: "ui-monospace, monospace" }}>aigov-py==0.2.1</span> on PyPI.
             Production CI uses artefact-bound{" "}
             <span style={{ fontFamily: "ui-monospace, monospace" }}>submit-evidence-pack</span> +{" "}
             <span style={{ fontFamily: "ui-monospace, monospace" }}>verify-evidence-pack</span> (
@@ -287,7 +287,7 @@ export default function Page() {
           </div>
 
           <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-            <LandingCopyBlock label="Install" code={"pip install aigov-py==0.2.0"} />
+            <LandingCopyBlock label="Install" code={"pip install aigov-py==0.2.1"} />
             <LandingCopyBlock
               label="Quick usage (hosted gate)"
               code={[

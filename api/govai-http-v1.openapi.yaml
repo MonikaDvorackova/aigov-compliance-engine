@@ -67,6 +67,7 @@ servers:
 tags:
   - name: CoreMetadata
   - name: CoreLedger
+  - name: CoreBilling
   - name: Enterprise
 
 paths:
@@ -229,6 +230,146 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UsageError"
+
+  /billing/status:
+    get:
+      tags: [CoreBilling]
+      summary: Hosted Stripe billing status
+      operationId: getBillingStatus
+      x-govai-surface: stable
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Billing snapshot for ledger tenant from API key
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: Unauthorized
+
+  /billing/checkout-session:
+    post:
+      tags: [CoreBilling]
+      summary: Create Stripe Checkout session (subscription)
+      operationId: postBillingCheckoutSession
+      x-govai-surface: stable
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [success_url, cancel_url]
+              properties:
+                success_url:
+                  type: string
+                cancel_url:
+                  type: string
+      responses:
+        "200":
+          description: Checkout session created
+        "502":
+          description: Stripe error
+
+  /billing/report-usage:
+    post:
+      tags: [CoreBilling]
+      summary: Report metered usage to Stripe for current billing period
+      operationId: postBillingReportUsage
+      x-govai-surface: stable
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                billing_unit:
+                  type: string
+                  description: evidence_event (default), compliance_check, audit_export, discovery_scan
+      responses:
+        "200":
+          description: Usage recorded or idempotent hit
+
+  /billing/portal-session:
+    post:
+      tags: [CoreBilling]
+      summary: Create Stripe Billing Portal session
+      operationId: postBillingPortalSession
+      x-govai-surface: stable
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [return_url]
+              properties:
+                return_url:
+                  type: string
+      responses:
+        "200":
+          description: Portal URL returned
+        "404":
+          description: No Stripe customer (BILLING_ACCOUNT_NOT_FOUND)
+
+  /billing/invoices:
+    get:
+      tags: [CoreBilling]
+      summary: List recent Stripe invoices for tenant customer
+      operationId: getBillingInvoices
+      x-govai-surface: stable
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Invoice list
+
+  /billing/reconciliation:
+    get:
+      tags: [CoreBilling]
+      summary: Usage reconciliation with run-level attribution
+      operationId: getBillingReconciliation
+      x-govai-surface: stable
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: billing_unit
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Reconciliation payload
+
+  /stripe/webhook:
+    post:
+      tags: [CoreBilling]
+      summary: Stripe webhook receiver
+      operationId: postStripeWebhook
+      x-govai-surface: internal
+      security: []
+      responses:
+        "200":
+          description: Event accepted (or duplicate ignored)
 
   /verify:
     get:

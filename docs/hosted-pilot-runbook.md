@@ -127,7 +127,7 @@ This is the canonical proof that the hosted backend + key work.
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.1.1"
+python -m pip install "aigov-py==0.2.1"
 
 export GOVAI_AUDIT_BASE_URL="https://audit.example.com"
 export GOVAI_API_KEY="YOUR_API_KEY"

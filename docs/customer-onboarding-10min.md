@@ -17,7 +17,7 @@ This is the **canonical hosted-pilot onboarding** entry point. It assumes manual
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.1.1"
+python -m pip install "aigov-py==0.2.1"
 govai --version
 ```
 

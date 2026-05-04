@@ -11,9 +11,12 @@ pub mod verify_chain;
 
 pub mod projection;
 
-pub mod api_usage;
 pub mod api_error;
+pub mod api_usage;
 pub mod audit_api_key;
+pub mod billing_trace;
+pub mod stripe_webhook;
+pub mod stripe_billing;
 pub mod auth;
 pub mod db;
 pub mod evidence_usage;
@@ -101,7 +104,10 @@ pub async fn run() -> Result<(), String> {
     let ledger_display = ledger_dir_result
         .as_ref()
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "(unset — evidence files use process working directory; not for staging/prod)".to_string());
+        .unwrap_or_else(|| {
+            "(unset — evidence files use process working directory; not for staging/prod)"
+                .to_string()
+        });
 
     let policy_version = govai_environment::policy_version_for(deployment_env);
     let resolved_policy = policy_config::load_with_env(deployment_env.as_str());
@@ -122,7 +128,12 @@ pub async fn run() -> Result<(), String> {
 
     let auto_migrate = std::env::var("GOVAI_AUTO_MIGRATE")
         .ok()
-        .map(|s| matches!(s.trim().to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes"))
+        .map(|s| {
+            matches!(
+                s.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "on" | "yes"
+            )
+        })
         .unwrap_or(false);
     if auto_migrate {
         println!("startup: migrations=applying (GOVAI_AUTO_MIGRATE=true)");
@@ -188,7 +199,10 @@ pub async fn run() -> Result<(), String> {
     println!("startup: database=verified (pool connected)");
     if auto_migrate {
         println!("startup: migrations=complete (applied this boot)");
-    } else if matches!(deployment_env, GovaiEnvironment::Staging | GovaiEnvironment::Prod) {
+    } else if matches!(
+        deployment_env,
+        GovaiEnvironment::Staging | GovaiEnvironment::Prod
+    ) {
         println!("startup: migrations=verified against _sqlx_migrations");
     }
     println!("startup: liveness=GET /health  readiness=GET /ready");
@@ -275,8 +289,7 @@ mod tests {
     #[test]
     fn staging_rejects_loopback_bind() {
         let addr = SocketAddr::from(([127, 0, 0, 1], 8088));
-        let err =
-            staging_prod_bind_must_be_reachable(GovaiEnvironment::Staging, addr).unwrap_err();
+        let err = staging_prod_bind_must_be_reachable(GovaiEnvironment::Staging, addr).unwrap_err();
         assert!(err.contains("loopback"), "{err}");
 
         let ok = staging_prod_bind_must_be_reachable(

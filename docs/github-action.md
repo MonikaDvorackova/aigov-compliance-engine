@@ -1,13 +1,19 @@
 # GitHub Actions: GovAI artefact-bound compliance gate
 
-This repository publishes a reusable **composite GitHub Action** that installs the GovAI CLI from **PyPI** (`aigov-py==0.2.0`) and runs the **production semantic path**:
+This repository publishes a reusable **composite GitHub Action** that installs the GovAI CLI from **PyPI** (`aigov-py==0.2.1`, same version as `python/pyproject.toml`) and runs the **production semantic path**:
 
 1. `govai submit-evidence-pack` — replays CI-generated evidence events from `<artifacts_path>/<run_id>.json` to the hosted ledger.
-2. `govai verify-evidence-pack` — **mandatory:** hosted **`GET /bundle-hash`** digest **`events_content_sha256`** matches **`evidence_digest_manifest.json`**. **Optional** unless **`--require-export`** (or action input **`require_export: true`**): cross-check **`GET /api/export/:run_id`** against that digest. **Then** a **`VALID`** compliance verdict from **`GET /compliance-summary`**.
+2. `govai verify-evidence-pack` — **mandatory:** hosted **`GET /bundle-hash`** digest **`events_content_sha256`** matches **`evidence_digest_manifest.json`**. By default the action also passes **`--require-export`**: cross-check **`GET /api/export/:run_id`** against that digest (set input **`require_export: false`** only if you accept a weaker audit cross-check). **Then** a **`VALID`** compliance verdict from **`GET /compliance-summary`**.
+
+**PyPI pin:** the install pin **must** match `version` in `python/pyproject.toml` for the tag you use; drift breaks CI vs local reproducibility.
+
+**Ledger tenant vs `X-GovAI-Project`:** ledger isolation is derived **only** from the API key (`GOVAI_API_KEYS_JSON`). The `project` input sets **`X-GovAI-Project`** for optional metadata / usage labels; it **does not** isolate ledger data.
 
 A green job using **this action** therefore means CI artefacts were anchored by digest on the ledger and evaluated as **`VALID`** — **not** merely that the hosted API accepted an ad-hoc or synthetic submission.
 
 **`govai check` alone** does **not** prove artefact continuity; treat it as a policy readout **without** cryptographic binding to CI outputs. Prefer **`submit-evidence-pack` + `verify-evidence-pack`** for anything that behaves as a release gate.
+
+**CI integration:** this composite action is the artefact-bound CI integration. The currently supported customer-facing decision endpoint is `GET /compliance-summary`. Runtime decision APIs are separate hardening work and are not documented as available in this branch.
 
 ## Synthetic smoke workflow (explicitly labelled)
 
@@ -29,9 +35,9 @@ Point required checks at the workflow/job that invokes **`submit-evidence-pack` 
 ## Action behaviour
 
 - Sets up **Python 3.11**
-- Installs **`aigov-py==0.2.0`** from PyPI
+- Installs **`aigov-py==0.2.1`** from PyPI
 - Validates **`artifacts_path`** is an existing directory
-- Runs **`submit-evidence-pack`** then **`verify-evidence-pack`** with **`--path`** and **`--run-id`** (pass **`require_export: true`** to add **`--require-export`**)
+- Runs **`submit-evidence-pack`** then **`verify-evidence-pack`** with **`--path`** and **`--run-id`** (passes **`--require-export`** by default; set **`require_export: false`** to omit)
 - Exit codes propagated from **`verify-evidence-pack`**: **`1`** ERROR (infra/digest/export), **`2`** INVALID, **`3`** BLOCKED, **`4`** USAGE (`python/aigov_py/cli_exit.py`)
 
 ## Official action reference
@@ -48,8 +54,8 @@ Publish path (example):
 | **`artifacts_path`** | Yes | Directory containing **`evidence_digest_manifest.json`** and `<run_id>.json` (e.g. from **`actions/download-artifact`**). **`events_content_sha256`** in the manifest is the **source-of-truth** digest checked against **`GET /bundle-hash`**. |
 | **`base_url`** | Yes | GovAI audit base URL (**`GOVAI_AUDIT_BASE_URL`**). |
 | **`api_key`** | Yes | Bearer token (**`GOVAI_API_KEY`** secret). |
-| **`project`** | No (default **`github-actions`**) | **`X-GovAI-Project`** header. |
-| **`require_export`** | No (default **`false`**) | When **`true`**, passes **`--require-export`** so a missing or failed **`/api/export`** cross-check fails the step (exit **1**). |
+| **`project`** | No (default **`github-actions`**) | Sent as **`X-GovAI-Project`** (metadata / usage label). **Not** ledger tenant isolation (that comes from the API key only). |
+| **`require_export`** | No (default **`true`**) | When **`true`** (default), passes **`--require-export`** so a missing or failed **`/api/export`** cross-check fails the step (exit **1**). Set **`false`** only if you explicitly accept a weaker gate. |
 
 ## Required repository secrets / variables
 
@@ -93,7 +99,21 @@ Missing **`artifacts_path`**, **`api_key`**, or missing directory → action exi
 | **3** | Verdict **`BLOCKED`**. |
 | **4** | Usage/configuration (missing **`run_id`** / artefacts). |
 
+**Server-aligned verdict meanings** (same order as `GET /compliance-summary`):
+
+- **`INVALID`** — evaluation explicitly failed (`evaluation_passed == false`).
+- **`BLOCKED`** — missing required evidence, missing risk/human approval, not yet promoted, digest/trace prerequisites not met, or any other “not yet eligible” state.
+- **`VALID`** — evaluation passed, approvals satisfied, promotion recorded.
+
 **Operational probes:** **`GET /health`** (liveness) vs **`GET /ready`** (Postgres + migrations + ledger writable) — readiness belongs behind load balancers for safe traffic shifting.
+
+## Runtime decision API (non-CI)
+
+For non-CI enforcement, call `GET /compliance-summary` with the same `run_id` after evidence submission. Runtime decision APIs are planned separately and are not part of this branch.
+
+## Billing (minimal)
+
+Hosted service exposes **`POST /stripe/webhook`** (Stripe-signed, idempotent event log) and **`GET /billing/usage-summary`** (Bearer auth). See **[billing.md](billing.md)** for limitations and env vars.
 
 ## Local dev (this repo)
 
@@ -110,7 +130,7 @@ Missing **`artifacts_path`**, **`api_key`**, or missing directory → action exi
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.2.0"
+python -m pip install "aigov-py==0.2.1"
 govai verify-evidence-pack --path ./artefacts --run-id "$GOVAI_RUN_ID"
 ```
 

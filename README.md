@@ -1,6 +1,6 @@
 # GovAI
 
-GovAI is a CI compliance gate for AI systems with audit evidence export.
+GovAI is an **audit-backed decision system** for AI deployments: append-only evidence, policy enforcement at ingest, a single authoritative compliance verdict (`GET /compliance-summary`), optional **hosted Stripe billing**, and exportable audit artefacts. CI gates (for example the published GitHub Action) are one integration surface, not the whole product.
 
 [![Join Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/sRBSafRtE)
 
@@ -51,9 +51,10 @@ It:
 
 - accepts evidence via POST /evidence
 - enforces policy constraints at write time
-- produces deterministic decision via GET /compliance-summary
-- blocks CI if verdict != VALID
+- produces deterministic decisions via GET /compliance-summary
+- blocks CI or automation when verdict != VALID (when wired to a gate)
 - exports audit data via GET /api/export/:run_id
+- optionally enforces hosted Stripe subscription state for metered APIs (see docs/billing.md)
 
 Guarantees:
 
@@ -79,9 +80,9 @@ Non-guarantees:
 
 See docs/pilot-onboarding.md for private pilot setup.
 
-**Indicative tiers** (no self-service checkout or automated billing on this site):
+**Indicative tiers** (hosted Stripe billing is optional; operator-managed checkout and webhooks — see [docs/billing.md](docs/billing.md)):
 
-- **Free — €0:** local testing and evaluation, limited runs, PyPI CLI (`aigov-py==0.2.0`), audit evidence export.
+- **Free — €0:** local testing and evaluation, limited runs, PyPI CLI (`aigov-py==0.2.1`), audit evidence export.
 - **Pro — €199/month:** production CI, higher run/event limits, GitHub Action, hosted audit endpoint, standard support.
 - **Enterprise — Custom:** regulated or larger teams, custom limits, self-hosted or dedicated deployment, SSO/access control where supported, audit and procurement support.
 
@@ -91,10 +92,10 @@ VALID:
 All required evidence present. Deployment allowed.
 
 INVALID:  
-Evidence present but fails policy. Deployment rejected.
+Server verdict when **evaluation explicitly failed** (`evaluation_passed == false`). Deployment rejected.
 
 BLOCKED:  
-Not eligible for promotion. Deployment halted.
+Not eligible for promotion: **missing required evidence**, **missing risk/human approval**, **not yet promoted**, or other prerequisites (digest/export/trace) not satisfied. Deployment halted.
 
 `BLOCKED` can occur when required evidence is missing **or** when approval/promotion prerequisites are not satisfied (in that case `missing_evidence` can be `[]`; see `blocked_reasons`).
 
@@ -104,7 +105,7 @@ Not eligible for promotion. Deployment halted.
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.2.0"
+python -m pip install "aigov-py==0.2.1"
 ```
 
 **Repository contributors** (editable install from a clone of this repo):
@@ -127,6 +128,8 @@ Quickstarts:
 - `docs/quickstart-5min.md` (local demo)
 - `docs/customer-quickstart.md` (legacy customer / CI quickstart)
 - `docs/pilot-onboarding.md` (private pilot onboarding)
+- `docs/billing.md` (minimal Stripe webhook + usage summary)
+- `docs/product/differentiation.md` (GovAI as **decision enforcement** vs supply-chain attestation)
 
 ## Hosted pilot prerequisites
 
@@ -140,6 +143,7 @@ Repeatable operator + customer steps (pilot runbook):
 
 - `docs/hosted-pilot-runbook.md`
 
+
 Minimum hosted-pilot path (what must exist before a new pilot user can reach `VALID`):
 
 - **How a pilot user gets `base_url`**: the operator provides a hosted HTTPS audit API base URL (the GovAI audit service), for example `https://audit.example.com`.
@@ -152,7 +156,7 @@ Minimum hosted-pilot path (what must exist before a new pilot user can reach `VA
 
 ## Canonical flow (discovery → requirements → BLOCKED → evidence → VALID → export → CI)
 
-GovAI is designed around **one evidence run id** (`run_id`) and **one authoritative decision endpoint** (`GET /compliance-summary`).
+GovAI is designed around **one evidence run id** (`run_id`) and **one authoritative decision projection** exposed through `GET /compliance-summary`. Use CI gates when you also need artefact-bound digests.
 
 Canonical customer flow:
 
@@ -217,7 +221,7 @@ Because:
 
 Non-happy paths:
 
-- INVALID → evaluation or risk conditions not met
+- INVALID → evaluation explicitly failed
 - BLOCKED → not eligible for promotion (missing evidence and/or missing approval/promotion prerequisites)
 
 ## CI Integration
@@ -258,7 +262,7 @@ To validate your setup before relying on the CI gate, run the hosted determinist
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install "aigov-py==0.2.0"
+python -m pip install "aigov-py==0.2.1"
 
 export GOVAI_AUDIT_BASE_URL="https://<your GovAI audit API base URL>"
 export GOVAI_API_KEY="YOUR_API_KEY"
@@ -359,7 +363,7 @@ GovAI is **ready for hosted pilots with manual or semi-automated onboarding** (f
 
 It is **not yet a full self-serve SaaS** (no productized signup, automated provisioning, or account lifecycle).
 
-It is **not yet billing-ready** (no self-serve checkout and no automated billing).
+Hosted **Stripe billing** is supported for operator-managed pilots (checkout, webhooks, usage reporting); self-serve checkout and full SaaS lifecycle are not productized yet (see [docs/billing.md](docs/billing.md)).
 
 ## Marketplace draft checklist
 

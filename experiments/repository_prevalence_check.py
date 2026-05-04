@@ -14,7 +14,9 @@ linearly instead of treating decision-level readiness as one binary conjunction.
 import csv
 import json
 import os
+import shutil
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from typing import Iterable
 
 # Exactly 30 public repositories; fixed order for deterministic outputs.
@@ -679,20 +681,37 @@ def main() -> None:
     os.makedirs(out_dir, exist_ok=True)
 
     repos_csv = os.path.join(out_dir, "repository_prevalence_repos.csv")
+    by_repo_csv = os.path.join(out_dir, "repository_prevalence_by_repo.csv")
     repos_json = os.path.join(out_dir, "repository_prevalence_repos.json")
     summary_csv = os.path.join(out_dir, "repository_prevalence_summary.csv")
     table_tex = os.path.join(out_dir, "repository_prevalence_table.tex")
+    repro_json = os.path.join(out_dir, "repository_prevalence_repro.json")
 
     write_repos_csv(repos_csv, repos)
+    shutil.copyfile(repos_csv, by_repo_csv)
     write_repos_json(repos_json, repos)
     write_summary_csv(summary_csv, metrics)
     write_latex_table(table_tex, metrics)
 
+    repro = {
+        "schema": "aigov.repository_prevalence_repro.v1",
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "script": "experiments/repository_prevalence_check.py",
+        "coding_rubric_doc": "docs/reports/repository-prevalence-coding-rubric.md",
+        "total_repositories": len(repos),
+        "row_order": "fixed tuple order in repository_prevalence_check.CURATED_REPO_ROWS",
+        "signals_version": "2026-05-03",
+    }
+    with open(repro_json, "w", encoding="utf-8") as handle:
+        json.dump(repro, handle, indent=2, sort_keys=False)
+
     print("Wrote outputs:")
     print(f"- {repos_csv}")
+    print(f"- {by_repo_csv}")
     print(f"- {repos_json}")
     print(f"- {summary_csv}")
     print(f"- {table_tex}")
+    print(f"- {repro_json}")
     print("")
     print("Summary:")
     print(f"- total_repositories={int(metrics['total_repositories'])}")

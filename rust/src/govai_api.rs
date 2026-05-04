@@ -1,6 +1,9 @@
 use crate::api_usage::key_fingerprint;
 use crate::api_usage::ApiUsageState;
 use crate::audit_api_key;
+use crate::billing_trace;
+use crate::stripe_billing;
+use crate::stripe_webhook;
 use crate::auth::{AuthConfig, CurrentUser};
 use crate::bundle;
 use crate::db::{self, DbPool};
@@ -16,15 +19,18 @@ use crate::rbac;
 use crate::schema::EvidenceEvent;
 use crate::verify_chain;
 
+use axum::body::Bytes;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use chrono::{DateTime, Datelike, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::cmp::Ordering;
 use sha2::{Digest, Sha256};
+use std::cmp::Ordering;
 use uuid::Uuid;
 
 use crate::api_error::{api_error, api_error_with};
@@ -261,18 +267,97 @@ fn prepare_event_for_ingest(
 }
 
 #[derive(Clone)]
-struct AuditState {
-    ledger_base: &'static str,
-    policy_version: &'static str,
-    deployment_env: GovaiEnvironment,
-    policy: PolicyConfig,
-    pool: DbPool,
-    metering: MeteringConfig,
+pub struct AuditState {
+    pub ledger_base: &'static str,
+    pub policy_version: &'static str,
+    pub deployment_env: GovaiEnvironment,
+    pub policy: PolicyConfig,
+    pub pool: DbPool,
+    pub metering: MeteringConfig,
 }
 
-fn tenant_log_path(audit: &AuditState, headers: &HeaderMap) -> Result<String, String> {
+async fn stripe_webhook_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let sig = headers
+        .get(axum::http::HeaderName::from_static("stripe-signature"))
+        .and_then(|v| v.to_str().ok());
+    let (status, j) =
+        stripe_webhook::handle_stripe_webhook(&audit.pool, body.as_ref(), sig).await;
+    (status, Json(j))
+}
+
+async fn billing_enforcement_middleware(
+    State(audit): State<AuditState>,
+    request: Request,
+    next: Next,
+) -> axum::response::Response {
+    let path = request.uri().path().to_string();
+    if stripe_billing::billing_enforcement_exempt_path(path.as_str()) {
+        return next.run(request).await;
+    }
+    if !stripe_billing::billing_enforcement_enabled() {
+        return next.run(request).await;
+    }
+    let headers = request.headers().clone();
+    let tenant_res =
+        stripe_billing::ledger_tenant_for_billing_headers(&headers, audit.deployment_env);
+    let tenant_id = match tenant_res {
+        Ok(t) => t,
+        Err(_) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "ok": false,
+                    "error": {
+                        "code": "MISSING_API_KEY",
+                        "message": "Missing API key.",
+                        "hint": "Provide `Authorization: Bearer <api_key>`."
+                    }
+                })),
+            )
+                .into_response();
+        }
+    };
+    match stripe_billing::tenant_subscription_gate(&audit.pool, &tenant_id).await {
+        Ok(true) => next.run(request).await,
+        Ok(false) => (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "ok": false,
+                "error": {
+                    "code": "BILLING_INACTIVE",
+                    "message": "Billing subscription is not active.",
+                    "hint": "Update payment details in the billing portal or complete checkout."
+                }
+            })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "ok": false,
+                "error": {
+                    "code": "BILLING_GATE_ERROR",
+                    "message": "Could not verify billing state.",
+                    "hint": "Retry in a moment. If this persists, contact support.",
+                    "details": { "raw": e.to_string() }
+                }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+/// Returns `(ledger_file_path, ledger_tenant_id)`; tenant id is API-key-derived only.
+fn tenant_log_path(audit: &AuditState, headers: &HeaderMap) -> Result<(String, String), String> {
     let tenant_id = project::require_tenant_id_for_ledger(headers, audit.deployment_env)?;
-    Ok(project::resolve_ledger_path(audit.ledger_base, &tenant_id))
+    Ok((
+        project::resolve_ledger_path(audit.ledger_base, &tenant_id),
+        tenant_id,
+    ))
 }
 
 /// Ingest phases after [`crate::audit_api_key::gate_audit_routes`]:
@@ -287,7 +372,7 @@ async fn ingest(
     headers: HeaderMap,
     Json(mut event): Json<EvidenceEvent>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let log_path = match tenant_log_path(&audit, &headers) {
+    let (log_path, ledger_tid) = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
             return api_err(
@@ -463,7 +548,9 @@ async fn ingest(
                     "PER_RUN_EVENT_LIMIT_EXCEEDED",
                     "This run has reached its per-run evidence event limit.",
                     "Use a new `run_id`, or upgrade your plan.",
-                    Some(json!({ "used": pre_count, "would_be": would_be, "limit": limit, "run_id": run_id })),
+                    Some(
+                        json!({ "used": pre_count, "would_be": would_be, "limit": limit, "run_id": run_id }),
+                    ),
                     Some(audit.policy_version),
                     Some(json!({
                         "metering": "on",
@@ -561,6 +648,26 @@ async fn ingest(
                     .await;
                 }
 
+                billing_trace::record_evidence_ingest_unit(&audit.pool, &ledger_tid, &run_id).await;
+                let _ = stripe_billing::record_usage_attribution(
+                    &audit.pool,
+                    &ledger_tid,
+                    stripe_billing::BILLING_UNIT_EVIDENCE_EVENT,
+                    &run_id,
+                    None,
+                )
+                .await;
+                if is_discovery_scan {
+                    let _ = stripe_billing::record_usage_attribution(
+                        &audit.pool,
+                        &ledger_tid,
+                        stripe_billing::BILLING_UNIT_DISCOVERY_SCAN,
+                        &run_id,
+                        None,
+                    )
+                    .await;
+                }
+
                 let nr1 = new_run_ids + if is_new_run { 1 } else { 0 };
                 let ev1 = evidence_events + 1;
                 let warnings = metering::basic_warnings(plan, limits, nr1, ev1, is_new_run);
@@ -613,6 +720,26 @@ async fn ingest(
                             None,
                         );
                     }
+                }
+
+                billing_trace::record_evidence_ingest_unit(&audit.pool, &ledger_tid, &run_id).await;
+                let _ = stripe_billing::record_usage_attribution(
+                    &audit.pool,
+                    &ledger_tid,
+                    stripe_billing::BILLING_UNIT_EVIDENCE_EVENT,
+                    &run_id,
+                    None,
+                )
+                .await;
+                if is_discovery_scan {
+                    let _ = stripe_billing::record_usage_attribution(
+                        &audit.pool,
+                        &ledger_tid,
+                        stripe_billing::BILLING_UNIT_DISCOVERY_SCAN,
+                        &run_id,
+                        None,
+                    )
+                    .await;
                 }
 
                 (
@@ -730,11 +857,16 @@ async fn usage_route(
                 );
             }
         };
-        let (compliance_checks, exports, discovery_scans) =
-            match metering::load_monthly_ops(&audit.pool, team_id, ym).await {
-                Ok(x) => x,
-                Err(e) => {
-                    return api_err(
+        let (compliance_checks, exports, discovery_scans) = match metering::load_monthly_ops(
+            &audit.pool,
+            team_id,
+            ym,
+        )
+        .await
+        {
+            Ok(x) => x,
+            Err(e) => {
+                return api_err(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "METERING_ERROR",
                         "We could not load usage counters.",
@@ -743,8 +875,8 @@ async fn usage_route(
                         Some(audit.policy_version),
                         None,
                     );
-                }
-            };
+            }
+        };
         let used_runs_u64 = new_run_ids.max(0) as u64;
         let used_events_u64 = evidence_events.max(0) as u64;
         let rem_runs = plan_limits.runs_per_month.saturating_sub(used_runs_u64);
@@ -795,12 +927,13 @@ async fn usage_route(
         Ok((evidence_count, compliance_checks, exports, discovery_scans, period)) => {
             let used_events_u64 = evidence_count.max(0) as u64;
             let plan_name = "free";
-            let plan_limits = pricing::plan_limits_by_name(plan_name).unwrap_or(pricing::PlanLimits {
-                name: "free",
-                evidence_events_per_month: 2_500,
-                runs_per_month: 25,
-                events_per_run: 1_000,
-            });
+            let plan_limits =
+                pricing::plan_limits_by_name(plan_name).unwrap_or(pricing::PlanLimits {
+                    name: "free",
+                    evidence_events_per_month: 2_500,
+                    runs_per_month: 25,
+                    events_per_run: 1_000,
+                });
             let rem_events = plan_limits
                 .evidence_events_per_month
                 .saturating_sub(used_events_u64);
@@ -808,33 +941,33 @@ async fn usage_route(
             (
                 StatusCode::OK,
                 Json(json!({
-                "metering": "off",
-                "tenant_id": tenant_id,
-                "period_start": period.format("%Y-%m-%d").to_string(),
-                "evidence_events_count": evidence_count,
-                "compliance_checks_count": compliance_checks,
-                "exports_count": exports,
-                "discovery_scans_count": discovery_scans,
-                "limit": evidence_usage::FREE_TIER_EVIDENCE_LIMIT,
-                // Additive normalized usage surface.
-                "plan": plan_name,
-                "usage": {
-                    "evidence_events": used_events_u64,
-                    "runs": 0,
-                    "compliance_checks": compliance_checks.max(0) as u64,
-                    "exports": exports.max(0) as u64,
-                    "discovery_scans": discovery_scans.max(0) as u64
-                },
-                "limits": {
-                    "evidence_events": plan_limits.evidence_events_per_month,
-                    "runs": plan_limits.runs_per_month,
-                    "events_per_run": plan_limits.events_per_run
-                },
-                "remaining": {
-                    "evidence_events": rem_events,
-                    "runs": rem_runs
-                }
-            })),
+                    "metering": "off",
+                    "tenant_id": tenant_id,
+                    "period_start": period.format("%Y-%m-%d").to_string(),
+                    "evidence_events_count": evidence_count,
+                    "compliance_checks_count": compliance_checks,
+                    "exports_count": exports,
+                    "discovery_scans_count": discovery_scans,
+                    "limit": evidence_usage::FREE_TIER_EVIDENCE_LIMIT,
+                    // Additive normalized usage surface.
+                    "plan": plan_name,
+                    "usage": {
+                        "evidence_events": used_events_u64,
+                        "runs": 0,
+                        "compliance_checks": compliance_checks.max(0) as u64,
+                        "exports": exports.max(0) as u64,
+                        "discovery_scans": discovery_scans.max(0) as u64
+                    },
+                    "limits": {
+                        "evidence_events": plan_limits.evidence_events_per_month,
+                        "runs": plan_limits.runs_per_month,
+                        "events_per_run": plan_limits.events_per_run
+                    },
+                    "remaining": {
+                        "evidence_events": rem_events,
+                        "runs": rem_runs
+                    }
+                })),
             )
         }
         Err(e) => api_err(
@@ -853,7 +986,7 @@ async fn verify(
     State(audit): State<AuditState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let log_path = match tenant_log_path(&audit, &headers) {
+    let (log_path, _) = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
             return api_err(
@@ -889,7 +1022,7 @@ async fn bundle_route(
     headers: HeaderMap,
     Query(q): Query<BundleQuery>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let log_path = match tenant_log_path(&audit, &headers) {
+    let (log_path, _) = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
             return api_err(
@@ -958,7 +1091,11 @@ struct DiscoveryFindingOut {
 
 fn extract_discovery_findings(events: &[EvidenceEvent]) -> Vec<DiscoveryFindingOut> {
     // Derive only from already-submitted evidence. Never run a scan during export.
-    let Some(ev) = events.iter().rev().find(|e| e.event_type == "ai_discovery_reported") else {
+    let Some(ev) = events
+        .iter()
+        .rev()
+        .find(|e| e.event_type == "ai_discovery_reported")
+    else {
         return Vec::new();
     };
 
@@ -972,12 +1109,16 @@ fn extract_discovery_findings(events: &[EvidenceEvent]) -> Vec<DiscoveryFindingO
         let Some(obj) = v.as_object() else { continue };
         let v = serde_json::Value::Object(obj.clone());
 
-        let Some(file_path) = payload_get_str(&v, "file_path") else { continue };
+        let Some(file_path) = payload_get_str(&v, "file_path") else {
+            continue;
+        };
         let detector = payload_get_str(&v, "detector_type")
             .or_else(|| payload_get_str(&v, "detector"))
             .or_else(|| payload_get_str(&v, "detected_ai_usage"))
             .unwrap_or_else(|| "unknown".to_string());
-        let Some(confidence) = payload_get_num(&v, "confidence") else { continue };
+        let Some(confidence) = payload_get_num(&v, "confidence") else {
+            continue;
+        };
 
         // Exact matched pattern is not currently stored (Python discovery uses high-level evidence),
         // so keep it null unless explicitly present in the stored payload.
@@ -1039,7 +1180,7 @@ async fn export_run_route(
         );
     }
 
-    let log_path = match tenant_log_path(&audit, &headers) {
+    let (log_path, _) = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("export_run_route: tenant_log_path: {e}");
@@ -1054,21 +1195,22 @@ async fn export_run_route(
             );
         }
     };
-    let ledger_tenant_id = match project::require_tenant_id_for_ledger(&headers, audit.deployment_env) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("export_run_route: require_tenant_id_for_ledger: {e}");
-            return api_err(
-                StatusCode::BAD_REQUEST,
-                "MISSING_TENANT_CONTEXT",
-                "Missing tenant context.",
-                "Provide `Authorization: Bearer <api_key>`.",
-                None,
-                Some(audit.policy_version),
-                None,
-            );
-        }
-    };
+    let ledger_tenant_id =
+        match project::require_tenant_id_for_ledger(&headers, audit.deployment_env) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("export_run_route: require_tenant_id_for_ledger: {e}");
+                return api_err(
+                    StatusCode::BAD_REQUEST,
+                    "MISSING_TENANT_CONTEXT",
+                    "Missing tenant context.",
+                    "Provide `Authorization: Bearer <api_key>`.",
+                    None,
+                    Some(audit.policy_version),
+                    None,
+                );
+            }
+        };
     let billing_tenant_id = project::billing_tenant_id(&headers);
 
     let events = match bundle::collect_events_for_run(&log_path, &run_id) {
@@ -1294,6 +1436,15 @@ async fn export_run_route(
         let _ = evidence_usage::increment_export_usage(&audit.pool, &tenant_id).await;
     }
 
+    let _ = stripe_billing::record_usage_attribution(
+        &audit.pool,
+        &ledger_tenant_id,
+        stripe_billing::BILLING_UNIT_AUDIT_EXPORT,
+        &run_id,
+        Some(verdict),
+    )
+    .await;
+
     (StatusCode::OK, Json(out))
 }
 
@@ -1302,7 +1453,7 @@ async fn bundle_hash_route(
     headers: HeaderMap,
     Query(q): Query<BundleHashQuery>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let log_path = match tenant_log_path(&audit, &headers) {
+    let (log_path, _) = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("bundle_hash_route: tenant_log_path: {e}");
@@ -1314,7 +1465,7 @@ async fn bundle_hash_route(
                 None,
                 Some(audit.policy_version),
                 None,
-            )
+            );
         }
     };
     match bundle::collect_events_for_run(&log_path, &q.run_id) {
@@ -1374,7 +1525,7 @@ async fn verify_log(
     State(audit): State<AuditState>,
     headers: HeaderMap,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let log_path = match tenant_log_path(&audit, &headers) {
+    let (log_path, _) = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
             return api_err(
@@ -1403,9 +1554,7 @@ async fn verify_log(
 }
 
 /// Readiness: DB reachable, migrations complete, ledger writable (`GOVAI_LEDGER_DIR` or dev cwd).
-async fn readiness_check(
-    State(audit): State<AuditState>,
-) -> (StatusCode, Json<serde_json::Value>) {
+async fn readiness_check(State(audit): State<AuditState>) -> (StatusCode, Json<serde_json::Value>) {
     if let Err(e) = sqlx::query("SELECT 1").fetch_one(&audit.pool).await {
         eprintln!("readiness: database_ping failed: {e}");
         return api_error(
@@ -1474,6 +1623,597 @@ async fn readiness_check(
     )
 }
 
+#[derive(Deserialize)]
+struct BillingUsageSummaryQuery {
+    /// RFC3339 inclusive lower bound (default: first instant of current UTC month).
+    #[serde(default)]
+    from: Option<String>,
+    /// RFC3339 exclusive upper bound (default: now).
+    #[serde(default)]
+    to: Option<String>,
+    /// e.g. `evidence_event`
+    #[serde(default = "default_billing_unit_param")]
+    unit: String,
+}
+
+fn default_billing_unit_param() -> String {
+    "evidence_event".to_string()
+}
+
+async fn billing_usage_summary_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+    Query(q): Query<BillingUsageSummaryQuery>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let ledger_tid = match project::require_tenant_id_for_ledger(&headers, audit.deployment_env) {
+        Ok(t) => t,
+        Err(e) => {
+            return api_err(
+                StatusCode::BAD_REQUEST,
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+
+    let window_end = match q.to.as_deref() {
+        Some(s) => match DateTime::parse_from_rfc3339(s) {
+            Ok(d) => d.with_timezone(&Utc),
+            Err(_) => {
+                return api_err(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_QUERY",
+                    "Invalid `to` timestamp (expected RFC3339).",
+                    "Use an ISO-8601 / RFC3339 instant, e.g. 2026-05-01T00:00:00Z.",
+                    None,
+                    Some(audit.policy_version),
+                    None,
+                );
+            }
+        },
+        None => Utc::now(),
+    };
+
+    let window_start = match q.from.as_deref() {
+        Some(s) => match DateTime::parse_from_rfc3339(s) {
+            Ok(d) => d.with_timezone(&Utc),
+            Err(_) => {
+                return api_err(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_QUERY",
+                    "Invalid `from` timestamp (expected RFC3339).",
+                    "Use an ISO-8601 / RFC3339 instant, e.g. 2026-05-01T00:00:00Z.",
+                    None,
+                    Some(audit.policy_version),
+                    None,
+                );
+            }
+        },
+        None => Utc
+            .with_ymd_and_hms(window_end.year(), window_end.month(), 1, 0, 0, 0)
+            .single()
+            .unwrap_or_else(Utc::now),
+    };
+
+    if window_start >= window_end {
+        return api_err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_QUERY",
+            "`from` must be strictly before `to`.",
+            "Widen the window or fix the bounds.",
+            None,
+            Some(audit.policy_version),
+            None,
+        );
+    }
+
+    let unit = {
+        let u = q.unit.trim();
+        if u.is_empty() {
+            "evidence_event"
+        } else {
+            u
+        }
+    };
+    match billing_trace::usage_summary_for_tenant(
+        &audit.pool,
+        &ledger_tid,
+        unit,
+        window_start,
+        window_end,
+    )
+    .await
+    {
+        Ok(s) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "tenant_id": s.tenant_id,
+                "billing_unit": s.billing_unit,
+                "usage_count": s.count,
+                "time_window": {
+                    "start": s.window_start.to_rfc3339(),
+                    "end": s.window_end.to_rfc3339()
+                },
+                "traces": s.traces.iter().map(|t| json!({
+                    "tenant_id": t.tenant_id,
+                    "run_id": t.run_id,
+                    "occurred_at": t.occurred_at.to_rfc3339()
+                })).collect::<Vec<_>>()
+            })),
+        ),
+        Err(e) => api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DB_ERROR",
+            "Could not load billing usage summary.",
+            "Retry in a moment. If this persists, contact support.",
+            Some(json!({ "raw": e.to_string() })),
+            Some(audit.policy_version),
+            None,
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct BillingCheckoutRequest {
+    price_id: String,
+    success_url: String,
+    cancel_url: String,
+}
+
+#[derive(Deserialize)]
+struct BillingReportUsageBody {
+    #[serde(default = "default_report_usage_unit")]
+    billing_unit: String,
+}
+
+fn default_report_usage_unit() -> String {
+    stripe_billing::BILLING_UNIT_EVIDENCE_EVENT.to_string()
+}
+
+#[derive(Deserialize)]
+struct BillingPortalBody {
+    return_url: String,
+}
+
+#[derive(Deserialize)]
+struct BillingReconciliationQuery {
+    from: String,
+    to: String,
+    billing_unit: Option<String>,
+}
+
+async fn billing_checkout_session_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+    Json(body): Json<BillingCheckoutRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let tenant_id =
+        match stripe_billing::ledger_tenant_for_billing_headers(&headers, audit.deployment_env) {
+            Ok(t) => t,
+            Err(_) => {
+                return api_err(
+                    StatusCode::UNAUTHORIZED,
+                    "MISSING_API_KEY",
+                    "Missing API key.",
+                    "Provide `Authorization: Bearer <api_key>`.",
+                    None,
+                    Some(audit.policy_version),
+                    None,
+                );
+            }
+        };
+    let sk = match stripe_billing::stripe_secret_key() {
+        Ok(s) => s,
+        Err(msg) => {
+            return api_err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "STRIPE_NOT_CONFIGURED",
+                "Stripe API is not configured on this server.",
+                "Set GOVAI_STRIPE_SECRET_KEY to your Stripe secret key (sk_live_… or sk_test_…).",
+                Some(json!({ "detail": msg })),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+    let price = body.price_id.trim();
+    if price.is_empty() || !price.starts_with("price_") {
+        return api_err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PRICE_ID",
+            "price_id must be a non-empty Stripe Price id (price_…).",
+            "Pass a subscription recurring price from the Stripe Dashboard.",
+            None,
+            Some(audit.policy_version),
+            None,
+        );
+    }
+    if body.success_url.trim().is_empty() || body.cancel_url.trim().is_empty() {
+        return api_err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_URL",
+            "success_url and cancel_url must be non-empty absolute URLs.",
+            "Provide https://… URLs where Stripe should redirect after checkout.",
+            None,
+            Some(audit.policy_version),
+            None,
+        );
+    }
+    match stripe_billing::stripe_create_checkout_session(
+        &sk,
+        price,
+        body.success_url.trim(),
+        body.cancel_url.trim(),
+        &tenant_id,
+    )
+    .await
+    {
+        Ok((session_id, checkout_url)) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "tenant_id": tenant_id,
+                "session_id": session_id,
+                "checkout_url": checkout_url,
+            })),
+        ),
+        Err(e) => api_err(
+            StatusCode::BAD_GATEWAY,
+            "STRIPE_CHECKOUT_FAILED",
+            "Stripe refused or failed to create the Checkout Session.",
+            "Verify price_id, account mode (test vs live), and Stripe logs; then retry.",
+            Some(json!({ "detail": e })),
+            Some(audit.policy_version),
+            None,
+        ),
+    }
+}
+
+async fn billing_status_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let tenant =
+        match stripe_billing::ledger_tenant_for_billing_headers(&headers, audit.deployment_env) {
+            Ok(t) => t,
+            Err(_) => {
+                return api_err(
+                    StatusCode::UNAUTHORIZED,
+                    "MISSING_API_KEY",
+                    "Missing API key.",
+                    "Provide `Authorization: Bearer <api_key>`.",
+                    None,
+                    Some(audit.policy_version),
+                    None,
+                );
+            }
+        };
+    match stripe_billing::billing_status_for_tenant(&audit.pool, &tenant).await {
+        Ok(j) => {
+            let mut v = serde_json::to_value(&j).unwrap_or_else(|_| json!({}));
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("ok".to_string(), json!(true));
+            }
+            (StatusCode::OK, Json(v))
+        }
+        Err(e) => api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "BILLING_STATUS_ERROR",
+            "Could not load billing status.",
+            "Retry in a moment. If this persists, contact support.",
+            Some(json!({ "raw": e.to_string() })),
+            Some(audit.policy_version),
+            None,
+        ),
+    }
+}
+
+async fn billing_report_usage_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+    Json(body): Json<BillingReportUsageBody>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let tenant =
+        match stripe_billing::ledger_tenant_for_billing_headers(&headers, audit.deployment_env) {
+            Ok(t) => t,
+            Err(_) => {
+                return api_err(
+                    StatusCode::UNAUTHORIZED,
+                    "MISSING_API_KEY",
+                    "Missing API key.",
+                    "Provide `Authorization: Bearer <api_key>`.",
+                    None,
+                    Some(audit.policy_version),
+                    None,
+                );
+            }
+        };
+    let unit = body.billing_unit.trim();
+    if unit.is_empty() || !stripe_billing::ALL_BILLING_UNITS.iter().any(|u| *u == unit) {
+        return api_err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_BILLING_UNIT",
+            "Unknown billing_unit.",
+            "Use one of: evidence_event, compliance_check, audit_export, discovery_scan.",
+            None,
+            Some(audit.policy_version),
+            None,
+        );
+    }
+    match stripe_billing::report_usage_for_tenant(&audit.pool, &tenant, unit).await {
+        Ok(out) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "tenant_id": tenant,
+                "billing_unit": unit,
+                "idempotent_hit": out.idempotent_hit,
+                "report_id": out.report_id,
+                "quantity": out.quantity,
+                "period_start": out.period_start,
+                "period_end": out.period_end,
+                "status": out.status,
+                "stripe_usage_record_id": out.stripe_usage_record_id,
+            })),
+        ),
+        Err(e) => api_err(
+            StatusCode::BAD_GATEWAY,
+            "STRIPE_USAGE_REPORT_FAILED",
+            "Usage was recorded locally but reporting to Stripe failed.",
+            "Fix Stripe configuration or subscription item id, then POST again (idempotent for the same period).",
+            Some(json!({ "detail": e })),
+            Some(audit.policy_version),
+            None,
+        ),
+    }
+}
+
+async fn billing_portal_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+    Json(body): Json<BillingPortalBody>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let tenant =
+        match stripe_billing::ledger_tenant_for_billing_headers(&headers, audit.deployment_env) {
+            Ok(t) => t,
+            Err(_) => {
+                return api_err(
+                    StatusCode::UNAUTHORIZED,
+                    "MISSING_API_KEY",
+                    "Missing API key.",
+                    "Provide `Authorization: Bearer <api_key>`.",
+                    None,
+                    Some(audit.policy_version),
+                    None,
+                );
+            }
+        };
+    let customer_id: Option<String> = match sqlx::query_scalar::<sqlx::Postgres, Option<String>>(
+        r#"select stripe_customer_id from public.tenant_billing_accounts where tenant_id = $1"#,
+    )
+    .bind(&tenant)
+    .fetch_optional(&audit.pool)
+    .await
+    {
+        Ok(Some(inner)) => inner,
+        Ok(None) | Err(_) => None,
+    };
+    let Some(customer_id) = customer_id.filter(|s| !s.trim().is_empty()) else {
+        return api_err(
+            StatusCode::NOT_FOUND,
+            "BILLING_ACCOUNT_NOT_FOUND",
+            "No Stripe customer is associated with this tenant.",
+            "Create checkout session first.",
+            None,
+            Some(audit.policy_version),
+            None,
+        );
+    };
+    let secret = match stripe_billing::stripe_secret_key() {
+        Ok(s) => s,
+        Err(e) => {
+            return api_err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "STRIPE_NOT_CONFIGURED",
+                "Stripe is not configured on this server.",
+                "Contact the operator to configure GOVAI_STRIPE_SECRET_KEY.",
+                Some(json!({ "raw": e })),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+    match stripe_billing::stripe_create_billing_portal_session(
+        &secret,
+        customer_id.trim(),
+        body.return_url.trim(),
+    )
+    .await
+    {
+        Ok(url) => (
+            StatusCode::OK,
+            Json(json!({ "ok": true, "tenant_id": tenant, "portal_url": url })),
+        ),
+        Err(e) => api_err(
+            StatusCode::BAD_GATEWAY,
+            "STRIPE_PORTAL_FAILED",
+            "Could not create billing portal session.",
+            "Verify Stripe customer id and portal configuration.",
+            Some(json!({ "raw": e })),
+            Some(audit.policy_version),
+            None,
+        ),
+    }
+}
+
+async fn billing_invoices_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let tenant =
+        match stripe_billing::ledger_tenant_for_billing_headers(&headers, audit.deployment_env) {
+            Ok(t) => t,
+            Err(_) => {
+                return api_err(
+                    StatusCode::UNAUTHORIZED,
+                    "MISSING_API_KEY",
+                    "Missing API key.",
+                    "Provide `Authorization: Bearer <api_key>`.",
+                    None,
+                    Some(audit.policy_version),
+                    None,
+                );
+            }
+        };
+    let customer_id: Option<String> = match sqlx::query_scalar::<sqlx::Postgres, Option<String>>(
+        r#"select stripe_customer_id from public.tenant_billing_accounts where tenant_id = $1"#,
+    )
+    .bind(&tenant)
+    .fetch_optional(&audit.pool)
+    .await
+    {
+        Ok(Some(inner)) => inner,
+        Ok(None) | Err(_) => None,
+    };
+    let Some(customer_id) = customer_id.filter(|s| !s.trim().is_empty()) else {
+        return api_err(
+            StatusCode::NOT_FOUND,
+            "BILLING_ACCOUNT_NOT_FOUND",
+            "No Stripe customer is associated with this tenant.",
+            "Create checkout session first.",
+            None,
+            Some(audit.policy_version),
+            None,
+        );
+    };
+    let secret = match stripe_billing::stripe_secret_key() {
+        Ok(s) => s,
+        Err(e) => {
+            return api_err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "STRIPE_NOT_CONFIGURED",
+                "Stripe is not configured on this server.",
+                "Contact the operator to configure GOVAI_STRIPE_SECRET_KEY.",
+                Some(json!({ "raw": e })),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+    match stripe_billing::stripe_list_invoices(&secret, customer_id.trim(), 20).await {
+        Ok(rows) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "tenant_id": tenant,
+                "invoices": rows
+            })),
+        ),
+        Err(e) => api_err(
+            StatusCode::BAD_GATEWAY,
+            "STRIPE_INVOICES_FAILED",
+            "Could not list invoices from Stripe.",
+            "Retry in a moment. If this persists, contact support.",
+            Some(json!({ "raw": e })),
+            Some(audit.policy_version),
+            None,
+        ),
+    }
+}
+
+async fn billing_reconciliation_route(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+    Query(q): Query<BillingReconciliationQuery>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let tenant =
+        match stripe_billing::ledger_tenant_for_billing_headers(&headers, audit.deployment_env) {
+            Ok(t) => t,
+            Err(_) => {
+                return api_err(
+                    StatusCode::UNAUTHORIZED,
+                    "MISSING_API_KEY",
+                    "Missing API key.",
+                    "Provide `Authorization: Bearer <api_key>`.",
+                    None,
+                    Some(audit.policy_version),
+                    None,
+                );
+            }
+        };
+    let from = match DateTime::parse_from_rfc3339(q.from.trim()) {
+        Ok(d) => d.with_timezone(&Utc),
+        Err(_) => {
+            return api_err(
+                StatusCode::BAD_REQUEST,
+                "INVALID_FROM",
+                "Query parameter `from` must be RFC3339.",
+                "Example: 2026-05-01T00:00:00Z",
+                None,
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+    let to = match DateTime::parse_from_rfc3339(q.to.trim()) {
+        Ok(d) => d.with_timezone(&Utc),
+        Err(_) => {
+            return api_err(
+                StatusCode::BAD_REQUEST,
+                "INVALID_TO",
+                "Query parameter `to` must be RFC3339.",
+                "Example: 2026-05-31T23:59:59Z",
+                None,
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+    if from >= to {
+        return api_err(
+            StatusCode::BAD_REQUEST,
+            "INVALID_RANGE",
+            "Parameter `from` must be before `to`.",
+            "Adjust the time range and retry.",
+            None,
+            Some(audit.policy_version),
+            None,
+        );
+    }
+    if let Some(ref u) = q.billing_unit {
+        let u = u.trim();
+        if !u.is_empty() && !stripe_billing::ALL_BILLING_UNITS.iter().any(|x| *x == u) {
+            return api_err(
+                StatusCode::BAD_REQUEST,
+                "INVALID_BILLING_UNIT",
+                "Unknown billing_unit.",
+                "Use one of: evidence_event, compliance_check, audit_export, discovery_scan.",
+                None,
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    }
+    let unit = q.billing_unit.as_deref().filter(|s| !s.trim().is_empty());
+    match stripe_billing::reconciliation_for_tenant(&audit.pool, &tenant, from, to, unit).await {
+        Ok(v) => (StatusCode::OK, Json(v)),
+        Err(e) => api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "RECONCILIATION_ERROR",
+            "Could not build reconciliation.",
+            "Retry in a moment. If this persists, contact support.",
+            Some(json!({ "raw": e.to_string() })),
+            Some(audit.policy_version),
+            None,
+        ),
+    }
+}
+
 pub fn audit_router(
     log_path: &'static str,
     policy_version: &'static str,
@@ -1498,26 +2238,35 @@ pub fn audit_router(
         let usage = u.clone();
         async move { crate::audit_api_key::gate_audit_routes(cfg, usage, request, next).await }
     });
+    let billing_enforcement_layer =
+        middleware::from_fn_with_state(state.clone(), billing_enforcement_middleware);
 
     let unauthenticated = Router::new()
         .route("/ready", get(readiness_check))
+        .route("/stripe/webhook", post(stripe_webhook_route))
         .with_state(state.clone());
 
     let gated = Router::new()
         .route("/evidence", post(ingest))
         .route("/usage", get(usage_route))
+        .route("/billing/usage-summary", get(billing_usage_summary_route))
+        .route("/billing/checkout-session", post(billing_checkout_session_route))
+        .route("/billing/status", get(billing_status_route))
+        .route("/billing/report-usage", post(billing_report_usage_route))
         .route("/verify", get(verify))
         .route("/bundle", get(bundle_route))
         .route("/bundle-hash", get(bundle_hash_route))
         .route("/verify-log", get(verify_log))
         .route("/compliance-summary", get(compliance_summary_route))
         .route("/api/export/:run_id", get(export_run_route))
+        .route("/billing/portal-session", post(billing_portal_route))
+        .route("/billing/invoices", get(billing_invoices_route))
+        .route("/billing/reconciliation", get(billing_reconciliation_route))
+        .layer(billing_enforcement_layer)
         .layer(audit_key_layer)
         .with_state(state.clone());
 
-    Router::new()
-        .merge(unauthenticated)
-        .merge(gated)
+    Router::new().merge(unauthenticated).merge(gated)
 }
 
 #[derive(Deserialize)]
@@ -1530,7 +2279,7 @@ async fn compliance_summary_route(
     headers: HeaderMap,
     Query(q): Query<ComplianceSummaryQuery>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let log_path = match tenant_log_path(&audit, &headers) {
+    let (log_path, _) = match tenant_log_path(&audit, &headers) {
         Ok(p) => p,
         Err(e) => {
             return api_err(
@@ -1643,8 +2392,20 @@ async fn compliance_summary_route(
                 }
             } else {
                 let tenant_id = project::billing_tenant_id(&headers);
-                let _ = evidence_usage::increment_compliance_check_usage(&audit.pool, &tenant_id).await;
+                let _ =
+                    evidence_usage::increment_compliance_check_usage(&audit.pool, &tenant_id).await;
             }
+
+            let ledger_tid = project::require_tenant_id_for_ledger(&headers, audit.deployment_env)
+                .unwrap_or_else(|_| "default".to_string());
+            let _ = stripe_billing::record_usage_attribution(
+                &audit.pool,
+                &ledger_tid,
+                stripe_billing::BILLING_UNIT_COMPLIANCE_CHECK,
+                &q.run_id,
+                Some(verdict),
+            )
+            .await;
 
             (
                 StatusCode::OK,
@@ -1764,14 +2525,16 @@ fn blocked_reasons_from_state(state: &projection::ComplianceCurrentState) -> Vec
         if state.model.evaluation_passed.is_none() {
             out.push(BlockedReason {
                 code: "evaluation_required".to_string(),
-                message: "Evaluation must be reported (passed=true) before promotion readiness.".to_string(),
+                message: "Evaluation must be reported (passed=true) before promotion readiness."
+                    .to_string(),
             });
         }
 
         if state.approval.risk_review_decision.as_deref() != Some("approve") {
             out.push(BlockedReason {
                 code: "awaiting_risk_review".to_string(),
-                message: "Risk assessment review must be approved before promotion readiness.".to_string(),
+                message: "Risk assessment review must be approved before promotion readiness."
+                    .to_string(),
             });
         }
 
@@ -1782,7 +2545,8 @@ fn blocked_reasons_from_state(state: &projection::ComplianceCurrentState) -> Vec
             });
         }
 
-        if !(state.model.promotion.model_promoted_present && state.model.promotion.state == "promoted")
+        if !(state.model.promotion.model_promoted_present
+            && state.model.promotion.state == "promoted")
         {
             let code = match state.model.promotion.state.as_str() {
                 "awaiting_risk_review" => "awaiting_risk_review",
@@ -2079,7 +2843,7 @@ mod discovery_enforcement_tests {
     }
 
     #[test]
-    fn explicit_failed_evaluation_overrides_success() {
+    fn later_failed_evaluation_overrides_pass_and_invalidates() {
         let run_id = "run_eval_fail_overrides";
         let mut events = base_valid_bundle(run_id);
         events.push(ev(
@@ -2088,7 +2852,7 @@ mod discovery_enforcement_tests {
             "d1",
             json!({ "openai": false, "transformers": false, "model_artifacts": false }),
         ));
-        // Later evaluation explicitly fails.
+        // Last `evaluation_reported` wins for `evaluation_passed`.
         events.push(ev(
             run_id,
             "evaluation_reported",
@@ -2106,6 +2870,38 @@ mod discovery_enforcement_tests {
         let state =
             projection::derive_current_state_from_events_with_context(run_id, &events, None, None);
         assert!(state.requirements.missing.is_empty());
+        assert_eq!(state.model.evaluation_passed, Some(false));
+        assert_eq!(compliance_verdict_from_state(&state), "INVALID");
+        assert!(blocked_reasons_from_state(&state).is_empty());
+    }
+
+    #[test]
+    fn single_explicit_failed_evaluation_is_invalid() {
+        let run_id = "run_eval_fail_only";
+        let events = vec![
+            ev(
+                run_id,
+                "ai_discovery_reported",
+                "d0",
+                json!({ "openai": false, "transformers": false, "model_artifacts": false }),
+            ),
+            ev(
+                run_id,
+                "evaluation_reported",
+                "e1",
+                json!({
+                    "ai_system_id": "ai1",
+                    "dataset_id": "d1",
+                    "model_version_id": "m1",
+                    "metric": "acc",
+                    "value": 0.1,
+                    "threshold": 0.8,
+                    "passed": false,
+                }),
+            ),
+        ];
+        let state =
+            projection::derive_current_state_from_events_with_context(run_id, &events, None, None);
         assert_eq!(state.model.evaluation_passed, Some(false));
         assert_eq!(compliance_verdict_from_state(&state), "INVALID");
     }
@@ -2242,17 +3038,15 @@ async fn me(
 
     let teams = match db::list_user_teams(&state.pool, &user.user_id).await {
         Ok(t) => t,
-        Err(e) => {
-            return api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB_ERROR",
-                "We could not load your teams.",
-                "Retry in a moment. If this persists, contact support (this is a server-side issue).",
-                Some(json!({ "raw": e.to_string() })),
-                None,
-                None,
-            )
-        }
+        Err(e) => return api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DB_ERROR",
+            "We could not load your teams.",
+            "Retry in a moment. If this persists, contact support (this is a server-side issue).",
+            Some(json!({ "raw": e.to_string() })),
+            None,
+            None,
+        ),
     };
 
     let out = MeOut {

@@ -13,6 +13,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use aigov_audit::api_usage::{key_fingerprint, ApiUsageState};
+use aigov_audit::audit_api_key;
 use aigov_audit::evidence_usage::FREE_TIER_EVIDENCE_LIMIT;
 use aigov_audit::govai_api;
 use aigov_audit::govai_environment::{policy_version_for, GovaiEnvironment};
@@ -20,8 +21,22 @@ use aigov_audit::metering::{self, GovaiPlan, MeteringConfig};
 use aigov_audit::policy_config::ResolvedPolicyConfig;
 use aigov_audit::project;
 use aigov_audit::schema::EvidenceEvent;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 
 static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+/// Same key→tenant mapping contract as `tenant_isolation_http` tests (init once per process).
+fn ensure_dev_api_key_tenant_map() {
+    if audit_api_key::api_key_tenant_map_is_initialized() {
+        return;
+    }
+    std::env::set_var(
+        "GOVAI_API_KEYS_JSON",
+        r#"{"key_default":"default","key_github_actions":"github-actions","key_tenant_a":"tenant-a","key_tenant_b":"tenant-b"}"#,
+    );
+    let _ = audit_api_key::init_api_key_tenant_map(GovaiEnvironment::Dev);
+}
 
 fn database_url() -> Option<String> {
     std::env::var("TEST_DATABASE_URL")
@@ -688,4 +703,539 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
     assert_eq!(v["used"], json!(25));
     assert_eq!(v["limit"], json!(25));
     assert_eq!(v["plan"], "free");
+}
+
+#[tokio::test]
+async fn stripe_webhook_secret_missing_returns_503() {
+    let Some(url) = database_url() else {
+        eprintln!("skip stripe_webhook_http: set DATABASE_URL or TEST_DATABASE_URL");
+        return;
+    };
+
+    let _lock = CWD_LOCK.lock().expect("lock");
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::env::set_current_dir(dir.path()).expect("chdir");
+    seed_empty_tenant_ledger("default");
+    std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect db");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrate");
+
+    let app = test_router(pool).await;
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/stripe/webhook")
+                .body(Body::from(r#"{"id":"evt_x","type":"invoice.paid"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
+    let Some(url) = database_url() else {
+        eprintln!("skip stripe_webhook_http: set DATABASE_URL or TEST_DATABASE_URL");
+        return;
+    };
+
+    let _lock = CWD_LOCK.lock().expect("lock");
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::env::set_current_dir(dir.path()).expect("chdir");
+    seed_empty_tenant_ledger("default");
+    std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
+    std::env::set_var("GOVAI_STRIPE_WEBHOOK_SECRET", "plain_webhook_secret");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect db");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrate");
+
+    let app = test_router(pool).await;
+
+    let body = br#"{"id":"evt_stripe_integration_1","type":"invoice.paid"}"#;
+    let t = chrono::Utc::now().timestamp();
+    let signed = format!("{}.{t}", String::from_utf8_lossy(body));
+    let mut mac = Hmac::<Sha256>::new_from_slice(b"plain_webhook_secret").expect("hmac key");
+    mac.update(signed.as_bytes());
+    let sig = hex::encode(mac.finalize().into_bytes());
+    let hdr = format!("t={t},v1={sig}");
+
+    let r1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/stripe/webhook")
+                .header("Stripe-Signature", hdr.as_str())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.as_slice()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r1.status(), StatusCode::OK);
+
+    let r2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/stripe/webhook")
+                .header("Stripe-Signature", hdr.as_str())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.as_slice()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r2.status(), StatusCode::OK);
+    let b2: Value = serde_json::from_slice(&r2.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(b2["duplicate"], true);
+
+    let run_id = Uuid::new_v4().to_string();
+    let ev_id = Uuid::new_v4().to_string();
+    let ev_body = serde_json::to_string(&sample_data_registered(&run_id, &ev_id)).unwrap();
+    let r3 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evidence")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(ev_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r3.status(), StatusCode::OK);
+
+    let r4 = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/billing/usage-summary?unit=evidence_event")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r4.status(), StatusCode::OK);
+    let v: Value = serde_json::from_slice(&r4.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert!(v["usage_count"].as_i64().unwrap() >= 1);
+    assert!(!v["traces"].as_array().unwrap().is_empty());
+
+    std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
+}
+
+#[tokio::test]
+async fn billing_checkout_session_missing_stripe_secret_returns_503() {
+    let Some(url) = database_url() else {
+        eprintln!("skip billing_http: set DATABASE_URL or TEST_DATABASE_URL");
+        return;
+    };
+
+    let _lock = CWD_LOCK.lock().expect("lock");
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::env::set_current_dir(dir.path()).expect("chdir");
+    ensure_dev_api_key_tenant_map();
+    seed_empty_tenant_ledger("default");
+
+    std::env::set_var("GOVAI_API_KEYS", "key_default");
+    std::env::remove_var("GOVAI_STRIPE_SECRET_KEY");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect db");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrate");
+
+    let app = test_router(pool).await;
+    let body = json!({
+        "price_id": "price_test123",
+        "success_url": "https://example.com/success",
+        "cancel_url": "https://example.com/cancel"
+    });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/billing/checkout-session")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, "Bearer key_default")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let v: Value = serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["error"]["code"], "STRIPE_NOT_CONFIGURED");
+
+    std::env::remove_var("GOVAI_API_KEYS");
+}
+
+#[tokio::test]
+async fn billing_checkout_session_requires_api_key_when_keys_configured() {
+    let Some(url) = database_url() else {
+        eprintln!("skip billing_http: set DATABASE_URL or TEST_DATABASE_URL");
+        return;
+    };
+
+    let _lock = CWD_LOCK.lock().expect("lock");
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::env::set_current_dir(dir.path()).expect("chdir");
+    ensure_dev_api_key_tenant_map();
+    seed_empty_tenant_ledger("default");
+
+    std::env::set_var("GOVAI_API_KEYS", "key_default");
+    std::env::set_var("GOVAI_STRIPE_SECRET_KEY", "sk_test_fake_for_auth_gate");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect db");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrate");
+
+    let app = test_router(pool).await;
+    let body = json!({
+        "price_id": "price_test123",
+        "success_url": "https://example.com/success",
+        "cancel_url": "https://example.com/cancel"
+    });
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/billing/checkout-session")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    std::env::remove_var("GOVAI_API_KEYS");
+    std::env::remove_var("GOVAI_STRIPE_SECRET_KEY");
+}
+
+#[tokio::test]
+async fn stripe_webhook_subscription_updated_upserts_tenant_billing_account() {
+    let Some(url) = database_url() else {
+        eprintln!("skip billing_http: set DATABASE_URL or TEST_DATABASE_URL");
+        return;
+    };
+
+    let _lock = CWD_LOCK.lock().expect("lock");
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::env::set_current_dir(dir.path()).expect("chdir");
+    seed_empty_tenant_ledger("default");
+    std::env::set_var("GOVAI_STRIPE_WEBHOOK_SECRET", "plain_webhook_secret_sub_upd");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect db");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrate");
+
+    let app = test_router(pool.clone()).await;
+
+    let payload = json!({
+        "id": "evt_sub_webhook_integration_42",
+        "type": "customer.subscription.updated",
+        "data": {
+            "object": {
+                "id": "sub_webhook_test_42",
+                "customer": "cus_webhook_42",
+                "status": "active",
+                "current_period_start": 1710000000_i64,
+                "current_period_end": 1712678400_i64,
+                "metadata": { "tenant_id": "stripe_webhook_tid_42" },
+                "items": { "data": [ { "id": "si_webhook_item_42", "object": "subscription_item" } ] }
+            }
+        }
+    });
+    let body_bytes = serde_json::to_vec(&payload).unwrap();
+    let t = chrono::Utc::now().timestamp();
+    let signed = format!("{}.{t}", String::from_utf8_lossy(&body_bytes));
+    let mut mac = Hmac::<Sha256>::new_from_slice(b"plain_webhook_secret_sub_upd").expect("hmac");
+    mac.update(signed.as_bytes());
+    let sig = hex::encode(mac.finalize().into_bytes());
+    let hdr = format!("t={t},v1={sig}");
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/stripe/webhook")
+                .header("Stripe-Signature", hdr.as_str())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK, "webhook body");
+
+    let row: (String, Option<String>, Option<String>, String) = sqlx::query_as(
+        r#"
+        select tenant_id, stripe_customer_id, stripe_subscription_id, subscription_status
+        from public.tenant_billing_accounts
+        where tenant_id = 'stripe_webhook_tid_42'
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("tenant billing row");
+    assert_eq!(row.0, "stripe_webhook_tid_42");
+    assert_eq!(row.1.as_deref(), Some("cus_webhook_42"));
+    assert_eq!(row.2.as_deref(), Some("sub_webhook_test_42"));
+    assert_eq!(row.3, "active");
+
+    std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
+}
+
+#[tokio::test]
+async fn billing_status_returns_none_before_checkout() {
+    let Some(url) = database_url() else {
+        eprintln!("skip billing_http: set DATABASE_URL or TEST_DATABASE_URL");
+        return;
+    };
+
+    let _lock = CWD_LOCK.lock().expect("lock");
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::env::set_current_dir(dir.path()).expect("chdir");
+    ensure_dev_api_key_tenant_map();
+    std::env::set_var("GOVAI_API_KEYS", "key_github_actions");
+    seed_empty_tenant_ledger("github-actions");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect db");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrate");
+
+    let app = test_router(pool).await;
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/billing/status")
+                .header(header::AUTHORIZATION, "Bearer key_github_actions")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let v: Value = serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["tenant_id"], "github-actions");
+    assert_eq!(v["subscription_status"], "none");
+    assert!(v["stripe_customer_id"].is_null());
+
+    std::env::remove_var("GOVAI_API_KEYS");
+}
+
+#[tokio::test]
+async fn billing_report_usage_is_idempotent_without_stripe_item() {
+    let Some(url) = database_url() else {
+        eprintln!("skip billing_http: set DATABASE_URL or TEST_DATABASE_URL");
+        return;
+    };
+
+    let _lock = CWD_LOCK.lock().expect("lock");
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::env::set_current_dir(dir.path()).expect("chdir");
+    ensure_dev_api_key_tenant_map();
+    std::env::set_var("GOVAI_API_KEYS", "key_tenant_b");
+    seed_empty_tenant_ledger("tenant-b");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect db");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrate");
+
+    let app = test_router(pool).await;
+    let r1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/billing/report-usage")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, "Bearer key_tenant_b")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r1.status(), StatusCode::OK);
+    let b1: Value = serde_json::from_slice(&r1.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(b1["idempotent_hit"], false);
+
+    let r2 = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/billing/report-usage")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, "Bearer key_tenant_b")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r2.status(), StatusCode::OK);
+    let b2: Value = serde_json::from_slice(&r2.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(b2["idempotent_hit"], true);
+    assert_eq!(b1["report_id"], b2["report_id"]);
+
+    std::env::remove_var("GOVAI_API_KEYS");
+}
+
+#[tokio::test]
+async fn billing_enforcement_blocks_evidence_when_subscription_inactive() {
+    let Some(url) = database_url() else {
+        eprintln!("skip billing_http: set DATABASE_URL or TEST_DATABASE_URL");
+        return;
+    };
+
+    let _lock = CWD_LOCK.lock().expect("lock");
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::env::set_current_dir(dir.path()).expect("chdir");
+    ensure_dev_api_key_tenant_map();
+    std::env::set_var("GOVAI_API_KEYS", "key_tenant_a");
+    std::env::set_var("GOVAI_BILLING_ENFORCEMENT", "on");
+    seed_empty_tenant_ledger("tenant-a");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect db");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrate");
+
+    let app = test_router(pool).await;
+    let run_id = Uuid::new_v4().to_string();
+    let ev_id = Uuid::new_v4().to_string();
+    let body = serde_json::to_string(&sample_data_registered(&run_id, &ev_id)).unwrap();
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evidence")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, "Bearer key_tenant_a")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    let v: Value = serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(v["error"]["code"], "BILLING_INACTIVE");
+
+    std::env::remove_var("GOVAI_API_KEYS");
+    std::env::remove_var("GOVAI_BILLING_ENFORCEMENT");
+}
+
+#[tokio::test]
+async fn billing_enforcement_allows_evidence_when_subscription_active() {
+    let Some(url) = database_url() else {
+        eprintln!("skip billing_http: set DATABASE_URL or TEST_DATABASE_URL");
+        return;
+    };
+
+    let _lock = CWD_LOCK.lock().expect("lock");
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::env::set_current_dir(dir.path()).expect("chdir");
+    ensure_dev_api_key_tenant_map();
+    std::env::set_var("GOVAI_API_KEYS", "key_tenant_b");
+    std::env::set_var("GOVAI_BILLING_ENFORCEMENT", "on");
+    seed_empty_tenant_ledger("tenant-b");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect db");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("migrate");
+
+    sqlx::query(
+        r#"
+        insert into public.tenant_billing_accounts
+          (tenant_id, stripe_customer_id, stripe_subscription_id, subscription_status, updated_at)
+        values ('tenant-b', 'cus_x', 'sub_x', 'active', now())
+        on conflict (tenant_id) do update set subscription_status = 'active', updated_at = now()
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("seed billing");
+
+    let app = test_router(pool).await;
+    let run_id = Uuid::new_v4().to_string();
+    let ev_id = Uuid::new_v4().to_string();
+    let body = serde_json::to_string(&sample_data_registered(&run_id, &ev_id)).unwrap();
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evidence")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, "Bearer key_tenant_b")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    std::env::remove_var("GOVAI_API_KEYS");
+    std::env::remove_var("GOVAI_BILLING_ENFORCEMENT");
 }

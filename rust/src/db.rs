@@ -6,7 +6,7 @@ use uuid::Uuid;
 pub type DbPool = PgPool;
 
 /// Count of `.sql` files under `rust/migrations/`. Updated when migrations are added; tests assert parity.
-pub const EXPECTED_SQLX_MIGRATION_COUNT: i64 = 12;
+pub const EXPECTED_SQLX_MIGRATION_COUNT: i64 = 15;
 
 pub fn postgres_url_configured_nonempty() -> Result<(), String> {
     let url = std::env::var("GOVAI_DATABASE_URL")
@@ -53,7 +53,9 @@ pub async fn init_pool_from_env() -> Result<DbPool, String> {
     postgres_url_configured_nonempty()?;
     let database_url = std::env::var("GOVAI_DATABASE_URL")
         .or_else(|_| std::env::var("DATABASE_URL"))
-        .map_err(|_| "Missing Postgres URL: set GOVAI_DATABASE_URL (preferred) or DATABASE_URL.".to_string())?;
+        .map_err(|_| {
+            "Missing Postgres URL: set GOVAI_DATABASE_URL (preferred) or DATABASE_URL.".to_string()
+        })?;
     PgPoolOptions::new()
         .max_connections(10)
         .connect(&database_url)

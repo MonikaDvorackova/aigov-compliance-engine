@@ -181,6 +181,7 @@ fn bearer_token(authorization: &str) -> &str {
 fn is_usage_routed_path(method: &Method, path: &str) -> bool {
     (path == "/evidence" && method == Method::POST)
         || (path == "/compliance-summary" && method == Method::GET)
+        || (path == "/decision/evaluate" && method == Method::POST)
 }
 
 pub async fn gate_audit_routes(
