@@ -1117,7 +1117,7 @@ def build_parser() -> GovaiArgumentParser:
 
     s_exp_cfi = s_exp_sub.add_parser(
         "controlled-failure-injection",
-        help="900-run failure taxonomy × projection (VALID/INVALID/BLOCKED).",
+        help="Deterministic rubric-driven failure injection (VALID/INVALID/BLOCKED; policy conformance).",
     )
     s_exp_cfi.add_argument(
         "--output",
@@ -1137,6 +1137,18 @@ def build_parser() -> GovaiArgumentParser:
         required=True,
         metavar="DIR",
         help="Directory for artifact_bound_enforcement.csv and .json.",
+    )
+
+    s_exp_abr = s_exp_sub.add_parser(
+        "artifact-bundle-replay",
+        help="Experiment 2: concrete evidence bundles + manifest + export; gate vs replay rubric (200 runs).",
+    )
+    s_exp_abr.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        metavar="DIR",
+        help="Directory for artifact_bundle_replay.json, csv, and artifact tree.",
     )
 
     s_exp_rwci = s_exp_sub.add_parser(
@@ -1221,6 +1233,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.cmd == "experiment":
         from aigov_py.experiments import aggregate as exp_aggregate
         from aigov_py.experiments import artifact_bound_enforcement as exp_abe
+        from aigov_py.experiments import artifact_bundle_replay as exp_abr
         from aigov_py.experiments import controlled_failure_injection as exp_cfi
         from aigov_py.experiments import real_world_ci_runner as exp_rwci_runner
 
@@ -1229,6 +1242,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return exp_cfi.main_cli(getattr(args, "output"))
         if ec == "artifact-bound":
             return exp_abe.main_cli(getattr(args, "output"))
+        if ec == "artifact-bundle-replay":
+            return exp_abr.main_cli(output=getattr(args, "output"))
         if ec == "real-world-ci-runner":
             return exp_rwci_runner.main_cli(
                 output=getattr(args, "output"),

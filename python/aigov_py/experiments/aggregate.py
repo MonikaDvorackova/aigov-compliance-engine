@@ -42,17 +42,34 @@ def aggregate(
     if abe_path and abe_path.is_file():
         abe_payload = _read_json(abe_path)
 
+    cfi_flat: dict[str, Any] = {
+        "total_runs": overall.get("total_runs"),
+        "baseline_1_false_negative_rate": overall.get("baseline_1_false_negative_rate"),
+        "baseline_2_false_negative_rate": overall.get("baseline_2_false_negative_rate"),
+        "gate_detection_rate": overall.get("gate_detection_rate"),
+        "valid_retention_rate": overall.get("valid_retention_rate"),
+        "false_blocking_rate": overall.get("false_blocking_rate"),
+        "verdict_classification_accuracy": overall.get("verdict_classification_accuracy"),
+        "invalid_vs_blocked_match_rate": overall.get("invalid_vs_blocked_match_rate"),
+        "artifact_continuity_failure_detection_rate": overall.get(
+            "artifact_continuity_failure_detection_rate"
+        ),
+        "digest_mismatch_detection_rate": overall.get("digest_mismatch_detection_rate"),
+        "approval_ordering_violation_detection_rate": overall.get(
+            "approval_ordering_violation_detection_rate"
+        ),
+        "replicates_per_scenario": overall.get("replicates_per_scenario"),
+        "scenario_count": overall.get("scenario_count"),
+    }
+    ablations = overall.get("ablations")
+    if isinstance(ablations, dict):
+        for ab_name, ab_metrics in ablations.items():
+            if isinstance(ab_metrics, dict):
+                for mk, mv in ab_metrics.items():
+                    cfi_flat[f"ablation__{ab_name}__{mk}"] = mv
+
     final: dict[str, Any] = {
-        "controlled_failure_injection": {
-            "baseline_false_negative_rate": overall.get("baseline_false_negative_rate"),
-            "decision_gate_detection_rate": overall.get("decision_gate_detection_rate"),
-            "valid_retention_rate": overall.get("valid_retention_rate"),
-            "digest_mismatch_detection_rate": overall.get("digest_mismatch_detection_rate"),
-            "artifact_bound_verification_failure_rate": overall.get(
-                "artifact_bound_verification_failure_rate"
-            ),
-            "total_runs": overall.get("total_runs"),
-        },
+        "controlled_failure_injection": cfi_flat,
         "real_world_ci_injection": rwci_summary,
         "artifact_bound_enforcement": abe_payload,
     }
@@ -76,6 +93,8 @@ def aggregate(
 
     for key, val in final["controlled_failure_injection"].items():
         if val is None:
+            continue
+        if isinstance(val, (dict, list)):
             continue
         add_row("controlled_failure_injection", key, fmt(val))
 

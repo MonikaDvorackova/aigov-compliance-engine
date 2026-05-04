@@ -3,6 +3,10 @@ name = "aigov_audit"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "portable_evidence_digest_once"
+path = "src/bin/portable_evidence_digest_once.rs"
+
 [dependencies]
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
