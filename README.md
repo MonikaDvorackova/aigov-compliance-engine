@@ -58,6 +58,8 @@ It:
 - exports audit data via GET /api/export/:run_id
 - optionally enforces hosted Stripe subscription state for metered APIs (see docs/billing.md)
 
+**Multi-tenant ledger:** the ledger tenant is always derived from **API key mapping** (`GOVAI_API_KEYS_JSON` on the server). **`X-GovAI-Project` / `GOVAI_PROJECT` are metadata** (metering, labels, client hints) and **do not** determine which tenant ledger is used.
+
 Guarantees:
 
 - deterministic decision for given evidence + policy_version

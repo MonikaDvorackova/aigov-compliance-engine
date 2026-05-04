@@ -11,7 +11,8 @@ def export_run(client: GovAIClient, run_id: str, *, project: str | None = None) 
 
     Notes:
     - Requires audit API auth (Bearer token) on the Rust server.
-    - If ``project`` is set, passes it as ``X-GovAI-Project`` (legacy metering scope).
+    - Ledger tenant is derived from API key mapping on the server; ``project`` does **not** select the ledger.
+    - If ``project`` is set, passes it as ``X-GovAI-Project`` for metering / metadata only.
     - Returns the raw JSON object (including ``ok: false`` error objects).
     """
     rid = (run_id or "").strip()

@@ -119,7 +119,7 @@ flowchart LR
 
 ## Rust service (`rust/`, crate `aigov_audit`)
 
-- **Binary**: `cargo run` from `rust/` (root `Makefile`: `audit` / `audit_bg`).
+- **Binary**: run using `cargo run --bin aigov_audit --locked` from `rust/`, or via root `Makefile` targets (`audit` / `audit_bg`), which invoke the same binary with a locked dependency graph.
 - **Default bind**: `127.0.0.1:8088` — override with `AIGOV_BIND`.
 - **Startup line**: includes `environment` and `policy_version` (`rust/src/lib.rs`).
 - **Policy version**: `v0.5_dev` / `v0.5_staging` / `v0.5_prod` from [`rust/src/govai_environment.rs`](rust/src/govai_environment.rs) (tier from `AIGOV_ENVIRONMENT` → `AIGOV_ENV` → `GOVAI_ENV`). Full rules: [docs/env-resolution.md](docs/env-resolution.md).
@@ -131,7 +131,7 @@ flowchart LR
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/` | `ok`, `service` (`govai`), `version` (crate version) |
-| GET | `/health` | `{"ok": true}` |
+| GET | `/health` | `{"ok": true}` — **liveness-only** after successful startup; use **`GET /ready`** for DB connectivity, migrations, and writable ledger checks |
 | GET | `/status` | `ok`, `policy_version`, `environment` (`dev` / `staging` / `prod`) — policy file knobs are **not** in this JSON (see `policy.*.json` / `rust/src/policy_config.rs`) |
 | POST | `/evidence` | Ingest `EvidenceEvent`; policy gate; append to log |
 | GET | `/usage` | Usage and limits (`metering` off/on shapes); canonical schema in [`api/govai-http-v1.openapi.yaml`](api/govai-http-v1.openapi.yaml) |

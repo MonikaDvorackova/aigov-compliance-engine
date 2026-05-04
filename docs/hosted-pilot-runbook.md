@@ -83,9 +83,9 @@ If you are using the Docker Compose quickstart, set `GOVAI_BASE_URL` in `docker-
 
 ## Provision API key (operator)
 
-In hosted mode, enable authentication by setting `GOVAI_API_KEYS` on the server (recommended even for pilots).
+In hosted mode, enable authentication by setting **`GOVAI_API_KEYS_JSON`** on the server (recommended even for pilots). This is a JSON object mapping **raw API key string → tenant id** (the tenant id selects the per-tenant ledger file).
 
-- For local pilot setups, you can use: `GOVAI_API_KEYS=test-key`
+- For local pilot setups, you can use: `GOVAI_API_KEYS_JSON='{"test-key":"default"}'`
 
 - **Support contact**: `support@govbase.dev`
 
@@ -100,12 +100,14 @@ print(secrets.token_urlsafe(32))
 PY
 ```
 
-2) Configure the audit service with that token:
+2) Configure the audit service with that token mapped to a tenant id:
 
-- In Compose: set `GOVAI_API_KEYS="<token>"` under `govai-audit.environment`.
-- In a hosted deployment: set `GOVAI_API_KEYS="<token1>,<token2>"`.
+- In Compose: set `GOVAI_API_KEYS_JSON='{"<token>":"<tenant_id>"}'` under `govai-audit.environment` (escape quotes as needed for your shell).
+- In a hosted deployment: set a single JSON object, e.g. `GOVAI_API_KEYS_JSON='{"<token1>":"tenant-a","<token2>":"tenant-b"}'`.
 
 3) Distribute one token to the pilot user as `GOVAI_API_KEY`.
+
+**Note:** `X-GovAI-Project` / client `GOVAI_PROJECT` do **not** determine the ledger tenant; they are optional metadata (for example metering). Ledger isolation follows the API key mapping only.
 
 Expected failure if not configured correctly:
 
@@ -233,7 +235,7 @@ Collect:
 
 - **GovAI check failed (cannot fetch verdict)**
   - Root cause: invalid URL, auth rejected, or server not reachable.
-  - Fix: curl `GET /health` and `GET /status`; verify the bearer token is in `GOVAI_API_KEYS` on the server.
+  - Fix: curl `GET /health` and `GET /status`; verify the bearer token is a key in `GOVAI_API_KEYS_JSON` on the server.
 
 - **Onboarding demo never reaches `VALID`**
   - Root cause: server policy differs from what the demo expects, or evidence submission is failing.

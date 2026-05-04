@@ -88,7 +88,7 @@ fn normalize_error_code(raw: &str) -> String {
 }
 
 fn tenant_scoped_not_found_hint() -> &'static str {
-    "The resource was not found under the current tenant context. Check the run id, API key, and tenant or project header."
+    "The resource was not found under the current tenant context. Check the run_id and API key. Note: X-GovAI-Project does not determine the ledger tenant."
 }
 
 /// Backward-compatible shim for older call sites. Prefer `api_err` for new code.
@@ -1162,6 +1162,7 @@ fn extract_discovery_findings(events: &[EvidenceEvent]) -> Vec<DiscoveryFindingO
 
 /// Machine-readable audit export: metadata, chain hashes, bundle digest, decision extracts, and timestamps.
 /// Uses `bundle::bundle_document_value` and `bundle::bundle_sha256` (same as `/bundle` and `/bundle-hash`).
+/// Ledger tenant follows API key mapping (`GOVAI_API_KEYS_JSON`); `X-GovAI-Project` is metering/metadata, not tenant isolation.
 async fn export_run_route(
     State(audit): State<AuditState>,
     headers: HeaderMap,
