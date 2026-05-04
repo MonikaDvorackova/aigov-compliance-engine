@@ -22,7 +22,7 @@ hex = "0.4"
 hmac = "0.12"
 subtle = "2.6"
 base64 = "0.22"
-urlencoding = "2"
+urlencoding = "2.1"
 
 [dev-dependencies]
 hmac = "0.12"

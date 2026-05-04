@@ -9,6 +9,7 @@ export const CONSOLE_NAV: ConsoleNavItem[] = [
   { href: "/policies", title: "Policies", subtitle: "Version register from runs" },
   { href: "/evidence", title: "Evidence", subtitle: "Audit posture & artifact register" },
   { href: "/ai-discovery", title: "AI discovery", subtitle: "Signals in your codebase" },
+  { href: "/billing", title: "Billing", subtitle: "Hosted Stripe subscription & usage" },
 ];
 
 export function navMetaForPath(pathname: string): ConsoleNavItem {

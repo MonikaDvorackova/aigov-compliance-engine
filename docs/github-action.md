@@ -13,6 +13,8 @@ A green job using **this action** therefore means CI artefacts were anchored by 
 
 **`govai check` alone** does **not** prove artefact continuity; treat it as a policy readout **without** cryptographic binding to CI outputs. Prefer **`submit-evidence-pack` + `verify-evidence-pack`** for anything that behaves as a release gate.
 
+**CI integration:** this composite action is the artefact-bound CI integration. The currently supported customer-facing decision endpoint is `GET /compliance-summary`. Runtime decision APIs are separate hardening work and are not documented as available in this branch.
+
 ## Synthetic smoke workflow (explicitly labelled)
 
 Manual workflow **`.github/workflows/govai-smoke.yml`** is labelled **SYNTHETIC SMOKE TEST ONLY**. It pushes scripted curls and optionally runs **`govai check`**; it runs **only** on **`workflow_dispatch`** — not automatically on merges to **`main`**. Use it for demos and connectivity probes, never as proof of artefact-bound production compliance.
@@ -107,7 +109,7 @@ Missing **`artifacts_path`**, **`api_key`**, or missing directory → action exi
 
 ## Runtime decision API (non-CI)
 
-For **call-time** enforcement (services, API gateways), use **`POST /decision/evaluate`** (same verdict as **`GET /compliance-summary`**, plus `actionable`, `timings_ms`, and `policy_compatibility`). **`GET /decision/latency`** returns the last evaluation timings for this process. CLI: `govai decision evaluate` / `govai decision verify`.
+For non-CI enforcement, call `GET /compliance-summary` with the same `run_id` after evidence submission. Runtime decision APIs are planned separately and are not part of this branch.
 
 ## Billing (minimal)
 
