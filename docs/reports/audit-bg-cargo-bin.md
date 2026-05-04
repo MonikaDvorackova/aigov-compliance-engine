@@ -2,20 +2,20 @@
 
 ## Summary
 
-This change fixes the Makefile audit service startup command by explicitly selecting the Rust binary `aigov_audit`.
+This change fixes the Makefile audit service startup command by explicitly selecting the Rust binary aigov_audit.
 
 ## Problem
 
-The repository now contains multiple Rust binaries:
-
-- `aigov_audit`
-- `portable_evidence_digest_once`
-
-Because of that, plain `cargo run` is ambiguous and CI fails when `make audit_bg` tries to start the audit service.
+The repository contains multiple Rust binaries, so plain cargo run is ambiguous and fails when make audit_bg starts the audit service.
 
 ## Fix
 
-The Makefile now uses:
+The Makefile now starts the audit service with cargo run --bin aigov_audit.
 
-```bash
-cargo run --bin aigov_audit
+## Evaluation gate
+
+Verified that the audit service startup path no longer uses ambiguous plain cargo run for the audit service binary.
+
+## Human approval gate
+
+This change is limited to Makefile startup command selection. It does not change compliance verdict semantics, policy logic, evidence requirements, or gate behavior.
