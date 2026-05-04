@@ -8,7 +8,7 @@
 
 - **`govai-compliance-gate`** now runs whenever **`evidence_pack`** emits a non-empty **`run_id`** and the head repository for **`pull_request`** events is **this** repository (fork PRs cannot use repository secrets; those workflows fail closed with an explicit error instead of skipping hosted validation silently).
 - **`pull_request`** targets **`main` / `staging`** are no longer excluded from the hosted gate solely because they are PRs.
-- **`govai-compliance-gate`** installs **`aigov-py==0.2.1`** from PyPI (same pin as the published composite action), not an editable install from `./python`.
+- **`govai-compliance-gate`** installs **`aigov-py==0.2.0`** from PyPI (same pin as the published composite action), not an editable install from `./python`.
 - **`verify-evidence-pack`** in that gate uses **`--require-export`** so the export cross-check is not best-effort in production CI.
 - Emitting an empty **`run_id`** when **`docs/reports`** changes could not produce a single report basename is now a **hard error** (no empty **`run_id`** with a “skip” that still looks like success).
 - Local **`evidence_pack`** GovAI check no longer exits **0** when **`run_id`** is unexpectedly empty after report changes.
@@ -35,7 +35,7 @@
 
 - `.github/workflows/compliance.yml` — PR + same-repo hosted gate, fork fail-closed job, pinned CLI, **`--require-export`**, run_id and local check behaviour, exit kind logging.
 - `.github/workflows/govai-ci.yml` — wait on **`/ready`**.
-- `action.yml`, `.github/actions/govai-check/action.yml` — **`require_export`** (default **`true`** for stricter export cross-check), exit kind line, unexpanded verify flag.
+- `action.yml`, `.github/actions/govai-check/action.yml` — optional **`require_export`**, exit kind line, unexpanded verify flag.
 - `Makefile` — **`audit_bg` / `check_audit`** use **`/ready`**.
 - `rust/src/govai_api.rs` — client-safe errors for **`/bundle-hash`**, **`/api/export`**, **`/ready`**; no **`raw`** in JSON for those paths; tenant details not echoed.
 - `python/aigov_py/evidence_artifact_gate.py` — export fetch returns **(hashes, skip reason)**.
@@ -50,7 +50,7 @@
 | PR to `main` / `staging` with evidence | Hosted gate often **skipped** (only **`push` to `main`**) | Same-repo PRs with **`run_id`** run **`govai-compliance-gate`** |
 | Fork PR with evidence | Could be **green** without hosted verify | **Fails** with explicit **fork** message |
 | Empty **`run_id`** with report changes | Could **skip** local check | **Fail** in emit or local check |
-| Hosted gate CLI install | **`pip install -e ./python`** | **`aigov-py==0.2.1`** |
+| Hosted gate CLI install | **`pip install -e ./python`** | **`aigov-py==0.2.0`** |
 | Export cross-check in production CI | Best-effort / silent | **`--require-export`** in **`compliance.yml`** |
 | API error JSON | Could include **`raw`** / internal strings | Generic messages; details in logs |
 | Readiness in docs / CI | Mixed **`/status` / `/health`** | **`/ready`** for automation |
