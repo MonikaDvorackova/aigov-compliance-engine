@@ -1,23 +1,19 @@
-# Evidence first-write initialization (API-key tenant ledger)
+# Evidence first-write initialization (tenant/project ledger)
 
 ## Summary
 
-`POST /evidence` must allow the **first evidence event** to initialize a new **ledger for the API-key tenant** (from **`GOVAI_API_KEYS_JSON`**) when that ledger does not exist yet.
+`POST /evidence` must allow the **first evidence event** to initialize a new tenant/project ledger when scoping is provided via:
 
-Clients may still send optional labeling metadata, for example:
-
-- `X-GovAI-Project: <project>` (metadata / billing / usage labels only — **not** the ledger isolation boundary)
+- `X-GovAI-Project: <project>`
 
 This is required so GitHub Actions (and other clients) can:
 
 1. Create a new run with a first evidence event, then
-2. Call `govai check` / `GET /compliance-summary` with the **same API key** and `run_id` (same ledger tenant).
-
-**Ledger isolation:** using one API key across multiple projects shares the same ledger. Separate tenants require separate API keys.
+2. Call `govai check` / `GET /compliance-summary` under the same tenant context.
 
 ## Incident / failure mode
 
-Observed failure on first write (no prior ledger file for the API-key tenant):
+Observed failure on first write (no prior ledger file for the tenant/project):
 
 - Request:
   - `POST /evidence`
@@ -25,7 +21,7 @@ Observed failure on first write (no prior ledger file for the API-key tenant):
   - `X-GovAI-Project: github-actions`
 - Response:
   - `POLICY_VIOLATION` (`environment_policy`)
-  - error details: `log not found: audit_log__github-actions.jsonl` (the `__…` suffix is the **tenant_id** from **`GOVAI_API_KEYS_JSON`** for that API key, not from **`X-GovAI-Project`**)
+  - error details: `log not found: audit_log__github-actions.jsonl`
 
 ## Root cause
 
@@ -40,7 +36,7 @@ Treat a missing tenant-scoped ledger file as an **empty ledger** (no events yet)
 This preserves:
 
 - **payload validation** (the submitted event is still validated)
-- **tenant isolation** (ledger path is determined **only** by the API-key tenant from **`GOVAI_API_KEYS_JSON`**; **`X-GovAI-Project` does not define the ledger path**)
+- **tenant isolation** (ledger path still depends on `X-GovAI-Project` / bearer fingerprint)
 - **verdict logic** (no compliance checks were weakened; `govai check` can still return `BLOCKED` for incomplete evidence)
 
 ## Tests
@@ -61,8 +57,8 @@ Added an HTTP regression test that:
 
 ## Evaluation gate
 
-A first `POST /evidence` request for a new **API-key tenant** ledger must return a successful response and initialize the ledger instead of failing with `log not found`.
+A first `POST /evidence` request for a new tenant/project ledger must return a successful response and initialize the ledger instead of failing with `log not found`.
 
 ## Human approval gate
 
-This change is approved because first-write ledger initialization is required for hosted operation. It preserves **API-key-derived** tenant isolation and does not weaken compliance verdict logic.
+This change is approved because first-write ledger initialization is required for hosted operation. It preserves tenant isolation and does not weaken compliance verdict logic.
