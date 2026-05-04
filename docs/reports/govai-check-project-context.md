@@ -5,11 +5,14 @@
 Ensure `POST /evidence` and `govai check` run under the **same**:
 
 - `run_id` (evidence correlation key)
-- tenant/project context (header `X-GovAI-Project`)
+- **ledger tenant** (the caller’s API key as mapped in **`GOVAI_API_KEYS_JSON`** — this is the only ledger isolation boundary)
+- optionally the same **`X-GovAI-Project`** value for consistent metadata / billing / usage labels (this header does **not** select the ledger)
 
-Target project context:
+Target project label (optional, for consistent headers across steps):
 
 - `X-GovAI-Project: github-actions`
+
+**Ledger isolation:** using one API key across multiple projects shares the same ledger. Separate tenants require separate API keys.
 
 ## What changed
 
@@ -79,18 +82,18 @@ govai check --run-id "$GOVAI_RUN_ID"
 
 Expected behavior:
 
-- `GET /compliance-summary` is performed under the same tenant/project context as `POST /evidence`.
+- `GET /compliance-summary` uses the **same API key** and `run_id` as `POST /evidence` (same ledger tenant). Matching `X-GovAI-Project` keeps optional metadata consistent but does not define isolation.
 
 ## Notes
 
-- The Rust audit API uses `X-GovAI-Project` as a first-class tenant scoping mechanism (recommended by server error hints).
-- This change ensures the GitHub Action “initialize run with minimal evidence” step and the compliance gate query are scoped identically, avoiding `RUN_NOT_FOUND` from cross-tenant/project mismatches.
+- Ledger tenant is derived **strictly** from the API key mapping in **`GOVAI_API_KEYS_JSON`**. **`X-GovAI-Project`** is optional metadata / billing / labeling context only and is **not** a ledger isolation boundary.
+- Aligning `X-GovAI-Project` across the GitHub Action “initialize run with minimal evidence” step and the compliance gate avoids mismatched usage labels; **RUN_NOT_FOUND**-style mismatches are resolved by matching API key + `run_id`, not by the project header.
 
 
 ## Evaluation gate
 
-`POST /evidence` and `govai check` must use the same `GOVAI_RUN_ID`, `GOVAI_AUDIT_BASE_URL`, `GOVAI_API_KEY`, and `X-GovAI-Project` context.
+`POST /evidence` and `govai check` must use the same `GOVAI_RUN_ID`, `GOVAI_AUDIT_BASE_URL`, and **`GOVAI_API_KEY`** (same ledger tenant from **`GOVAI_API_KEYS_JSON`**). Use the same optional **`X-GovAI-Project`** only when you want consistent project metadata across those calls.
 
 ## Human approval gate
 
-This change is approved because it makes tenant/project context explicit and consistent across evidence submission and compliance checking. It does not bypass evidence validation or authorization.
+This change is approved because it makes **API-key ledger tenant** and optional project metadata explicit and consistent across evidence submission and compliance checking. It does not bypass evidence validation or authorization.
