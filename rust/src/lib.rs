@@ -15,6 +15,8 @@ pub mod api_usage;
 pub mod api_error;
 pub mod audit_api_key;
 pub mod billing_trace;
+pub mod decision_evaluations;
+pub mod decision_runtime;
 pub mod stripe_webhook;
 pub mod stripe_billing;
 pub mod auth;
