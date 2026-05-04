@@ -45,7 +45,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build audit service
-        run: cd rust && cargo build
+        run: cd rust && cargo build --locked --bin aigov_audit
 
       - name: Start audit service
         run: make audit_bg

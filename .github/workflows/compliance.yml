@@ -277,6 +277,9 @@ jobs:
           pip install -U pip
           pip install -e .
 
+      # Note: Embedded migrations in the `aigov_audit` binary are authoritative at runtime.
+      # This sqlx-cli copy + migrate step is redundant for correctness; it remains for debug visibility
+      # and to mirror partial migration layout without relying on private migration internals.
       - name: Apply audit DB migrations (sqlx)
         if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
         run: |
