@@ -26,7 +26,7 @@ All GovAI API error responses use this JSON shape:
 
 ### `MISSING_TENANT_CONTEXT` (400)
 - **Meaning**: The request is missing tenant context in `staging`/`prod`.
-- **Fix**: Provide `X-GovAI-Project: <your_project_id>` (recommended) or send a bearer API key (tenant fingerprint fallback).
+- **Fix**: Send `Authorization: Bearer <api_key>` that appears in the server’s **`GOVAI_API_KEYS_JSON`** map (ledger tenant isolation is **API-key derived**; optional **`X-GovAI-Project`** is metadata / usage labels and is **not** the ledger isolation boundary).
 
 ## Evidence submission (`POST /evidence`)
 
@@ -42,7 +42,7 @@ All GovAI API error responses use this JSON shape:
 
 ### `RUN_NOT_FOUND` (404)
 - **Meaning**: No evidence exists for this `run_id` in the current tenant ledger.
-- **Fix**: Verify `run_id` and ensure the same tenant context (`X-GovAI-Project` / API key) is used as when evidence was ingested.
+- **Fix**: Verify `run_id` and use the **same API key** (same ledger tenant from **`GOVAI_API_KEYS_JSON`**) as when evidence was ingested. Optional **`X-GovAI-Project`** does not select the ledger tenant.
 
 ## Export (`GET /api/export/:run_id`)
 
@@ -52,5 +52,5 @@ All GovAI API error responses use this JSON shape:
 
 ### `RUN_NOT_FOUND` (404)
 - **Meaning**: No evidence exists for this `run_id` in the current tenant ledger.
-- **Fix**: Same as compliance summary: check `run_id` + tenant context.
+- **Fix**: Same as compliance summary: check `run_id` and API-key ledger tenant (not `X-GovAI-Project`).
 

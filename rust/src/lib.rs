@@ -37,20 +37,25 @@ fn default_bind() -> SocketAddr {
     SocketAddr::from(([127, 0, 0, 1], 8088))
 }
 
-fn bind_addr_from_env() -> SocketAddr {
-    if let Ok(s) = std::env::var("AIGOV_BIND") {
-        if let Ok(addr) = s.parse::<SocketAddr>() {
-            return addr;
+fn bind_addr_from_env() -> Result<SocketAddr, String> {
+    if let Ok(raw) = std::env::var("AIGOV_BIND") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return trimmed.parse::<SocketAddr>().map_err(|e| {
+                format!(
+                    "Invalid AIGOV_BIND {trimmed:?}: {e}. Use a valid host:port (e.g. \"0.0.0.0:8088\"), or unset/whitespace-only AIGOV_BIND to fall back to PORT / the default bind."
+                )
+            });
         }
     }
 
     if let Ok(port_s) = std::env::var("PORT") {
         if let Ok(port) = port_s.parse::<u16>() {
-            return SocketAddr::from(([0, 0, 0, 0], port));
+            return Ok(SocketAddr::from(([0, 0, 0, 0], port)));
         }
     }
 
-    default_bind()
+    Ok(default_bind())
 }
 
 pub(crate) fn staging_prod_bind_must_be_reachable(
@@ -85,7 +90,13 @@ async fn assert_staging_prod_operational_constraints(
 
 /// Run the HTTP server (same as the `aigov_audit` binary).
 pub async fn run() -> Result<(), String> {
-    let addr = bind_addr_from_env();
+    let addr = match bind_addr_from_env() {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("{e}");
+            return Err(e);
+        }
+    };
 
     let deployment_env = match govai_environment::resolve_from_env() {
         Ok(e) => e,
@@ -244,7 +255,7 @@ mod tests {
         std::env::set_var("PORT", "9999");
 
         assert_eq!(
-            bind_addr_from_env(),
+            bind_addr_from_env().unwrap(),
             SocketAddr::from(([127, 0, 0, 1], 5555))
         );
         clear_env_keys();
@@ -256,20 +267,46 @@ mod tests {
         clear_env_keys();
 
         std::env::set_var("PORT", "3000");
-        assert_eq!(bind_addr_from_env(), SocketAddr::from(([0, 0, 0, 0], 3000)));
+        assert_eq!(
+            bind_addr_from_env().unwrap(),
+            SocketAddr::from(([0, 0, 0, 0], 3000))
+        );
 
         clear_env_keys();
     }
 
     #[test]
-    fn bind_addr_falls_back_to_port_when_aigov_bind_invalid() {
+    fn bind_addr_errors_when_aigov_bind_nonempty_invalid() {
         let _g = env_lock().lock().unwrap();
         clear_env_keys();
 
         std::env::set_var("AIGOV_BIND", "not-a-socket-addr");
         std::env::set_var("PORT", "3001");
 
-        assert_eq!(bind_addr_from_env(), SocketAddr::from(([0, 0, 0, 0], 3001)));
+        let err = bind_addr_from_env().unwrap_err();
+        assert!(err.contains("AIGOV_BIND"), "{err}");
+        clear_env_keys();
+    }
+
+    #[test]
+    fn bind_addr_empty_or_whitespace_aigov_bind_allows_port_fallback() {
+        let _g = env_lock().lock().unwrap();
+        clear_env_keys();
+
+        std::env::set_var("AIGOV_BIND", "");
+        std::env::set_var("PORT", "3002");
+        assert_eq!(
+            bind_addr_from_env().unwrap(),
+            SocketAddr::from(([0, 0, 0, 0], 3002))
+        );
+
+        std::env::set_var("AIGOV_BIND", "   \t  ");
+        std::env::set_var("PORT", "3003");
+        assert_eq!(
+            bind_addr_from_env().unwrap(),
+            SocketAddr::from(([0, 0, 0, 0], 3003))
+        );
+
         clear_env_keys();
     }
 
@@ -278,10 +315,10 @@ mod tests {
         let _g = env_lock().lock().unwrap();
         clear_env_keys();
 
-        assert_eq!(bind_addr_from_env(), default_bind());
+        assert_eq!(bind_addr_from_env().unwrap(), default_bind());
 
         std::env::set_var("PORT", "not-a-number");
-        assert_eq!(bind_addr_from_env(), default_bind());
+        assert_eq!(bind_addr_from_env().unwrap(), default_bind());
 
         clear_env_keys();
     }
