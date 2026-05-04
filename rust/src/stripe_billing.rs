@@ -1,12 +1,34 @@
 //! Ledger-tenant Stripe billing: checkout sessions, webhook-driven account rows, metered usage reports, enforcement gate.
 
+use crate::audit_api_key;
 use crate::billing_trace;
 use crate::db::DbPool;
+use crate::govai_environment::GovaiEnvironment;
+use axum::http::HeaderMap;
 use chrono::{DateTime, Datelike, TimeZone, Utc};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sqlx::Row;
 
 const ACTIVE_STATUSES: &[&str] = &["active", "trialing"];
+
+pub const BILLING_UNIT_EVIDENCE_EVENT: &str = "evidence_event";
+pub const BILLING_UNIT_COMPLIANCE_CHECK: &str = "compliance_check";
+pub const BILLING_UNIT_AUDIT_EXPORT: &str = "audit_export";
+pub const BILLING_UNIT_DISCOVERY_SCAN: &str = "discovery_scan";
+
+pub static ALL_BILLING_UNITS: &[&str] = &[
+    BILLING_UNIT_EVIDENCE_EVENT,
+    BILLING_UNIT_COMPLIANCE_CHECK,
+    BILLING_UNIT_AUDIT_EXPORT,
+    BILLING_UNIT_DISCOVERY_SCAN,
+];
+
+pub fn ledger_tenant_for_billing_headers(
+    headers: &HeaderMap,
+    deployment_env: GovaiEnvironment,
+) -> Result<String, String> {
+    audit_api_key::require_tenant_id_from_api_key_for_ledger(headers, deployment_env)
+}
 
 fn enc_val(s: &str) -> String {
     urlencoding::encode(s).into_owned()
@@ -26,7 +48,12 @@ pub fn billing_enforcement_enabled() -> bool {
 pub fn billing_enforcement_exempt_path(path: &str) -> bool {
     matches!(
         path,
-        "/billing/checkout-session" | "/billing/status" | "/stripe/webhook"
+        "/billing/checkout-session"
+            | "/billing/status"
+            | "/billing/portal-session"
+            | "/billing/invoices"
+            | "/billing/reconciliation"
+            | "/stripe/webhook"
     )
 }
 
@@ -138,6 +165,133 @@ fn first_subscription_item_id(sub: &Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+fn env_price_for_unit(unit: &str) -> Option<String> {
+    let key = match unit {
+        BILLING_UNIT_EVIDENCE_EVENT => "GOVAI_STRIPE_PRICE_EVIDENCE_EVENT",
+        BILLING_UNIT_COMPLIANCE_CHECK => "GOVAI_STRIPE_PRICE_COMPLIANCE_CHECK",
+        BILLING_UNIT_AUDIT_EXPORT => "GOVAI_STRIPE_PRICE_AUDIT_EXPORT",
+        BILLING_UNIT_DISCOVERY_SCAN => "GOVAI_STRIPE_PRICE_DISCOVERY_SCAN",
+        _ => return None,
+    };
+    std::env::var(key)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+pub fn billing_unit_for_stripe_price_id(price_id: &str) -> Option<&'static str> {
+    let pid = price_id.trim();
+    for u in ALL_BILLING_UNITS {
+        if env_price_for_unit(u).as_deref() == Some(pid) {
+            return Some(u);
+        }
+    }
+    if let Ok(legacy) = std::env::var("GOVAI_STRIPE_PRICE_ID") {
+        if legacy.trim() == pid {
+            return Some(BILLING_UNIT_EVIDENCE_EVENT);
+        }
+    }
+    None
+}
+
+pub fn log_stripe_unknown_price_warning(
+    tenant_id: &str,
+    subscription_id: &str,
+    price_id: &str,
+    item_id: &str,
+) {
+    let line = json!({
+        "level": "WARN",
+        "msg": "stripe_subscription_item_unknown_price",
+        "tenant_id": tenant_id,
+        "stripe_subscription_id": subscription_id,
+        "stripe_price_id": price_id,
+        "stripe_subscription_item_id": item_id,
+    });
+    eprintln!("{}", line);
+}
+
+fn price_id_from_item(item: &Value) -> Option<String> {
+    item.get("price")?
+        .get("id")?
+        .as_str()
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+}
+
+pub async fn sync_subscription_items_from_subscription_json(
+    pool: &DbPool,
+    tenant_id: &str,
+    subscription: &Value,
+) -> Result<(), String> {
+    let sub_id = jstr(subscription, &["id"]).ok_or_else(|| "subscription missing id".to_string())?;
+    let data = subscription
+        .pointer("/items/data")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    for item in &data {
+        let item_id = jstr(item, &["id"]).unwrap_or_default();
+        if item_id.is_empty() {
+            continue;
+        }
+        let price_id = price_id_from_item(item).unwrap_or_default();
+        if price_id.is_empty() {
+            continue;
+        }
+        let Some(unit) = billing_unit_for_stripe_price_id(&price_id) else {
+            log_stripe_unknown_price_warning(tenant_id, &sub_id, &price_id, &item_id);
+            continue;
+        };
+        sqlx::query(
+            r#"
+            insert into public.tenant_billing_subscription_items (
+              tenant_id, billing_unit, stripe_subscription_id, stripe_subscription_item_id,
+              stripe_price_id, active, updated_at
+            )
+            values ($1, $2, $3, $4, $5, true, now())
+            on conflict (tenant_id, billing_unit) do update set
+              stripe_subscription_id = excluded.stripe_subscription_id,
+              stripe_subscription_item_id = excluded.stripe_subscription_item_id,
+              stripe_price_id = excluded.stripe_price_id,
+              active = true,
+              updated_at = now()
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(unit)
+        .bind(&sub_id)
+        .bind(&item_id)
+        .bind(&price_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+pub async fn record_usage_attribution(
+    pool: &DbPool,
+    tenant_id: &str,
+    billing_unit: &str,
+    run_id: &str,
+    verdict: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        insert into public.tenant_billing_usage_attributions (tenant_id, billing_unit, run_id, occurred_at, verdict)
+        values ($1, $2, $3, now(), $4)
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(billing_unit)
+    .bind(run_id)
+    .bind(verdict)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 async fn resolve_tenant_from_subscription(pool: &DbPool, sub: &Value) -> Result<Option<String>, sqlx::Error> {
     if let Some(t) = jstr_opt(sub, &["metadata", "tenant_id"]) {
         return Ok(Some(t));
@@ -225,6 +379,7 @@ pub async fn process_subscription_object(
     )
     .await
     .map_err(|e| e.to_string())?;
+    sync_subscription_items_from_subscription_json(pool, &tenant_id, sub).await?;
     Ok(())
 }
 
@@ -278,6 +433,14 @@ pub async fn process_stripe_webhook(pool: &DbPool, event: &Value) -> Result<(), 
 }
 
 #[derive(Debug, serde::Serialize)]
+pub struct BillingUnitRowJson {
+    pub billing_unit: String,
+    pub stripe_price_id: String,
+    pub stripe_subscription_item_id: String,
+    pub active: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
 pub struct TenantBillingStatusJson {
     pub tenant_id: String,
     pub stripe_customer_id: Option<String>,
@@ -286,6 +449,8 @@ pub struct TenantBillingStatusJson {
     pub subscription_status: String,
     pub current_period_start: Option<String>,
     pub current_period_end: Option<String>,
+    #[serde(default)]
+    pub billing_units: Vec<BillingUnitRowJson>,
 }
 
 pub async fn billing_status_for_tenant(
@@ -312,8 +477,31 @@ pub async fn billing_status_for_tenant(
             subscription_status: "none".into(),
             current_period_start: None,
             current_period_end: None,
+            billing_units: Vec::new(),
         });
     };
+    let billing_units = sqlx::query(
+        r#"
+        select billing_unit, stripe_price_id, stripe_subscription_item_id, active
+        from public.tenant_billing_subscription_items
+        where tenant_id = $1
+        order by billing_unit
+        "#,
+    )
+    .bind(tenant_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .filter_map(|row| {
+        Some(BillingUnitRowJson {
+            billing_unit: row.try_get("billing_unit").ok()?,
+            stripe_price_id: row.try_get("stripe_price_id").ok()?,
+            stripe_subscription_item_id: row.try_get("stripe_subscription_item_id").ok()?,
+            active: row.try_get("active").unwrap_or(true),
+        })
+    })
+    .collect();
     Ok(TenantBillingStatusJson {
         tenant_id: tenant_id.to_string(),
         stripe_customer_id: r.try_get::<Option<String>, _>("stripe_customer_id").ok().flatten(),
@@ -335,6 +523,7 @@ pub async fn billing_status_for_tenant(
             .ok()
             .flatten()
             .map(|d| d.to_rfc3339()),
+        billing_units,
     })
 }
 
@@ -466,14 +655,30 @@ pub async fn report_usage_for_tenant(
         .await
         .map_err(|e| e.to_string())?;
 
-    let item_id: Option<String> = sqlx::query_scalar(
-        r#"select stripe_subscription_item_id from public.tenant_billing_accounts where tenant_id = $1"#,
+    let mut item_id: Option<String> = sqlx::query_scalar(
+        r#"
+        select stripe_subscription_item_id
+        from public.tenant_billing_subscription_items
+        where tenant_id = $1 and billing_unit = $2 and active = true
+        limit 1
+        "#,
     )
     .bind(tenant_id)
+    .bind(billing_unit)
     .fetch_optional(pool)
     .await
     .map_err(|e| e.to_string())?
     .flatten();
+    if item_id.is_none() && billing_unit == BILLING_UNIT_EVIDENCE_EVENT {
+        item_id = sqlx::query_scalar(
+            r#"select stripe_subscription_item_id from public.tenant_billing_accounts where tenant_id = $1"#,
+        )
+        .bind(tenant_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?
+        .flatten();
+    }
 
     let new_report_id: Option<uuid::Uuid> = sqlx::query_scalar(
         r#"
@@ -591,4 +796,110 @@ pub async fn report_usage_for_tenant(
         status: "recorded_local".into(),
         stripe_usage_record_id: None,
     })
+}
+
+pub async fn reconciliation_for_tenant(
+    pool: &DbPool,
+    tenant_id: &str,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    billing_unit: Option<&str>,
+) -> Result<Value, String> {
+    let units: Vec<&str> = if let Some(u) = billing_unit.filter(|s| !s.trim().is_empty()) {
+        vec![u]
+    } else {
+        ALL_BILLING_UNITS.to_vec()
+    };
+    let mut usage = Vec::new();
+    for unit in units {
+        let runs: Vec<String> = sqlx::query_scalar(
+            r#"
+            select distinct run_id from public.tenant_billing_usage_attributions
+            where tenant_id = $1 and billing_unit = $2 and occurred_at >= $3 and occurred_at < $4
+            order by run_id
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(unit)
+        .bind(from)
+        .bind(to)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        usage.push(json!({
+            "billing_unit": unit,
+            "runs": runs.into_iter().map(|rid| json!({"run_id": rid})).collect::<Vec<_>>()
+        }));
+    }
+    Ok(json!({
+        "ok": true,
+        "tenant_id": tenant_id,
+        "from": from.to_rfc3339(),
+        "to": to.to_rfc3339(),
+        "usage": usage
+    }))
+}
+
+pub async fn stripe_create_billing_portal_session(
+    secret_key: &str,
+    customer_id: &str,
+    return_url: &str,
+) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let body = format!(
+        "customer={}&return_url={}",
+        enc_val(customer_id),
+        enc_val(return_url)
+    );
+    let resp = client
+        .post("https://api.stripe.com/v1/billing_portal/sessions")
+        .basic_auth(secret_key, Some(""))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("stripe http: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("stripe portal error {status}: {text}"));
+    }
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("stripe json: {e}"))?;
+    jstr(&v, &["url"]).ok_or_else(|| format!("stripe portal missing url: {text}"))
+}
+
+pub async fn stripe_list_invoices(
+    secret_key: &str,
+    customer_id: &str,
+    limit: u32,
+) -> Result<Vec<Value>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let url = format!(
+        "https://api.stripe.com/v1/invoices?customer={}&limit={}",
+        enc_val(customer_id),
+        limit
+    );
+    let resp = client
+        .get(url)
+        .basic_auth(secret_key, Some(""))
+        .send()
+        .await
+        .map_err(|e| format!("stripe http: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("stripe invoices error {status}: {text}"));
+    }
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("stripe json: {e}"))?;
+    Ok(v
+        .get("data")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default())
 }

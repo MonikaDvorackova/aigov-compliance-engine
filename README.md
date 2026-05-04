@@ -1,6 +1,6 @@
 # GovAI
 
-GovAI is a CI compliance gate for AI systems with audit evidence export.
+GovAI is an **audit-backed decision system** for AI deployments: append-only evidence, policy enforcement at ingest, a single authoritative compliance verdict (`GET /compliance-summary`), optional **hosted Stripe billing**, and exportable audit artefacts. CI gates (for example the published GitHub Action) are one integration surface, not the whole product.
 
 [![Join Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/sRBSafRtE)
 
@@ -51,9 +51,10 @@ It:
 
 - accepts evidence via POST /evidence
 - enforces policy constraints at write time
-- produces deterministic decision via GET /compliance-summary
-- blocks CI if verdict != VALID
+- produces deterministic decisions via GET /compliance-summary
+- blocks CI or automation when verdict != VALID (when wired to a gate)
 - exports audit data via GET /api/export/:run_id
+- optionally enforces hosted Stripe subscription state for metered APIs (see docs/billing.md)
 
 Guarantees:
 
@@ -79,7 +80,7 @@ Non-guarantees:
 
 See docs/pilot-onboarding.md for private pilot setup.
 
-**Indicative tiers** (no self-service checkout UI on this site; minimal Stripe webhook + usage trace APIs exist — see `docs/billing.md`):
+**Indicative tiers** (hosted Stripe billing is optional; operator-managed checkout and webhooks — see [docs/billing.md](docs/billing.md)):
 
 - **Free — €0:** local testing and evaluation, limited runs, PyPI CLI (`aigov-py==0.2.1`), audit evidence export.
 - **Pro — €199/month:** production CI, higher run/event limits, GitHub Action, hosted audit endpoint, standard support.
@@ -129,7 +130,6 @@ Quickstarts:
 - `docs/pilot-onboarding.md` (private pilot onboarding)
 - `docs/billing.md` (minimal Stripe webhook + usage summary)
 - `docs/product/differentiation.md` (GovAI as **decision enforcement** vs supply-chain attestation)
-- `docs/product/examples/runtime_gate_service.py` (non-CI runtime gate calling `POST /decision/evaluate`)
 
 ## Hosted pilot prerequisites
 
@@ -143,7 +143,6 @@ Repeatable operator + customer steps (pilot runbook):
 
 - `docs/hosted-pilot-runbook.md`
 
-**Runtime policy compatibility (optional):** set `GOVAI_POLICY_STRICTNESS` to `strict` (default), `warning`, or `soft_block`. This adjusts **`policy_compatibility`** hints on `POST /decision/evaluate`; it does **not** silently weaken INVALID or change verdict strings.
 
 Minimum hosted-pilot path (what must exist before a new pilot user can reach `VALID`):
 
@@ -157,7 +156,7 @@ Minimum hosted-pilot path (what must exist before a new pilot user can reach `VA
 
 ## Canonical flow (discovery → requirements → BLOCKED → evidence → VALID → export → CI)
 
-GovAI is designed around **one evidence run id** (`run_id`) and **one authoritative decision projection** (same engine for `GET /compliance-summary` and **`POST /decision/evaluate`**). Prefer **`POST /decision/evaluate`** for **runtime** enforcement paths (services, gateways); use CI gates when you also need artefact-bound digests.
+GovAI is designed around **one evidence run id** (`run_id`) and **one authoritative decision projection** exposed through `GET /compliance-summary`. Use CI gates when you also need artefact-bound digests.
 
 Canonical customer flow:
 
@@ -364,7 +363,7 @@ GovAI is **ready for hosted pilots with manual or semi-automated onboarding** (f
 
 It is **not yet a full self-serve SaaS** (no productized signup, automated provisioning, or account lifecycle).
 
-It is **not yet billing-ready** (no self-serve checkout and no automated billing).
+Hosted **Stripe billing** is supported for operator-managed pilots (checkout, webhooks, usage reporting); self-serve checkout and full SaaS lifecycle are not productized yet (see [docs/billing.md](docs/billing.md)).
 
 ## Marketplace draft checklist
 
