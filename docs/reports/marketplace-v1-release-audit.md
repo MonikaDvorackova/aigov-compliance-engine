@@ -22,7 +22,7 @@ This makes “human approval required” a first-class gating concept without fo
 
 ## CI gate behavior
 
-- **Inputs**: the Marketplace action requires `run_id`, `base_url`, and `api_key`, and supports an optional `project` input (default `github-actions`) for tenant/project scoping via `X-GovAI-Project`.
+- **Inputs**: the Marketplace action requires `run_id`, `base_url`, and `api_key`, and supports an optional `project` input (default `github-actions`) sent as **`X-GovAI-Project`** for optional metadata / billing / usage labels only. **Ledger tenant isolation is derived exclusively from API key mapping** (**`GOVAI_API_KEYS_JSON`**); **`X-GovAI-Project`** is **not** a ledger isolation boundary.
 - **Determinism**:
   - `VALID` → exit `0`
   - `BLOCKED` → exit non-zero

@@ -1,5 +1,7 @@
 # Audit report: tenant scoped ledger isolation
 
+> **Superseded tenant model:** Ledger **tenant isolation** is **`GOVAI_API_KEYS_JSON` → API key** only. **`X-GovAI-Project`** is **not** a ledger isolation boundary (optional metadata / billing / usage labels). The body below is retained as a historical snapshot of the original change; read it together with this notice.
+
 ## Summary
 
 This change enforces tenant scoped ledger isolation for GovAI audit routes.
@@ -16,11 +18,10 @@ Changed files:
 
 ## What changed
 
-- Ledger access is resolved per request.
-- `X-GovAI-Project` is the primary tenant source.
-- Bearer token fingerprint is the fallback tenant source.
-- Ledger paths are tenant scoped as `audit_log__<tenant>.jsonl`.
-- In `staging` and `prod`, missing tenant context returns `400` with `missing_tenant_context`.
+- Ledger access is resolved per request from the **API key** mapping (**`GOVAI_API_KEYS_JSON`**).
+- **`X-GovAI-Project`** is **not** used to choose the ledger (billing / usage views may still reference it separately).
+- Ledger paths are tenant scoped as `audit_log__<tenant>.jsonl` (where `<tenant>` is the mapped ledger `tenant_id`).
+- In `staging` and `prod`, missing or unknown API keys for ledger routes yield auth errors (for example **`MISSING_API_KEY`** / unknown key), not ledger isolation via headers.
 
 ## Compatibility
 
@@ -29,13 +30,12 @@ Prior response semantics are preserved where possible:
 - `GET /bundle-hash` keeps `200` with `ok:false` for non success cases.
 - `GET /compliance-summary` keeps `200` with `ok:false` for non success cases.
 - `GET /verify` keeps `200` with `ok:false` for verification failures.
-- `GET /api/export/:run_id` keeps prior error classification except for missing tenant context in non dev.
+- `GET /api/export/:run_id` keeps prior error classification except where non-dev auth / API-key rules apply.
 
 ## Intentional behavioral change
 
-Ledger touching routes now require tenant context in `staging` and `prod`:
-- `X-GovAI-Project`, or
-- Bearer token fallback.
+Ledger touching routes in `staging` and `prod` require a valid **API key** present in **`GOVAI_API_KEYS_JSON`** (ledger `tenant_id` comes **only** from that mapping):
+- Optional **`X-GovAI-Project`** is metadata / billing context only and **does not** isolate the ledger.
 
 Affected routes:
 - `POST /evidence`
@@ -52,8 +52,8 @@ The compliance workflow now runs `govai check` against the local audit service i
 
 ## Risks
 
-- Clients in `staging` and `prod` must provide tenant context.
-- `GET /bundle-hash` and `GET /verify-log` remain open in auth terms, but are tenant context dependent in non dev environments.
+- Clients in `staging` and `prod` must authenticate with an API key mapped in **`GOVAI_API_KEYS_JSON`** for ledger access.
+- `GET /bundle-hash` and `GET /verify-log` remain open in auth terms where configured, but resolved ledger data still follows **API-key** tenant mapping (not **`X-GovAI-Project`**).
 
 ## Validation
 
@@ -68,15 +68,15 @@ Checks performed:
 - Tenant ledger isolation is enforced per request.
 - Tenant A cannot read Tenant B data through bundle, compliance summary, or export routes.
 - Ingest writes only to the resolved tenant ledger.
-- Bearer token fallback resolves to a deterministic tenant fingerprint.
-- Development mode without tenant context resolves to the default tenant ledger.
-- Staging and production reject missing tenant context for ledger touching routes.
+- Ledger `tenant_id` resolves from **`GOVAI_API_KEYS_JSON`** for the presented API key (never from **`X-GovAI-Project`**).
+- Development mode without a configured key map can resolve ledger access to the **`default`** tenant (see server code paths).
+- Staging and production reject unauthenticated or unknown API keys for ledger touching routes (per current auth rules).
 
 Result: passed.
 
 ## Human approval gate
 
-This change requires human approval because it modifies core audit ledger behavior and introduces a non dev tenant context requirement.
+This change requires human approval because it modifies core audit ledger behavior and introduces non-dev **API-key / tenant-map** requirements for ledger access.
 
 Approval checklist:
 - Tenant isolation model reviewed.

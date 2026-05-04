@@ -5,7 +5,9 @@ it **passes only when `govai check` prints `VALID`**.
 
 To make the workflow self-contained (no external pipelines required), the job posts the **full lifecycle evidence**
 required for a `VALID` verdict, then runs `govai check` against the same `run_id` and the same `X-GovAI-Project`
-tenant context.
+header for consistent metadata.
+
+**Clarification:** **`X-GovAI-Project` does not determine tenant isolation**; the ledger tenant comes **only** from **`GOVAI_API_KEYS_JSON`** for the caller’s API key.
 
 This same hosted evidence sequence + strict `VALID` gate behavior is also applied in
 `.github/workflows/compliance.yml` (the authoritative CI workflow for PR checks).
@@ -41,7 +43,7 @@ The CI workflow posts a `risk_reviewed` event with:
 ### Evidence sequence (CI)
 
 The workflow posts these events **in this exact order**, using the **same** `GOVAI_RUN_ID` and the **same**
-`X-GovAI-Project: github-actions` context:
+`X-GovAI-Project: github-actions` header (metadata only; ledger tenant is API-key mapped):
 
 1. `ai_discovery_reported`
 2. `evaluation_reported` (`passed=true`)
