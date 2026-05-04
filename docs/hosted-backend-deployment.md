@@ -4,6 +4,15 @@ This repo includes a Rust HTTP service (`aigov_audit`) that provides the **audit
 
 Goal for “hosted mode”: customers call your hosted URL and **do not run Rust or Postgres locally**.
 
+## HTTP startup and operational probes
+
+GovAI requires a **reachable Postgres** database (and valid DB configuration) **before** the HTTP listener binds. If Postgres is unavailable or misconfigured at startup, the process **exits** (fail-fast) instead of accepting traffic — operators should treat that as **service startup failure**, not as a “live but not ready” HTTP tier.
+
+After successful startup:
+
+- **`GET /health`** is **liveness-only**: the handler does **not** query Postgres, but **`/health` is only reachable once startup has succeeded**. Do **not** interpret **`/health`** as “the audit service is alive and useful while Postgres is down.”
+- **`GET /ready`** is the **authoritative operational readiness** endpoint. Use **`/ready`** in CI, load balancers, and operator checks for **Postgres + migrations + ledger writability**.
+
 ## Hosted deployment checklist (exact)
 
 - **Build artifact**
@@ -19,7 +28,7 @@ Goal for “hosted mode”: customers call your hosted URL and **do not run Rust
     - [ ] `GET /api/export/:run_id` (optional cross-check from `verify-evidence-pack`: `evidence_hashes.events_content_sha256`)
     - [ ] `GET /status`
     - [ ] `GET /usage`
-  - [ ] **Liveness** probe: **`GET /health`** (process is up — no dependency checks).
+  - [ ] **Liveness** probe: **`GET /health`** (cheap liveness **after** successful startup; the handler does not query Postgres, but HTTP is not bound until DB-backed startup succeeds — see “HTTP startup and operational probes”).
   - [ ] **Readiness** probe (recommended behind a load balancer): **`GET /ready`** — returns **503** unless Postgres responds, **`_sqlx_migrations`** shows the expected number of successful applies, and the ledger directory is writable (see below).
 
 - **Database (managed Postgres)**
@@ -111,7 +120,7 @@ In the Python terminal SDK, they configure:
 - **`GET /compliance-summary?run_id=<id>`**: compute compliance verdict + missing evidence (requires bearer token when `GOVAI_API_KEYS` is set)
 - **`GET /status`**: lightweight JSON status (`ok`, `policy_version`, `environment`, optional `base_url`)
 - **`GET /usage`**: usage counters (requires bearer token when `GOVAI_API_KEYS` is set)
-- **`GET /health`**: **liveness** — process is running (`ok: true`); does **not** verify Postgres or the ledger disk.
+- **`GET /health`**: **liveness** — returns `ok: true` without querying Postgres or the ledger in that request, but **only after** startup has bound HTTP (Postgres must already have been reachable for startup). It does **not** substitute **`/ready`** for DB, migrations, or disk checks.
 - **`GET /ready`**: **readiness** — verifies Postgres, applied migrations marker, and ledger writability.
 
 ## Railway — production-shaped start command
