@@ -107,7 +107,7 @@ Missing **`artifacts_path`**, **`api_key`**, or missing directory → action exi
 - **`BLOCKED`** — missing required evidence, missing risk/human approval, not yet promoted, digest/trace prerequisites not met, or any other “not yet eligible” state.
 - **`VALID`** — evaluation passed, approvals satisfied, promotion recorded.
 
-**Operational probes:** **`GET /health`** (liveness) vs **`GET /ready`** (Postgres + migrations + ledger writable) — readiness belongs behind load balancers for safe traffic shifting.
+**Operational probes:** **`GET /health`** (liveness-only **after** successful startup; handler does not query Postgres, but HTTP is not bound until DB-backed startup succeeds) vs **`GET /ready`** (authoritative readiness: Postgres + migrations + ledger writable) — point load balancers and automation at **`/ready`** for safe traffic shifting, not at **`/health`** for dependency checks.
 
 ## Runtime decision API (non-CI)
 
