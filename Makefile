@@ -53,7 +53,7 @@ gate:
 # ================================
 
 audit:
-	cd rust && cargo run
+	cd rust && cargo run --bin aigov_audit
 
 audit_bg:
 	@set -euo pipefail; \
@@ -69,7 +69,7 @@ audit_bg:
 	echo "starting aigov_audit in background on $(AUDIT_URL)"; \
 	echo "log: $(AUDIT_LOG)"; \
 	: > "$(AUDIT_LOG)"; \
-	nohup bash -lc 'cd rust && GOVAI_AUTO_MIGRATE=true cargo run' >>"$(AUDIT_LOG)" 2>&1 & echo $$! >"$(AUDIT_PIDFILE)"; \
+	nohup bash -lc 'cd rust && GOVAI_AUTO_MIGRATE=true cargo run --bin aigov_audit' >>"$(AUDIT_LOG)" 2>&1 & echo $$! >"$(AUDIT_PIDFILE)"; \
 	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do \
 		if curl -fsS --max-time 1 "$(AUDIT_URL)/ready" >/dev/null 2>&1; then \
 			echo "ready (GET /ready) on $(AUDIT_URL)"; \
