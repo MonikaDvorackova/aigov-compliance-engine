@@ -6,40 +6,25 @@ This report documents CI and operator readiness cleanup for hosted pilot safety.
 
 Changes evaluated:
 
-- `govai-ci` now exercises API-key based tenant mapping via `GOVAI_API_KEYS_JSON`.
-- report-required core change detection now includes `python/aigov_py/**`.
+- `govai-ci` exercises API-key based tenant mapping via `GOVAI_API_KEYS_JSON`.
+- report-required core change detection includes `python/aigov_py/**`.
 - `Makefile` keeps local auto-migrate convenience while allowing `GOVAI_AUTO_MIGRATE` override.
 - hosted backend docs clarify production-like migration policy.
 - GitHub Action docs document version bump lockstep expectations.
 
 Verification commands:
 
-```bash
 git diff --check
 python3 scripts/gate_reports.py
 rg -n "GOVAI_API_KEYS_JSON|ci-test-api-key" .github/workflows/govai-ci.yml
 rg -n "python/aigov_py" .github/workflows/compliance.yml
 rg -n "GOVAI_AUTO_MIGRATE" Makefile docs/hosted-backend-deployment.md
-cat > docs/reports/pilot-ci-operator-readiness.md <<'EOF'
-# Pilot CI and operator readiness hardening
 
-This report documents CI and operator readiness cleanup for hosted pilot safety.
+## Human approval gate
 
-## Evaluation gate
+Human review required before merging to staging:
 
-Changes evaluated:
-
-- `govai-ci` now exercises API-key based tenant mapping via `GOVAI_API_KEYS_JSON`.
-- report-required core change detection now includes `python/aigov_py/**`.
-- `Makefile` keeps local auto-migrate convenience while allowing `GOVAI_AUTO_MIGRATE` override.
-- hosted backend docs clarify production-like migration policy.
-- GitHub Action docs document version bump lockstep expectations.
-
-Verification commands:
-
-```bash
-git diff --check
-python3 scripts/gate_reports.py
-rg -n "GOVAI_API_KEYS_JSON|ci-test-api-key" .github/workflows/govai-ci.yml
-rg -n "python/aigov_py" .github/workflows/compliance.yml
-rg -n "GOVAI_AUTO_MIGRATE" Makefile docs/hosted-backend-deployment.md
+- Confirm hosted pilot CI should require API-key tenant mapping.
+- Confirm `python/aigov_py/**` belongs in report-required core scope.
+- Confirm production guidance for `GOVAI_AUTO_MIGRATE` matches operator policy.
+- Confirm no fail-closed behavior was weakened.
