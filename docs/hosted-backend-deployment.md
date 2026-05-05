@@ -4,6 +4,15 @@ This repo includes a Rust HTTP service (`aigov_audit`) that provides the **audit
 
 Goal for “hosted mode”: customers call your hosted URL and **do not run Rust or Postgres locally**.
 
+## HTTP startup and operational probes
+
+GovAI requires a **reachable Postgres** database (and valid DB configuration) **before** the HTTP listener binds. If Postgres is unavailable or misconfigured at startup, the process **exits** (fail-fast) instead of accepting traffic — operators should treat that as **service startup failure**, not as a “live but not ready” HTTP tier.
+
+After successful startup:
+
+- **`GET /health`** is **liveness-only**: the handler does **not** query Postgres, but **`/health` is only reachable once startup has succeeded**. Do **not** interpret **`/health`** as “the audit service is alive and useful while Postgres is down.”
+- **`GET /ready`** is the **authoritative operational readiness** endpoint. Use **`/ready`** in CI, load balancers, and operator checks for **Postgres + migrations + ledger writability**.
+
 ## Hosted deployment checklist (exact)
 
 - **Build artifact**
@@ -19,7 +28,7 @@ Goal for “hosted mode”: customers call your hosted URL and **do not run Rust
     - [ ] `GET /api/export/:run_id` (optional cross-check from `verify-evidence-pack`: `evidence_hashes.events_content_sha256`)
     - [ ] `GET /status`
     - [ ] `GET /usage`
-  - [ ] **Liveness** probe: **`GET /health`** (process is up — no dependency checks).
+  - [ ] **Liveness** probe: **`GET /health`** (cheap liveness **after** successful startup; the handler does not query Postgres, but HTTP is not bound until DB-backed startup succeeds — see “HTTP startup and operational probes”).
   - [ ] **Readiness** probe (recommended behind a load balancer): **`GET /ready`** — returns **503** unless Postgres responds, **`_sqlx_migrations`** shows the expected number of successful applies, and the ledger directory is writable (see below).
 
 - **Database (managed Postgres)**
@@ -29,6 +38,7 @@ Goal for “hosted mode”: customers call your hosted URL and **do not run Rust
 
 - **Auth / API keys**
   - [ ] Set `GOVAI_API_KEYS` (recommended for hosted mode). Without it, the audit endpoints are **unauthenticated** (legacy local behavior).
+  - [ ] **Hosted staging/prod MUST define `GOVAI_API_KEYS_JSON`** (JSON map `api_key → tenant_id`). Dev mode without API keys is **not** suitable for pilots.
   - [ ] Distribute one API key to each customer.
 
 - **Base URL config**
@@ -64,7 +74,7 @@ Goal for “hosted mode”: customers call your hosted URL and **do not run Rust
   - If unset/empty, auth for `POST /evidence`, `GET /compliance-summary`, `GET /usage` is **disabled** (local-friendly default).
 
 - **`GOVAI_BASE_URL`**
-  - Canonical public base URL (e.g. `https://audit.example.com`).
+  - Canonical public base URL (e.g. `https://audit.govbase.dev`).
   - Returned by `GET /status` as `base_url` for ops/debugging.
 
 ### Optional (only if you use these features)
@@ -97,7 +107,7 @@ Goal for “hosted mode”: customers call your hosted URL and **do not run Rust
 
 Customers only need:
 
-- **Audit base URL**: your hosted URL (example `https://audit.example.com`)
+- **Audit base URL**: your hosted URL (example `https://audit.govbase.dev`)
 - **API key**: one bearer token from you
 
 In the Python terminal SDK, they configure:
@@ -111,7 +121,7 @@ In the Python terminal SDK, they configure:
 - **`GET /compliance-summary?run_id=<id>`**: compute compliance verdict + missing evidence (requires bearer token when `GOVAI_API_KEYS` is set)
 - **`GET /status`**: lightweight JSON status (`ok`, `policy_version`, `environment`, optional `base_url`)
 - **`GET /usage`**: usage counters (requires bearer token when `GOVAI_API_KEYS` is set)
-- **`GET /health`**: **liveness** — process is running (`ok: true`); does **not** verify Postgres or the ledger disk.
+- **`GET /health`**: **liveness** — returns `ok: true` without querying Postgres or the ledger in that request, but **only after** startup has bound HTTP (Postgres must already have been reachable for startup). It does **not** substitute **`/ready`** for DB, migrations, or disk checks.
 - **`GET /ready`**: **readiness** — verifies Postgres, applied migrations marker, and ledger writability.
 
 ## Railway — production-shaped start command
@@ -129,7 +139,9 @@ Set at least:
 - **`GOVAI_DATABASE_URL`** (or **`DATABASE_URL`**) — managed Postgres URL.
 - **`GOVAI_API_KEYS`** — comma-separated bearer secrets (must align with tenant mapping when **`GOVAI_API_KEYS_JSON`** is used).
 - **`GOVAI_API_KEYS_JSON`** — staging/production expect a JSON map of **`api_key → tenant_id`** (see Rust `audit_api_key` module): required for isolated hosted tenants on **`AIGOV_ENVIRONMENT=staging`** / **`prod`**.
-- **`AIGOV_ENVIRONMENT`** — use **`staging`** or **`prod`** for hosted tiers (determines startup strictness).
+- **`GOVAI_BASE_URL`** — set to **`https://audit.govbase.dev`** so `GET /status` reports the canonical public URL.
+- **`AIGOV_ENVIRONMENT`** — use **`prod`** for the production hosted tier (determines startup strictness).
+- **`AIGOV_BIND`** — bind to a public interface for hosted. For Railway you typically want `0.0.0.0:$PORT`; if your platform uses a fixed port, use `0.0.0.0:8080`.
 - **`GOVAI_AUTO_MIGRATE`** — **`true`** in simple Railway setups, **or** run SQLx migrations as a separate release step.
 - **`PORT`** — provided by Railway; **do not** hardcode **8088** for this platform.
 
@@ -144,7 +156,7 @@ export AIGOV_BIND="0.0.0.0:8088"
 export GOVAI_DATABASE_URL="postgres://USER:PASSWORD@HOST:5432/DBNAME"
 export GOVAI_LEDGER_DIR="/var/lib/govai/ledger"
 export GOVAI_API_KEYS="replace_with_real_secret"
-export GOVAI_BASE_URL="https://audit.example.com"
+export GOVAI_BASE_URL="https://audit.govbase.dev"
 
 cargo run -p aigov_audit
 ```
@@ -215,7 +227,11 @@ In this Compose setup, migrations run automatically on startup because it sets:
 
 - `GOVAI_AUTO_MIGRATE=true`
 
-Outside Compose, migrations are **off by default**. To enable, set `GOVAI_AUTO_MIGRATE=true` for the process.
+Outside Compose, migrations are **off by default**.
+
+- For **local demos and controlled pilots**, `GOVAI_AUTO_MIGRATE=true` is acceptable: it keeps startup simple while you validate the system end-to-end.
+- For **production-like deployments**, prefer an **explicit migration step** in your release process and run the service with `GOVAI_AUTO_MIGRATE` disabled (unset or explicitly set to false) so schema changes are applied intentionally and observably.
+- **Auto-migrate remains supported** for production-like environments if the operator **intentionally opts into it** (set `GOVAI_AUTO_MIGRATE=true`), with the expectation that startup can fail fast if migrations cannot be applied.
 
 ### Smoke tests
 

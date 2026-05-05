@@ -2,9 +2,7 @@
 
 ## Summary
 
-`POST /evidence` must allow the **first evidence event** to initialize a new tenant/project ledger when scoping is provided via:
-
-- `X-GovAI-Project: <project>`
+`POST /evidence` must allow the **first evidence event** to initialize a new tenant/project ledger for the tenant resolved from the API key mapping in `GOVAI_API_KEYS_JSON`. `X-GovAI-Project` is optional metadata / billing / usage context and does not determine the ledger.
 
 This is required so GitHub Actions (and other clients) can:
 
@@ -36,7 +34,7 @@ Treat a missing tenant-scoped ledger file as an **empty ledger** (no events yet)
 This preserves:
 
 - **payload validation** (the submitted event is still validated)
-- **tenant isolation** (ledger path still depends on `X-GovAI-Project` / bearer fingerprint)
+- **tenant isolation** (Ledger tenant isolation is derived strictly from the API key mapping in `GOVAI_API_KEYS_JSON`. `X-GovAI-Project` is optional metadata / billing / usage context and does not determine the ledger)
 - **verdict logic** (no compliance checks were weakened; `govai check` can still return `BLOCKED` for incomplete evidence)
 
 ## Tests

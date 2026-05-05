@@ -102,7 +102,7 @@ Limits are exposed via GET /usage.
 - **Storage:** append-only JSONL ledger files.
   - Dev default: relative to process cwd (local-friendly).
   - Staging/prod: requires `GOVAI_LEDGER_DIR` pointing to a **persistent** directory (service fails fast otherwise).
-- **Other:** `GET /status` (`ok`, `policy_version`, `environment`); `GET /ready` — **readiness** (Postgres + migrations + ledger writable; use this in CI and load balancers, not `/status` or `/health` for that purpose); `GET /`, `/health` — service metadata / liveness (`GET /` is **internal** per OpenAPI).
+- **Other:** `GET /status` (`ok`, `policy_version`, `environment`); `GET /ready` and `GET /health` are defined canonically in **`docs/hosted-backend-deployment.md` → “HTTP startup and operational probes”**.
 
 Authenticated routes (Supabase JWT; **stable** enterprise surface): `GET /api/me`, `POST /api/assessments`, `/api/compliance-workflow*` — see OpenAPI.
 

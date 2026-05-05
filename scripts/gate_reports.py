@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""CI gate: audit reports must include required markdown sections."""
+"""CI gate: audit reports must include required markdown sections.
+
+Required headings are the exact strings below (substring match). New reports should use
+exact level-2 headings "## Evaluation gate" and "## Human approval gate" on their own lines.
+"""
 from pathlib import Path
 
 req = ["## Evaluation gate", "## Human approval gate"]

@@ -18,7 +18,8 @@ AIGOV_MODE ?= ci
 	pr_prepare gate \
 	audit_close \
 	demo demo_new \
-	env_check
+	env_check \
+	engineering_loc
 
 .PHONY: discovery_scan
 discovery_scan:
@@ -32,6 +33,9 @@ AUDIT_PORT ?= 8088
 
 AUDIT_PIDFILE ?= .aigov_audit.pid
 AUDIT_LOG ?= .aigov_audit.log
+
+# Local default: convenient, but allow override in CI/operators.
+GOVAI_AUTO_MIGRATE ?= true
 
 # Explicit binary: this crate ships multiple `[[bin]]` targets; `cargo run` without `--bin` fails.
 AIGOV_AUDIT_BIN ?= aigov_audit
@@ -50,6 +54,9 @@ env_check:
 # ensure that generated audit reports include the minimum required sections.
 gate:
 	@python3 scripts/gate_reports.py
+
+engineering_loc:
+	@python3 scripts/engineering_loc.py
 
 # ================================
 # Audit service
@@ -74,7 +81,7 @@ audit_bg:
 	echo "starting $(AIGOV_AUDIT_BIN) in background on $(AUDIT_URL)"; \
 	echo "log: $(AUDIT_LOG)"; \
 	: > "$(AUDIT_LOG)"; \
-	nohup env GOVAI_AUTO_MIGRATE=true bash -lc "cd '$(CURDIR)/rust' && exec ./target/debug/$(AIGOV_AUDIT_BIN)" >>"$(AUDIT_LOG)" 2>&1 & echo $$! >"$(AUDIT_PIDFILE)"; \
+	nohup env GOVAI_AUTO_MIGRATE="$(GOVAI_AUTO_MIGRATE)" bash -lc "cd '$(CURDIR)/rust' && exec ./target/debug/$(AIGOV_AUDIT_BIN)" >>"$(AUDIT_LOG)" 2>&1 & echo $$! >"$(AUDIT_PIDFILE)"; \
 	for i in $$(seq 1 60); do \
 		if curl -fsS --max-time 1 "$(AUDIT_URL)/ready" >/dev/null 2>&1; then \
 			echo "ready (GET /ready) on $(AUDIT_URL)"; \

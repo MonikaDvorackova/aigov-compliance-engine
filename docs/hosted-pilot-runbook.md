@@ -70,7 +70,7 @@ If you are running this on a VM, ensure inbound access to port `8088` (or put it
 
 Pilot users need the **public** audit API base URL:
 
-- Example: `https://audit.example.com`
+- Example: `https://audit.govbase.dev`
 - Must route to the audit service and allow:
   - `POST /evidence`
   - `GET /compliance-summary?run_id=...`
@@ -83,9 +83,9 @@ If you are using the Docker Compose quickstart, set `GOVAI_BASE_URL` in `docker-
 
 ## Provision API key (operator)
 
-In hosted mode, enable authentication by setting `GOVAI_API_KEYS` on the server (recommended even for pilots).
+In hosted mode, hosted pilots **MUST** enable authentication and tenant isolation by setting **`GOVAI_API_KEYS_JSON`** on the server. This is a JSON object mapping **raw API key string → tenant id** (the tenant id selects the per-tenant ledger file). **Dev mode without API keys is not suitable for pilots**.
 
-- For local pilot setups, you can use: `GOVAI_API_KEYS=test-key`
+- For local pilot setups, you can use: `GOVAI_API_KEYS_JSON='{"test-key":"default"}'`
 
 - **Support contact**: `support@govbase.dev`
 
@@ -100,12 +100,14 @@ print(secrets.token_urlsafe(32))
 PY
 ```
 
-2) Configure the audit service with that token:
+2) Configure the audit service with that token mapped to a tenant id:
 
-- In Compose: set `GOVAI_API_KEYS="<token>"` under `govai-audit.environment`.
-- In a hosted deployment: set `GOVAI_API_KEYS="<token1>,<token2>"`.
+- In Compose: set `GOVAI_API_KEYS_JSON='{"<token>":"<tenant_id>"}'` under `govai-audit.environment` (escape quotes as needed for your shell).
+- In a hosted deployment: set a single JSON object, e.g. `GOVAI_API_KEYS_JSON='{"<token1>":"tenant-a","<token2>":"tenant-b"}'`.
 
 3) Distribute one token to the pilot user as `GOVAI_API_KEY`.
+
+**Note:** `X-GovAI-Project` / client `GOVAI_PROJECT` do **not** determine the ledger tenant; they are optional metadata (for example metering). Ledger isolation follows the API key mapping only.
 
 Expected failure if not configured correctly:
 
@@ -140,7 +142,7 @@ This is the canonical proof that the hosted backend + key work.
 python -m pip install --upgrade pip
 python -m pip install "aigov-py==0.2.1"
 
-export GOVAI_AUDIT_BASE_URL="https://audit.example.com"
+export GOVAI_AUDIT_BASE_URL="https://audit.govbase.dev"
 export GOVAI_API_KEY="YOUR_API_KEY"
 
 export GOVAI_DEMO_RUN_ID="$GOVAI_RUN_ID"
@@ -166,7 +168,7 @@ In the pilot user’s GitHub repo:
 
 **Settings → Secrets and variables → Actions**
 
-- Variable `GOVAI_AUDIT_BASE_URL` = `https://audit.example.com`
+- Variable `GOVAI_AUDIT_BASE_URL` = `https://audit.govbase.dev`
 - Variable `GOVAI_RUN_ID` = `<the same run id used above>`
 - Secret `GOVAI_API_KEY` = `<the bearer token>`
 
@@ -233,7 +235,7 @@ Collect:
 
 - **GovAI check failed (cannot fetch verdict)**
   - Root cause: invalid URL, auth rejected, or server not reachable.
-  - Fix: curl `GET /health` and `GET /status`; verify the bearer token is in `GOVAI_API_KEYS` on the server.
+  - Fix: curl `GET /health` and `GET /status`; verify the bearer token is a key in `GOVAI_API_KEYS_JSON` on the server.
 
 - **Onboarding demo never reaches `VALID`**
   - Root cause: server policy differs from what the demo expects, or evidence submission is failing.

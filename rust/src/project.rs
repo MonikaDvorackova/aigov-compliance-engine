@@ -13,7 +13,7 @@ pub fn billing_tenant_id(headers: &HeaderMap) -> String {
     tenant_id_for_usage(headers, audit_api_key::raw_bearer_token(headers))
 }
 
-/// Stable tenant id for usage / quotas: `X-GovAI-Project` (if set), else API key fingerprint, else `default`.
+/// Stable *project label* for usage / quotas: `X-GovAI-Project` (if set), else API key fingerprint, else `default`.
 pub fn tenant_id_for_usage(headers: &HeaderMap, bearer_token: Option<&str>) -> String {
     let raw = headers
         .get(HDR)

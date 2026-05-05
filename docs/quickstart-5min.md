@@ -29,6 +29,12 @@ govai --version
 
 GovAI audit API keys are **configured on the audit service** via `GOVAI_API_KEYS` (comma-separated). When set, audit routes require `Authorization: Bearer <secret>`.
 
+**Note (local/dev vs hosted):**
+This quickstart uses `GOVAI_API_KEYS` for simple local/dev setups. **Hosted / staging / production deployments MUST define `GOVAI_API_KEYS_JSON`** so each API key is mapped to a tenant id and ledger isolation is enforced correctly. **Dev mode without API keys is not suitable for pilots**: hosted pilots must run with real key → tenant mapping.
+
+- Ledger tenant isolation is derived from the **API key → tenant mapping** (not from request headers).
+- `X-GovAI-Project` is optional metadata (usage/billing label) and **does not** isolate ledger tenant.
+
 Generate a local key:
 
 ```bash

@@ -24,7 +24,7 @@ inputs:
     description: "GovAI API key"
     required: true
   project:
-    description: "Optional tenant/project context (X-GovAI-Project). Default: github-actions."
+    description: "Optional project label (X-GovAI-Project, metadata only). Default: github-actions."
     required: false
     default: "github-actions"
   require_export:

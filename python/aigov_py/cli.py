@@ -886,7 +886,7 @@ def build_parser() -> GovaiArgumentParser:
     p.add_argument(
         "--project",
         default=None,
-        help="Optional tenant/project context for requests via X-GovAI-Project header (or GOVAI_PROJECT / X_GOVAI_PROJECT).",
+        help="Optional project label for requests via X-GovAI-Project header (or GOVAI_PROJECT / X_GOVAI_PROJECT). Metadata only; does not select the ledger tenant.",
     )
     p.add_argument(
         "--timeout",
@@ -1092,14 +1092,14 @@ def build_parser() -> GovaiArgumentParser:
     s_export_run.add_argument(
         "--project",
         default=os.environ.get("GOVAI_PROJECT"),
-        help="Optional X-GovAI-Project header (or GOVAI_PROJECT).",
+        help="Optional X-GovAI-Project header (or GOVAI_PROJECT); metadata/metering only, not ledger tenant.",
     )
 
     s_usage = sub.add_parser("usage", help="GET /usage (machine-readable JSON).")
     s_usage.add_argument(
         "--project",
         default=os.environ.get("GOVAI_PROJECT"),
-        help="Optional X-GovAI-Project header (or GOVAI_PROJECT).",
+        help="Optional X-GovAI-Project header (or GOVAI_PROJECT); metadata/metering only, not ledger tenant.",
     )
 
     c = sub.add_parser("create-assessment", help="Create a new assessment (POST /api/assessments).")

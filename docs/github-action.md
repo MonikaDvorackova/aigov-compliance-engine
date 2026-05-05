@@ -7,6 +7,16 @@ This repository publishes a reusable **composite GitHub Action** that installs t
 
 **PyPI pin:** the install pin **must** match `version` in `python/pyproject.toml` for the tag you use; drift breaks CI vs local reproducibility.
 
+## Version bump checklist (keep in lockstep)
+
+When you bump the released version (tag / PyPI publish), update these together so the action runtime, workflow usage, Python pin, and docs remain consistent:
+
+- `action.yml` (root composite action)
+- `.github/actions/govai-check/action.yml` (local action implementation)
+- `.github/workflows/compliance.yml` (hosted gate workflow pin/usage)
+- `python/pyproject.toml` (PyPI package version)
+- `docs/github-action.md` (this doc, including the pin shown in examples)
+
 **Export cross-check (`require_export`):** the composite action defaults **`require_export`** to **`true`**, so **`verify-evidence-pack`** runs with **`--require-export`**. That is part of the **full audit guarantee** in CI: hosted **`GET /api/export/:run_id`** must be available and consistent with the digest chain, not only **`GET /compliance-summary`**. Set **`require_export: false`** only when you explicitly accept a weaker gate.
 
 **Ledger tenant vs `X-GovAI-Project`:** ledger isolation is derived **only** from the API key (`GOVAI_API_KEYS_JSON`). The `project` input sets **`X-GovAI-Project`** for optional metadata / usage labels; it **does not** isolate ledger data.
@@ -79,7 +89,7 @@ jobs:
           path: artefacts
 
       - name: Artefact-bound GovAI gate
-        uses: Kovali/GovAI@v1
+        uses: MonikaDvorackova/aigov-compliance-engine@v1
         with:
           run_id: ${{ vars.GOVAI_RUN_ID }}
           artifacts_path: artefacts
@@ -107,7 +117,7 @@ Missing **`artifacts_path`**, **`api_key`**, or missing directory → action exi
 - **`BLOCKED`** — missing required evidence, missing risk/human approval, not yet promoted, digest/trace prerequisites not met, or any other “not yet eligible” state.
 - **`VALID`** — evaluation passed, approvals satisfied, promotion recorded.
 
-**Operational probes:** **`GET /health`** (liveness) vs **`GET /ready`** (Postgres + migrations + ledger writable) — readiness belongs behind load balancers for safe traffic shifting.
+**Operational probes:** see **`docs/hosted-backend-deployment.md` → “HTTP startup and operational probes”** for the canonical contract of **`GET /health`** (liveness-only, after successful startup) vs **`GET /ready`** (authoritative readiness: DB + migrations + ledger writability).
 
 ## Runtime decision API (non-CI)
 

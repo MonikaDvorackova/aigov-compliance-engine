@@ -213,7 +213,7 @@ This runs (via Makefile): `ensure_evidence` → `report` → `export_bundle` →
 - `ensure_evidence`: either fetches from `GET /bundle` / `GET /bundle-hash`, or falls back to `ci_fallback` when `AIGOV_MODE` is not `prod` and fetch fails.
 - `report`: writes `docs/reports/<RUN_ID>.md` (includes sections required by `make gate`: `## Evaluation gate`, `## Human approval gate`).
 - `export_bundle`: prints paths to `docs/audit/<RUN_ID>.json` and `docs/packs/<RUN_ID>.zip` and `bundle_sha256=…`.
-- `verify_cli` (`python -m aigov_py.verify`): prints `AIGOV VERIFICATION REPORT`, lines such as `OK   audit file present` / `OK   governance hash chain verified`, and ends with **`VERDICT VALID`** or **`VERDICT INVALID`**.
+- `verify_cli` (`python -m aigov_py.verify`): prints `AIGOV VERIFICATION REPORT`, lines such as `OK   audit file present` / `OK   governance hash chain verified`, and ends with **`ARTIFACTS_OK`** or **`ARTIFACTS_INVALID`**.
 
 ### One-shot (train → gates → bundle → compliance summary JSON)
 

@@ -29,6 +29,8 @@ Expected output:
 HTTP 200
 `{"ok":true}`
 
+The audit service is **fail-fast at startup**: Postgres must be reachable and correctly configured **before** HTTP listens. **`GET /health`** does not hit the database, but it is **only available after** that startup succeeds — it is **liveness-only**, not proof that Postgres or the ledger are still healthy. Use **`GET /ready`** for operational readiness (Postgres + migrations + writable ledger); see **`docs/hosted-backend-deployment.md`** (“HTTP startup and operational probes”).
+
 4. What you just did
 - started the audit service
 - exposed the API on port `8088`
@@ -55,6 +57,8 @@ It:
 - blocks CI or automation when verdict != VALID (when wired to a gate)
 - exports audit data via GET /api/export/:run_id
 - optionally enforces hosted Stripe subscription state for metered APIs (see docs/billing.md)
+
+**Multi-tenant ledger:** the ledger tenant is always derived from **API key mapping** (`GOVAI_API_KEYS_JSON` on the server). **`X-GovAI-Project` / `GOVAI_PROJECT` are metadata** (metering, labels, client hints) and **do not** determine which tenant ledger is used.
 
 Guarantees:
 
@@ -246,7 +250,7 @@ If you are onboarding a new pilot customer, follow `docs/hosted-pilot-runbook.md
 
 ```yaml
       - name: GovAI artefact-bound gate (submit + verify digest + VALID)
-        uses: Kovali/GovAI@v1
+        uses: MonikaDvorackova/aigov-compliance-engine@v1
         with:
           run_id: ${{ vars.GOVAI_RUN_ID }}
           artifacts_path: ${{ github.workspace }}/downloaded-artifacts

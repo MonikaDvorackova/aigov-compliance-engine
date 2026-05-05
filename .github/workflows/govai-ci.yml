@@ -25,6 +25,9 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      GOVAI_API_KEYS_JSON: '{"ci-test-api-key":"github-actions"}'
+      GOVAI_API_KEY: ci-test-api-key
+      GOVAI_PROJECT: github-actions
 
     steps:
       - name: Checkout
@@ -45,7 +48,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build audit service
-        run: cd rust && cargo build
+        run: cd rust && cargo build --locked --bin aigov_audit
 
       - name: Start audit service
         run: make audit_bg
@@ -53,7 +56,7 @@ jobs:
       - name: Wait for audit readiness (GET /ready)
         run: |
           for i in $(seq 1 60); do
-            code="$(curl -sS -o /tmp/govai_ready_body -w "%{http_code}" --max-time 2 "http://127.0.0.1:8088/ready" || true)"
+            code="$(curl -sS -o /tmp/govai_ready_body -w "%{http_code}" --max-time 2 -H "Authorization: Bearer ci-test-api-key" "http://127.0.0.1:8088/ready" || true)"
             if [ "${code}" = "200" ]; then
               exit 0
             fi

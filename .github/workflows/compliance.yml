@@ -76,7 +76,7 @@ jobs:
           echo "base_sha=${BASE_SHA}" >> "${GITHUB_OUTPUT}"
           echo "head_sha=${HEAD_SHA}" >> "${GITHUB_OUTPUT}"
 
-          CORE_CHANGED="$(printf '%s\n' "${CHANGED_FILES}" | grep -E '^(rust/|python/govai/|python/aigov_py/(evaluate|approve|promote|report|evidence_pack|pipeline_train)\.py$|docs/strong-core-contract-note\.md$|ARCHITECTURE\.md$|Makefile$)' || true)"
+          CORE_CHANGED="$(printf '%s\n' "${CHANGED_FILES}" | grep -E '^(rust/|python/govai/|python/aigov_py/|docs/strong-core-contract-note\.md$|ARCHITECTURE\.md$|Makefile$)' || true)"
 
           if [ -n "${REPORTS_CHANGED}" ]; then
             echo "reports_changed=true" >> "${GITHUB_OUTPUT}"
@@ -196,7 +196,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install python package
         working-directory: python
@@ -211,6 +211,11 @@ jobs:
         run: |
           set -euo pipefail
           make gate
+
+      - name: Engineering LOC smoke
+        run: |
+          set -euo pipefail
+          python3 scripts/test_engineering_loc_smoke.py
 
   evidence_pack:
     name: evidence_pack
@@ -266,7 +271,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install python package
         working-directory: python
@@ -277,6 +282,7 @@ jobs:
           pip install -U pip
           pip install -e .
 
+      # Embedded migrations via GOVAI_AUTO_MIGRATE are authoritative for audit service startup; this sqlx step is non-authoritative and kept only for debug visibility.
       - name: Apply audit DB migrations (sqlx)
         if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
         run: |
@@ -288,14 +294,7 @@ jobs:
           rm -rf "${GITHUB_WORKSPACE}/.aigov_ci_migrations"
           mkdir -p "${GITHUB_WORKSPACE}/.aigov_ci_migrations"
 
-          cp rust/migrations/0001_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
-          cp rust/migrations/0002_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
-          cp rust/migrations/0003_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
-          cp rust/migrations/0004_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
-          cp rust/migrations/0005_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
-          cp rust/migrations/0006_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
-          cp rust/migrations/0007_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
-          cp rust/migrations/0008_*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
+          cp rust/migrations/*.sql "${GITHUB_WORKSPACE}/.aigov_ci_migrations/"
 
           sqlx migrate run --source "${GITHUB_WORKSPACE}/.aigov_ci_migrations" --database-url "${DATABASE_URL}"
 

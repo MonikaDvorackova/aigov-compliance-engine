@@ -47,7 +47,7 @@ Roll back by reverting this branch — no persisted schema format besides existi
 
 ## Runtime behavior before
 
-- **`GET /health`** implied little about Postgres or ledger writability; load balancers could route to a process that could not serve audit traffic.
+- **`GET /health`** returned **200** from a handler that did **not** re-check Postgres or ledger writability on each request; some docs misread that as “DB-independent HTTP liveness.” Operators still needed **`GET /ready`** so load balancers did not treat **`/health`** alone as audit readiness.
 - **Staging/prod** could bind **127.0.0.1** and still start; **Postgres** could be under-migrated when **`GOVAI_AUTO_MIGRATE`** was off.
 - **Python `govai check`** detail paths looked only at **`requirements.missing_evidence`** while the API exposed **`requirements.missing`**.
 - **Docs** mixed local **8088** defaults with hosted **`PORT`** expectations; **GitHub Action** doc implied a minimal evidence path for **`VALID`** that does not match **`.github/workflows/govai-check.yml`**.
@@ -55,13 +55,14 @@ Roll back by reverting this branch — no persisted schema format besides existi
 ## Runtime behavior after
 
 - **`GET /ready`** returns **200** only when Postgres answers, migration rows meet the expected count, and the ledger base path is writable (**`GOVAI_LEDGER_DIR`**, or **dev** current working directory).
+- **Startup / HTTP bind**: GovAI requires a reachable Postgres (and successful configured startup) **before** binding HTTP; misconfigured or unavailable DB at startup **fails the process** rather than exposing a listener that lacks DB-backed audit capability. **`GET /health`** does not query Postgres in the handler but is **only reachable after** that startup; it is **not** a substitute for **`GET /ready`** for operational readiness.
 - **Staging/prod** refuse **loopback** binds and **verify migrations** when auto-migrate is **off**.
 - **Startup logs** print bind, environment, policy version, ledger path summary, DB/migration status, and `/health` vs `/ready` hints **without** printing connection secrets.
 - **CLI** prints **`missing (requirement ids):`** for **`requirements.missing`** and keeps **`missing_evidence:`** for structured legacy payloads; gap code extraction merges both shapes.
 
 ## Deployment impact
 
-- **Railway / reverse proxies**: point **readiness** checks at **`GET /ready`** while keeping **`GET /health`** for cheap liveness.
+- **Railway / reverse proxies**: point **readiness** checks at **`GET /ready`** (Postgres + migrations + ledger). Use **`GET /health`** only for **cheap liveness after successful startup** — it does not replace **`/ready`** for dependency checks.
 - **Rolling deploy**: first instance may report **503 /ready** until migrations apply — expected when **`GOVAI_AUTO_MIGRATE=true`** catches up schema.
 - **Staging/prod** misconfigured binds now **fail startup** loudly instead of **502** at the edge only.
 
