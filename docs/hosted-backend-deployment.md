@@ -227,7 +227,11 @@ In this Compose setup, migrations run automatically on startup because it sets:
 
 - `GOVAI_AUTO_MIGRATE=true`
 
-Outside Compose, migrations are **off by default**. To enable, set `GOVAI_AUTO_MIGRATE=true` for the process.
+Outside Compose, migrations are **off by default**.
+
+- For **local demos and controlled pilots**, `GOVAI_AUTO_MIGRATE=true` is acceptable: it keeps startup simple while you validate the system end-to-end.
+- For **production-like deployments**, prefer an **explicit migration step** in your release process and run the service with `GOVAI_AUTO_MIGRATE` disabled (unset or explicitly set to false) so schema changes are applied intentionally and observably.
+- **Auto-migrate remains supported** for production-like environments if the operator **intentionally opts into it** (set `GOVAI_AUTO_MIGRATE=true`), with the expectation that startup can fail fast if migrations cannot be applied.
 
 ### Smoke tests
 

@@ -76,7 +76,7 @@ jobs:
           echo "base_sha=${BASE_SHA}" >> "${GITHUB_OUTPUT}"
           echo "head_sha=${HEAD_SHA}" >> "${GITHUB_OUTPUT}"
 
-          CORE_CHANGED="$(printf '%s\n' "${CHANGED_FILES}" | grep -E '^(rust/|python/govai/|python/aigov_py/(evaluate|approve|promote|report|evidence_pack|pipeline_train)\.py$|docs/strong-core-contract-note\.md$|ARCHITECTURE\.md$|Makefile$)' || true)"
+          CORE_CHANGED="$(printf '%s\n' "${CHANGED_FILES}" | grep -E '^(rust/|python/govai/|python/aigov_py/|docs/strong-core-contract-note\.md$|ARCHITECTURE\.md$|Makefile$)' || true)"
 
           if [ -n "${REPORTS_CHANGED}" ]; then
             echo "reports_changed=true" >> "${GITHUB_OUTPUT}"
