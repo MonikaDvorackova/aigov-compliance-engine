@@ -70,7 +70,7 @@ If you are running this on a VM, ensure inbound access to port `8088` (or put it
 
 Pilot users need the **public** audit API base URL:
 
-- Example: `https://audit.example.com`
+- Example: `https://audit.govbase.dev`
 - Must route to the audit service and allow:
   - `POST /evidence`
   - `GET /compliance-summary?run_id=...`
@@ -142,7 +142,7 @@ This is the canonical proof that the hosted backend + key work.
 python -m pip install --upgrade pip
 python -m pip install "aigov-py==0.2.1"
 
-export GOVAI_AUDIT_BASE_URL="https://audit.example.com"
+export GOVAI_AUDIT_BASE_URL="https://audit.govbase.dev"
 export GOVAI_API_KEY="YOUR_API_KEY"
 
 export GOVAI_DEMO_RUN_ID="$GOVAI_RUN_ID"
@@ -168,7 +168,7 @@ In the pilot user’s GitHub repo:
 
 **Settings → Secrets and variables → Actions**
 
-- Variable `GOVAI_AUDIT_BASE_URL` = `https://audit.example.com`
+- Variable `GOVAI_AUDIT_BASE_URL` = `https://audit.govbase.dev`
 - Variable `GOVAI_RUN_ID` = `<the same run id used above>`
 - Secret `GOVAI_API_KEY` = `<the bearer token>`
 
