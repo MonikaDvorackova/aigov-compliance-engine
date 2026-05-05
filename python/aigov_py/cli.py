@@ -26,6 +26,11 @@ from aigov_py import cli_exit
 from aigov_py import evidence_artifact_gate as eag
 from aigov_py.client import GovaiClient
 from aigov_py.discovery_scan import scan_repo
+from aigov_py.discovery_policy_mapping import (
+    coerce_discovery_signals,
+    discovery_required_evidence_additions,
+    triggered_by_discovery,
+)
 from aigov_py import export_bundle as export_bundle_mod
 from aigov_py import fetch_bundle_from_govai
 from aigov_py.prototype_domain import (
@@ -308,6 +313,7 @@ def _print_final_summary(
     reason_codes: Sequence[str] | None,
     next_action: str,
     repro: str,
+    triggered_by: Sequence[str] | None = None,
 ) -> None:
     # Preserve "verdict-first" stdout contract even when CI merges stdout+stderr.
     # If stdout is buffered and stderr is unbuffered, stderr can appear first unless we flush.
@@ -327,6 +333,17 @@ def _print_final_summary(
     print(f"verdict: {v}", file=sys.stderr, flush=True)
     print(f"category: {cat}", file=sys.stderr, flush=True)
     print(f"reason_codes: {rc}", file=sys.stderr, flush=True)
+    if triggered_by:
+        tb = [str(x).strip() for x in triggered_by if str(x or "").strip()]
+        # Stable ordering
+        seen: set[str] = set()
+        stable: list[str] = []
+        for x in tb:
+            if x not in seen:
+                seen.add(x)
+                stable.append(x)
+        stable.sort()
+        print(f"triggered_by: {stable}", file=sys.stderr, flush=True)
     print(f"next_action: {next_action}", file=sys.stderr, flush=True)
     print(f"repro: {repro}", file=sys.stderr, flush=True)
     print("--------------------------------", file=sys.stderr, flush=True)
@@ -348,7 +365,9 @@ def _summary_for_compliance(
         blocked_reasons = (summary or {}).get("blocked_reasons")
         if missing or (isinstance(blocked_reasons, list) and blocked_reasons):
             codes.append("EVIDENCE_MISSING")
-        next_action = "Submit the missing evidence for this run_id, then rerun the same command."
+        next_action = _next_action_for_missing_evidence(missing) or (
+            "Submit the missing evidence for this run_id, then rerun the same command."
+        )
     elif v == "INVALID":
         codes.append("EVALUATION_FAILED")
         next_action = "Fix the failed evaluation evidence and rerun the same command."
@@ -357,6 +376,47 @@ def _summary_for_compliance(
         next_action = "Check GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY (and network), then rerun the same command."
 
     return v if v in {"VALID", "INVALID", "BLOCKED"} else "ERROR", _stable_reason_codes(codes), next_action, repro
+
+
+_MISSING_EVIDENCE_HINTS: dict[str, str] = {
+    "evaluation_reported": "Run your evaluation pipeline and submit evidence.",
+    "human_approved": "Record human approval event.",
+    "usage_policy_defined": "Define and submit usage policy.",
+    "privacy_review_completed": "Complete privacy review and submit evidence.",
+    "model_registered": "Register the model version and submit evidence.",
+    "risk_recorded": "Record risk assessment evidence for this run.",
+    "risk_reviewed": "Complete risk review and submit evidence.",
+    "risk_mitigated": "Record mitigation evidence and submit it for this run.",
+}
+
+
+def _next_action_for_missing_evidence(missing: Sequence[str] | None) -> str | None:
+    """
+    Deterministic mapping: missing evidence → actionable hint.
+    Picks the first hint by stable (sorted) missing code order.
+    """
+    codes = sorted({str(x).strip() for x in (missing or []) if str(x or "").strip()})
+    for c in codes:
+        hint = _MISSING_EVIDENCE_HINTS.get(c)
+        if hint:
+            return hint
+    return None
+
+
+def _triggered_by_from_repo_scan(path: Path) -> list[str]:
+    """
+    Best-effort local enhancement for summary output:
+    - deterministic scan_repo()
+    - deterministic mapping to discovery-required evidence
+    - returns *signal labels* (not evidence codes)
+
+    This does not change Rust semantics and is not submitted to the backend.
+    """
+    scan = scan_repo(path, include_history=False)
+    signals = coerce_discovery_signals(scan)
+    # Ensure we only claim triggers that correspond to a rule we enforce in mapping.
+    _ = discovery_required_evidence_additions(signals)
+    return triggered_by_discovery(signals)
 
 
 def doctor(audit_url: str, api_key: str | None, *, timeout_sec: float) -> int:
@@ -1541,6 +1601,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary_obj: dict[str, Any] | None = None
         summary_codes: list[str] = ["INTEGRATION_ERROR"]
         summary_next_action = "Check GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY (and network), then rerun the same command."
+        summary_triggered_by: list[str] | None = None
         opt = (getattr(args, "check_run_id", None) or "").strip()
         run_id = opt or _resolve_run_id(args)
         if not run_id:
@@ -1552,6 +1613,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 repro=repro,
             )
             return cli_exit.EX_USAGE
+
+        # Optional local enrichment for summary output (append-only).
+        raw_scan_path = (os.environ.get("GOVAI_DISCOVERY_PATH") or "").strip()
+        if raw_scan_path:
+            try:
+                scan_path = Path(raw_scan_path).expanduser()
+                if scan_path.exists():
+                    summary_triggered_by = _triggered_by_from_repo_scan(scan_path)
+            except Exception:
+                summary_triggered_by = None
 
         client = GovAIClient(audit_url, api_key=api_key, default_project=project)
         vad = getattr(args, "verify_artifacts_dir", None)
@@ -1587,6 +1658,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_final_summary(
                 verdict=summary_verdict,
                 reason_codes=summary_codes,
+                triggered_by=summary_triggered_by,
                 next_action=summary_next_action,
                 repro=repro,
             )
@@ -1626,6 +1698,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary_obj: dict[str, Any] | None = None
         summary_codes: list[str] = ["INTEGRATION_ERROR"]
         summary_next_action = "Check GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY (and network), then rerun the same command."
+        summary_triggered_by: list[str] | None = None
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
@@ -1637,6 +1710,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return cli_exit.EX_USAGE
         artifact_dir = Path(getattr(args, "verify_pack_dir")).expanduser().resolve()
+
+        # Optional local enrichment for summary output (append-only).
+        raw_scan_path = (os.environ.get("GOVAI_DISCOVERY_PATH") or "").strip()
+        if raw_scan_path:
+            try:
+                scan_path = Path(raw_scan_path).expanduser()
+                if scan_path.exists():
+                    summary_triggered_by = _triggered_by_from_repo_scan(scan_path)
+            except Exception:
+                summary_triggered_by = None
+
         client = GovAIClient(audit_url, api_key=api_key, default_project=project)
         try:
             try:
@@ -1680,6 +1764,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_final_summary(
                 verdict=summary_verdict,
                 reason_codes=summary_codes,
+                triggered_by=summary_triggered_by,
                 next_action=summary_next_action,
                 repro=repro,
             )
