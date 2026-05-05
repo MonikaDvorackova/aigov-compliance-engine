@@ -27,9 +27,12 @@ const PROOF_ITEMS = [
   { label: "Audit export", detail: "Verifiable JSON output" },
 ] as const;
 
+/** Desktop: jedna šířka jako video / ledger / pricing (úzké sloupce 520/560 odstraněny). Mobil: @media 720/640/560 beze změny. */
+const LANDING_PAGE_MAX_WIDTH_PX = 720;
+
 export default function Page() {
   return (
-    <InfraShell maxWidth={720} align="start" padding={20} background={LANDING_SHELL_BACKGROUND}>
+    <InfraShell maxWidth={LANDING_PAGE_MAX_WIDTH_PX} align="start" padding={20} background={LANDING_SHELL_BACKGROUND}>
       <Header />
       <div className="govai_landing_hero" style={{ textAlign: "center", paddingTop: 2 }}>
         <div style={{ letterSpacing: "0.2em", fontSize: 10, opacity: 0.62, marginBottom: 8 }}>GOVAI</div>
@@ -49,8 +52,7 @@ export default function Page() {
 
         <p
           style={{
-            margin: "8px auto 0",
-            maxWidth: "48ch",
+            margin: "8px 0 0",
             fontSize: 13,
             lineHeight: 1.45,
             color: "var(--govai-text-secondary)",
@@ -91,7 +93,6 @@ export default function Page() {
           <div
             style={{
               width: "100%",
-              maxWidth: 960,
               borderRadius: 10,
               border: "1px solid var(--govai-border-faint)",
               background: "var(--govai-bg-elevated)",
@@ -132,9 +133,6 @@ export default function Page() {
           marginTop: 28,
           padding: "18px 16px 16px",
           textAlign: "left",
-          maxWidth: 520,
-          marginLeft: "auto",
-          marginRight: "auto",
           borderRadius: 10,
           border: "1px solid var(--govai-border-faint)",
           background: "var(--govai-bg-panel)",
@@ -196,7 +194,7 @@ export default function Page() {
         <div role="presentation" aria-hidden="true" className="govai_walkthrough_shell" />
       </Panel>
 
-      <div style={{ marginTop: 26, maxWidth: 560, marginLeft: "auto", marginRight: "auto" }}>
+      <div style={{ marginTop: 26 }}>
         <div
           style={{
             fontSize: 9.5,
@@ -253,7 +251,7 @@ export default function Page() {
         </ul>
       </div>
 
-      <div style={{ marginTop: 26, maxWidth: 560, marginLeft: "auto", marginRight: "auto" }}>
+      <div style={{ marginTop: 26 }}>
         <div
           style={{
             fontSize: 9.5,
@@ -343,9 +341,6 @@ export default function Page() {
         id="private-pilot"
         style={{
           marginTop: 28,
-          maxWidth: 560,
-          marginLeft: "auto",
-          marginRight: "auto",
           padding: "16px 14px 14px",
           borderRadius: 10,
           border: "1px solid var(--govai-border-faint)",
@@ -400,7 +395,7 @@ export default function Page() {
         </div>
       </div>
 
-      <div id="pricing" style={{ marginTop: 28, maxWidth: 720, marginLeft: "auto", marginRight: "auto" }}>
+      <div id="pricing" style={{ marginTop: 28 }}>
         <div
           style={{
             fontSize: 9.5,
@@ -491,9 +486,6 @@ export default function Page() {
       <div
         style={{
           marginTop: 22,
-          maxWidth: 560,
-          marginLeft: "auto",
-          marginRight: "auto",
           padding: "14px 14px 12px",
           borderRadius: 10,
           border: "1px solid var(--govai-border-faint)",
@@ -534,6 +526,7 @@ export default function Page() {
             textTransform: "uppercase",
             color: "var(--govai-text-label)",
             marginBottom: 10,
+            textAlign: "center",
           }}
         >
           Core system
@@ -576,7 +569,7 @@ export default function Page() {
         }}
       >
         <div style={{ fontSize: 13, fontWeight: 600, color: "var(--govai-text)", marginBottom: 6 }}>Request access</div>
-        <p style={{ margin: "0 0 14px", fontSize: 12.5, lineHeight: 1.45, color: "var(--govai-text-secondary)", maxWidth: "42ch", marginLeft: "auto", marginRight: "auto" }}>
+        <p style={{ margin: "0 0 14px", fontSize: 12.5, lineHeight: 1.45, color: "var(--govai-text-secondary)" }}>
           Email us to start a private pilot or to discuss Pro / Enterprise limits and deployment.
         </p>
         <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
