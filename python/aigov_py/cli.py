@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
+from urllib.parse import urlparse
 
 from govai import (
     GovAIAPIError,
@@ -43,6 +44,7 @@ from aigov_py.prototype_domain import (
 from aigov_py import report as report_mod
 from aigov_py.types import AssessmentCreate, GovaiError
 from aigov_py import verify as verify_mod
+from aigov_py.demo_golden_path import generate_demo_golden_path
 
 # Thin wrappers — same package
 
@@ -88,6 +90,15 @@ def _api_key(ns: argparse.Namespace) -> str | None:
         flag=getattr(ns, "api_key", None) or None,
         config_path=_config_path_from_args(ns),
     )
+
+
+def _is_localhost_url(url: str) -> bool:
+    try:
+        u = urlparse(str(url or ""))
+    except Exception:
+        return False
+    host = (u.hostname or "").strip().lower()
+    return host in {"localhost", "127.0.0.1", "::1"}
 
 
 def _resolve_project(ns: argparse.Namespace) -> str | None:
@@ -513,6 +524,9 @@ def _verify_artifact_digest_continuity(
         got_body = eag.bundle_hash_digest(client, run_id)
     except Exception as exc:
         print(f"ERROR: /bundle-hash failed: {exc}", file=sys.stderr)
+        msg = str(exc).lower()
+        if "connection refused" in msg or "failed to establish a new connection" in msg:
+            print('hint: Run local audit service (e.g. make audit_bg) before verify', file=sys.stderr)
         return cli_exit.EX_ERR
     got = str(got_body.get("events_content_sha256") or "").strip().lower()
     if got != expected:
@@ -1137,6 +1151,28 @@ def build_parser() -> GovaiArgumentParser:
         help="Deterministic demo: BLOCKED → missing evidence → VALID → export audit JSON (requires GOVAI_* env vars).",
     )
 
+    s_demo_gp = sub.add_parser(
+        "demo-golden-path",
+        help="Generate deterministic CI-ready evidence artifacts (artefacts/<run_id>.json + artefacts/evidence_digest_manifest.json).",
+    )
+    s_demo_gp.add_argument(
+        "--output-dir",
+        dest="demo_output_dir",
+        type=Path,
+        default=Path("artefacts"),
+        help="Output directory for artefacts (default: artefacts).",
+    )
+    s_demo_gp.add_argument(
+        "--print-run-id",
+        action="store_true",
+        help="Print only the run_id to stdout (full instructions go to stderr).",
+    )
+    s_demo_gp.add_argument(
+        "--show-api-key",
+        action="store_true",
+        help="Include the resolved api key value in the printed verify command (default: use $GOVAI_API_KEY).",
+    )
+
     sub.add_parser(
         "doctor",
         help="Preflight checks: validate audit base URL + auth and ensure /ready is HTTP 200 (DB+migrations+ledger).",
@@ -1547,6 +1583,56 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.cmd == "run" and getattr(args, "run_cmd", None) == "demo-deterministic":
         return run_demo_deterministic(timeout_sec=float(getattr(args, "timeout", 30.0)))
+
+    if args.cmd == "demo-golden-path":
+        run_id = str(uuid.uuid4())
+        out_dir = Path(getattr(args, "demo_output_dir"))
+        res = generate_demo_golden_path(run_id=run_id, output_dir=out_dir)
+
+        audit_url = _audit_url(args)
+        api_key = _api_key(args)
+
+        if bool(getattr(args, "print_run_id", False)):
+            print(res.run_id)
+            stream = sys.stderr
+        else:
+            stream = sys.stdout
+
+        # Proactive local operator hint: if localhost and /ready is unreachable.
+        if audit_url and _is_localhost_url(audit_url):
+            try:
+                client = GovAIClient(audit_url.rstrip("/"), api_key=api_key, default_project=os.environ.get("GOVAI_PROJECT"))
+                _ = client.request_json("GET", "/ready", timeout=2.0, raise_on_body_ok_false=False)
+            except Exception:
+                print("Local audit service is not running. Start it with: make audit_bg", file=stream)
+                print("", file=stream)
+
+        print(f"run_id: {res.run_id}", file=stream)
+        print(f"artefacts_path: {res.artefacts_path}", file=stream)
+        print("", file=stream)
+        print("next step:", file=stream)
+        print("", file=stream)
+        verify_cmd = ["govai"]
+        if audit_url:
+            verify_cmd += ["--audit-base-url", audit_url]
+        # Never leak key by default; always prefer env var placeholder for copy/paste onboarding.
+        if api_key and bool(getattr(args, "show_api_key", False)):
+            verify_cmd += ["--api-key", api_key]
+        else:
+            verify_cmd += ["--api-key", "$GOVAI_API_KEY"]
+        verify_cmd += ["verify-evidence-pack", "--path", str(res.artefacts_path), "--run-id", res.run_id]
+
+        print(" ".join([shlex.quote(str(x)) for x in verify_cmd]), file=stream)
+
+        if not api_key:
+            print("", file=stream)
+            print("missing GOVAI_API_KEY. Set it, e.g.:", file=stream)
+            print('export GOVAI_API_KEY="YOUR_LOCAL_KEY"', file=stream)
+        if not audit_url:
+            print("", file=stream)
+            print("missing GOVAI_AUDIT_BASE_URL. Set it, e.g.:", file=stream)
+            print('export GOVAI_AUDIT_BASE_URL="http://127.0.0.1:8088"', file=stream)
+        return cli_exit.EX_OK
 
     audit_url = _audit_url(args)
     api_key = _api_key(args)
