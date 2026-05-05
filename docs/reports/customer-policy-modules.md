@@ -1,41 +1,31 @@
-## Audit report: customer policy modules (product-layer addition)
+# Customer policy modules
 
-### Summary
+## Evaluation gate
 
-This change introduces a **customer-replaceable policy module format** as a documentation + lightweight helper layer:
+This change introduces a customer-replaceable policy module product layer.
 
-policy module (YAML) → flat `required_evidence` set → existing GovAI engine
+Validated changes:
+- static policy module format documentation
+- AI Act high-risk example policy
+- internal GenAI example policy
+- customer guide for replacing policy profiles
+- lightweight Python helper for loading policy YAML and extracting a flat required_evidence set
 
-### What changed
+Verification:
+- python -m pytest -q
+- cd rust && cargo test --lib && cd ..
+- action.yml YAML parse
+- git diff --check
 
-- Added documentation describing a static YAML policy module format.
-- Added example policy module YAML files.
-- Added a minimal Python helper to load YAML and extract a flat `required_evidence` set.
+## Human approval gate
 
-### What did not change (hard constraints)
+Reviewed as low-risk product-layer change.
 
-- **No Rust changes** (engine unchanged).
-- **No change to `VALID` / `INVALID` / `BLOCKED` semantics**.
-- **No schema changes** and **no API payload changes**.
-- **No dynamic runtime logic** (policy modules are deterministic mapping only).
-- **No enforcement logic changes** (engine enforcement remains authoritative and deterministic).
+No changes were made to:
+- Rust decision logic
+- VALID / INVALID / BLOCKED semantics
+- fail-closed behavior
+- schemas or API payloads
+- backend enforcement logic
 
-### Risk assessment
-
-Low risk:
-
-- Documentation-only changes are non-executable.
-- The Python helper is standalone and not wired into the CLI or runtime paths.
-
-### Verification
-
-Run repository verification:
-
-```bash
-python -m pytest -q
-cd rust && cargo test --lib && cd ..
-python -c "import yaml; yaml.safe_load(open('action.yml', encoding='utf-8')); print('action yaml ok')"
-git diff --check
-git status --short
-```
-
+Policy modules compile to a flat required_evidence set only.
