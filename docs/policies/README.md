@@ -32,3 +32,54 @@ The EU AI Act can be one policy module among many:
 
 GovAI remains policy-agnostic: it enforces **evidence completeness and deterministic decision semantics**, not legal interpretation.
 
+---
+
+## CLI usage (compile-only)
+
+Compile a policy module YAML into a flat `required_evidence` set:
+
+```bash
+govai policy compile --path docs/policies/ai-act-high-risk.example.yaml
+```
+
+Machine-readable JSON:
+
+```bash
+govai policy compile --path docs/policies/ai-act-high-risk.example.yaml --json
+```
+
+---
+
+## Policy replacement workflow (customer-side)
+
+1) Copy an example module (start small):
+
+- `docs/policies/internal-genai-policy.example.yaml`
+
+2) Set policy identity fields:
+
+- `policy.id`
+- `policy.name`
+- `policy.version`
+
+3) Update `requirements[*]`:
+
+- each requirement has a stable `code`
+- each requirement lists `required_evidence` codes (existing GovAI evidence codes)
+
+4) Compile and inspect the required evidence:
+
+```bash
+govai policy compile --path /path/to/your-policy.yaml
+```
+
+5) Compare versions by diffing compiled output:
+
+```bash
+govai policy compile --path /path/to/policy-v1.yaml > /tmp/policy-v1.txt
+govai policy compile --path /path/to/policy-v2.yaml > /tmp/policy-v2.txt
+diff -u /tmp/policy-v1.txt /tmp/policy-v2.txt
+```
+
+Note: this repository currently provides **compile-only** tooling. Backend enforcement configuration is separate.
+
