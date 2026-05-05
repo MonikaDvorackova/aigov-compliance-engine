@@ -4,6 +4,12 @@ GovAI is an **audit-backed decision system** for AI deployments: append-only evi
 
 [![Join Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/sRBSafRtE)
 
+## Golden path (2 min)
+
+Minimal deterministic local example using the **existing evidence-pack format**:
+
+- `docs/golden-path.md`
+
 ## Quickstart (5 minutes)
 
 Choose one:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -25,13 +26,17 @@ from aigov_py import cli_exit
 from aigov_py import evidence_artifact_gate as eag
 from aigov_py.client import GovaiClient
 from aigov_py.discovery_scan import scan_repo
+from aigov_py import export_bundle as export_bundle_mod
+from aigov_py import fetch_bundle_from_govai
 from aigov_py.prototype_domain import (
     approved_human_event_id_for_run,
     assessment_id_for_run,
     model_version_id_for_run,
     risk_id_for_run,
 )
+from aigov_py import report as report_mod
 from aigov_py.types import AssessmentCreate, GovaiError
+from aigov_py import verify as verify_mod
 
 # Thin wrappers — same package
 
@@ -42,10 +47,6 @@ class GovaiArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         self.print_usage(sys.stderr)
         self.exit(cli_exit.EX_USAGE, f"{self.prog}: error: {message}\n")
-from aigov_py import export_bundle as export_bundle_mod
-from aigov_py import fetch_bundle_from_govai
-from aigov_py import report as report_mod
-from aigov_py import verify as verify_mod
 
 
 def _system_exit_code(se: SystemExit) -> int:
@@ -269,6 +270,93 @@ def _print_check_failure_details(summary: dict[str, Any], verdict: str) -> None:
 def _print_doctor_block(title: str) -> None:
     print("")
     print(f"== {title} ==")
+
+
+def _stable_reason_codes(codes: Sequence[str] | None) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for c in (codes or []):
+        s = str(c or "").strip()
+        if not s:
+            continue
+        if s not in seen:
+            seen.add(s)
+            out.append(s)
+    out.sort()
+    return out
+
+
+def _category_for_verdict(verdict: str) -> str:
+    v = (verdict or "").strip().upper()
+    if v == "ERROR":
+        return "integration"
+    if v == "BLOCKED":
+        return "evidence"
+    if v == "INVALID":
+        return "policy"
+    return "policy" if v == "VALID" else "integration"
+
+
+def _format_repro_command(args_list: Sequence[str]) -> str:
+    # Exact CLI reproduction command, with stable shell quoting.
+    return " ".join(["govai", *[shlex.quote(str(a)) for a in args_list]])
+
+
+def _print_final_summary(
+    *,
+    verdict: str,
+    reason_codes: Sequence[str] | None,
+    next_action: str,
+    repro: str,
+) -> None:
+    # Preserve "verdict-first" stdout contract even when CI merges stdout+stderr.
+    # If stdout is buffered and stderr is unbuffered, stderr can appear first unless we flush.
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
+    v = (verdict or "").strip().upper() or "ERROR"
+    if v not in {"VALID", "INVALID", "BLOCKED", "ERROR"}:
+        v = "ERROR"
+    cat = _category_for_verdict(v)
+    rc = _stable_reason_codes(reason_codes)
+
+    # Printed to stderr so existing stdout remains machine-friendly (verdict-only / JSON-only).
+    print("--------------------------------", file=sys.stderr, flush=True)
+    print("GovAI summary", file=sys.stderr, flush=True)
+    print(f"verdict: {v}", file=sys.stderr, flush=True)
+    print(f"category: {cat}", file=sys.stderr, flush=True)
+    print(f"reason_codes: {rc}", file=sys.stderr, flush=True)
+    print(f"next_action: {next_action}", file=sys.stderr, flush=True)
+    print(f"repro: {repro}", file=sys.stderr, flush=True)
+    print("--------------------------------", file=sys.stderr, flush=True)
+
+
+def _summary_for_compliance(
+    *,
+    verdict: str,
+    summary: dict[str, Any] | None,
+    repro: str,
+) -> tuple[str, list[str], str, str]:
+    v = (verdict or "").strip().upper() or "ERROR"
+    codes: list[str] = []
+
+    if v == "VALID":
+        next_action = "Proceed with deployment."
+    elif v == "BLOCKED":
+        missing = _missing_evidence_from_summary(summary or {})
+        blocked_reasons = (summary or {}).get("blocked_reasons")
+        if missing or (isinstance(blocked_reasons, list) and blocked_reasons):
+            codes.append("EVIDENCE_MISSING")
+        next_action = "Submit the missing evidence for this run_id, then rerun the same command."
+    elif v == "INVALID":
+        codes.append("EVALUATION_FAILED")
+        next_action = "Fix the failed evaluation evidence and rerun the same command."
+    else:
+        codes.append("INTEGRATION_ERROR")
+        next_action = "Check GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY (and network), then rerun the same command."
+
+    return v if v in {"VALID", "INVALID", "BLOCKED"} else "ERROR", _stable_reason_codes(codes), next_action, repro
 
 
 def doctor(audit_url: str, api_key: str | None, *, timeout_sec: float) -> int:
@@ -1355,21 +1443,36 @@ def main(argv: Sequence[str] | None = None) -> int:
     audit_url = _audit_url(args)
     api_key = _api_key(args)
     project = _resolve_project(args)
+    repro = _format_repro_command(args_list)
 
     if args.cmd == "doctor":
         return doctor(audit_url, api_key, timeout_sec=float(getattr(args, "timeout", 30.0)))
 
     if args.cmd == "verify":
+        summary_verdict = "ERROR"
+        summary_codes: list[str] = ["INTEGRATION_ERROR"]
+        summary_next_action = "Fix the reported issue, then rerun the same command."
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
+            _print_final_summary(
+                verdict="ERROR",
+                reason_codes=["USAGE_ERROR"],
+                next_action="Pass --run-id (or set GOVAI_RUN_ID / RUN_ID), then rerun.",
+                repro=repro,
+            )
             return cli_exit.EX_USAGE
         prev_audit = os.environ.get("AIGOV_AUDIT_URL")
         prev_end = os.environ.get("AIGOV_AUDIT_ENDPOINT")
         try:
             os.environ["AIGOV_AUDIT_URL"] = audit_url
             os.environ["AIGOV_AUDIT_ENDPOINT"] = audit_url
-            return verify_mod.verify(run_id, as_json=args.json)
+            rc = verify_mod.verify(run_id, as_json=args.json)
+            if rc == cli_exit.EX_OK:
+                summary_verdict = "VALID"
+                summary_codes = []
+                summary_next_action = "Proceed (artifacts verified)."
+            return rc
         finally:
             if prev_audit is None:
                 os.environ.pop("AIGOV_AUDIT_URL", None)
@@ -1379,6 +1482,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 os.environ.pop("AIGOV_AUDIT_ENDPOINT", None)
             else:
                 os.environ["AIGOV_AUDIT_ENDPOINT"] = prev_end
+            _print_final_summary(
+                verdict=summary_verdict,
+                reason_codes=summary_codes,
+                next_action=summary_next_action,
+                repro=repro,
+            )
 
     if args.cmd == "fetch-bundle":
         run_id = _resolve_run_id(args)
@@ -1428,30 +1537,59 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cli_exit.EX_OK
 
     if args.cmd == "check":
+        summary_verdict = "ERROR"
+        summary_obj: dict[str, Any] | None = None
+        summary_codes: list[str] = ["INTEGRATION_ERROR"]
+        summary_next_action = "Check GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY (and network), then rerun the same command."
         opt = (getattr(args, "check_run_id", None) or "").strip()
         run_id = opt or _resolve_run_id(args)
         if not run_id:
             print("run id required", file=sys.stderr)
+            _print_final_summary(
+                verdict="ERROR",
+                reason_codes=["USAGE_ERROR"],
+                next_action="Pass --run-id (or set GOVAI_RUN_ID / RUN_ID), then rerun.",
+                repro=repro,
+            )
             return cli_exit.EX_USAGE
 
         client = GovAIClient(audit_url, api_key=api_key, default_project=project)
         vad = getattr(args, "verify_artifacts_dir", None)
-        if vad is not None:
-            artifact_dir = Path(vad).expanduser().resolve()
-            rc = _verify_artifact_digest_continuity(client, artifact_dir=artifact_dir, run_id=run_id)
-            if rc != cli_exit.EX_OK:
-                return rc
+        try:
+            if vad is not None:
+                artifact_dir = Path(vad).expanduser().resolve()
+                rc = _verify_artifact_digest_continuity(client, artifact_dir=artifact_dir, run_id=run_id)
+                if rc != cli_exit.EX_OK:
+                    summary_verdict = "ERROR"
+                    summary_codes = ["DIGEST_MISMATCH"]
+                    summary_next_action = "Fix evidence_digest_manifest.json / hosted bundle-hash mismatch, then rerun."
+                    return rc
 
-        code_sum, summary = _compliance_verdict_or_err(client, run_id, timeout=args.timeout)
-        if code_sum != cli_exit.EX_OK or summary is None:
-            return code_sum
+            code_sum, summary = _compliance_verdict_or_err(client, run_id, timeout=args.timeout)
+            if code_sum != cli_exit.EX_OK or summary is None:
+                summary_verdict = "ERROR"
+                summary_codes = ["INTEGRATION_ERROR"]
+                return code_sum
 
-        verdict = str(summary.get("verdict") or "").strip()
-        print(verdict)
-        if verdict in ("BLOCKED", "INVALID"):
-            _print_check_failure_details(summary, verdict)
+            summary_obj = summary
+            verdict = str(summary.get("verdict") or "").strip()
+            print(verdict, flush=True)
+            if verdict in ("BLOCKED", "INVALID"):
+                _print_check_failure_details(summary, verdict)
 
-        return _exit_for_compliance_verdict(verdict)
+            summary_verdict, summary_codes, summary_next_action, _ = _summary_for_compliance(
+                verdict=verdict,
+                summary=summary_obj,
+                repro=repro,
+            )
+            return _exit_for_compliance_verdict(verdict)
+        finally:
+            _print_final_summary(
+                verdict=summary_verdict,
+                reason_codes=summary_codes,
+                next_action=summary_next_action,
+                repro=repro,
+            )
 
     if args.cmd == "submit-evidence-pack":
         run_id = _resolve_run_id(args)
@@ -1484,35 +1622,67 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cli_exit.EX_OK
 
     if args.cmd == "verify-evidence-pack":
+        summary_verdict = "ERROR"
+        summary_obj: dict[str, Any] | None = None
+        summary_codes: list[str] = ["INTEGRATION_ERROR"]
+        summary_next_action = "Check GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY (and network), then rerun the same command."
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
+            _print_final_summary(
+                verdict="ERROR",
+                reason_codes=["USAGE_ERROR"],
+                next_action="Pass --run-id (or set GOVAI_RUN_ID / RUN_ID), then rerun.",
+                repro=repro,
+            )
             return cli_exit.EX_USAGE
         artifact_dir = Path(getattr(args, "verify_pack_dir")).expanduser().resolve()
         client = GovAIClient(audit_url, api_key=api_key, default_project=project)
         try:
-            _b, bundle_path = eag.load_bundle(run_id, artifact_dir)
-        except (OSError, json.JSONDecodeError, TypeError, FileNotFoundError) as exc:
-            print(f"ERROR: cannot load evidence bundle: {exc}", file=sys.stderr)
-            return cli_exit.EX_ERR
-        # Ensure manifest referent exists (CI must ship both files).
-        _ = bundle_path
-        rc = _verify_artifact_digest_continuity(
-            client,
-            artifact_dir=artifact_dir,
-            run_id=run_id,
-            require_export=bool(getattr(args, "require_export", False)),
-        )
-        if rc != cli_exit.EX_OK:
-            return rc
-        code_sum, summary = _compliance_verdict_or_err(client, run_id, timeout=args.timeout)
-        if code_sum != cli_exit.EX_OK or summary is None:
-            return code_sum
-        verdict = str(summary.get("verdict") or "").strip()
-        print(verdict)
-        if verdict in ("BLOCKED", "INVALID"):
-            _print_check_failure_details(summary, verdict)
-        return _exit_for_compliance_verdict(verdict)
+            try:
+                _b, bundle_path = eag.load_bundle(run_id, artifact_dir)
+            except (OSError, json.JSONDecodeError, TypeError, FileNotFoundError) as exc:
+                print(f"ERROR: cannot load evidence bundle: {exc}", file=sys.stderr)
+                summary_verdict = "ERROR"
+                summary_codes = ["EVIDENCE_BUNDLE_INVALID"]
+                summary_next_action = "Fix the evidence pack JSON files, then rerun the same command."
+                return cli_exit.EX_ERR
+            # Ensure manifest referent exists (CI must ship both files).
+            _ = bundle_path
+            rc = _verify_artifact_digest_continuity(
+                client,
+                artifact_dir=artifact_dir,
+                run_id=run_id,
+                require_export=bool(getattr(args, "require_export", False)),
+            )
+            if rc != cli_exit.EX_OK:
+                summary_verdict = "ERROR"
+                summary_codes = ["DIGEST_MISMATCH"]
+                summary_next_action = "Fix evidence_digest_manifest.json / hosted bundle-hash mismatch, then rerun."
+                return rc
+            code_sum, summary = _compliance_verdict_or_err(client, run_id, timeout=args.timeout)
+            if code_sum != cli_exit.EX_OK or summary is None:
+                summary_verdict = "ERROR"
+                summary_codes = ["INTEGRATION_ERROR"]
+                return code_sum
+            summary_obj = summary
+            verdict = str(summary.get("verdict") or "").strip()
+            print(verdict)
+            if verdict in ("BLOCKED", "INVALID"):
+                _print_check_failure_details(summary, verdict)
+            summary_verdict, summary_codes, summary_next_action, _ = _summary_for_compliance(
+                verdict=verdict,
+                summary=summary_obj,
+                repro=repro,
+            )
+            return _exit_for_compliance_verdict(verdict)
+        finally:
+            _print_final_summary(
+                verdict=summary_verdict,
+                reason_codes=summary_codes,
+                next_action=summary_next_action,
+                repro=repro,
+            )
 
     if args.cmd == "submit-evidence":
         run_id = _resolve_run_id(args)
