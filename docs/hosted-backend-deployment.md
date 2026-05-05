@@ -74,7 +74,7 @@ After successful startup:
   - If unset/empty, auth for `POST /evidence`, `GET /compliance-summary`, `GET /usage` is **disabled** (local-friendly default).
 
 - **`GOVAI_BASE_URL`**
-  - Canonical public base URL (e.g. `https://audit.example.com`).
+  - Canonical public base URL (e.g. `https://audit.govbase.dev`).
   - Returned by `GET /status` as `base_url` for ops/debugging.
 
 ### Optional (only if you use these features)
@@ -107,7 +107,7 @@ After successful startup:
 
 Customers only need:
 
-- **Audit base URL**: your hosted URL (example `https://audit.example.com`)
+- **Audit base URL**: your hosted URL (example `https://audit.govbase.dev`)
 - **API key**: one bearer token from you
 
 In the Python terminal SDK, they configure:
@@ -139,7 +139,9 @@ Set at least:
 - **`GOVAI_DATABASE_URL`** (or **`DATABASE_URL`**) — managed Postgres URL.
 - **`GOVAI_API_KEYS`** — comma-separated bearer secrets (must align with tenant mapping when **`GOVAI_API_KEYS_JSON`** is used).
 - **`GOVAI_API_KEYS_JSON`** — staging/production expect a JSON map of **`api_key → tenant_id`** (see Rust `audit_api_key` module): required for isolated hosted tenants on **`AIGOV_ENVIRONMENT=staging`** / **`prod`**.
-- **`AIGOV_ENVIRONMENT`** — use **`staging`** or **`prod`** for hosted tiers (determines startup strictness).
+- **`GOVAI_BASE_URL`** — set to **`https://audit.govbase.dev`** so `GET /status` reports the canonical public URL.
+- **`AIGOV_ENVIRONMENT`** — use **`prod`** for the production hosted tier (determines startup strictness).
+- **`AIGOV_BIND`** — bind to a public interface for hosted. For Railway you typically want `0.0.0.0:$PORT`; if your platform uses a fixed port, use `0.0.0.0:8080`.
 - **`GOVAI_AUTO_MIGRATE`** — **`true`** in simple Railway setups, **or** run SQLx migrations as a separate release step.
 - **`PORT`** — provided by Railway; **do not** hardcode **8088** for this platform.
 
@@ -154,7 +156,7 @@ export AIGOV_BIND="0.0.0.0:8088"
 export GOVAI_DATABASE_URL="postgres://USER:PASSWORD@HOST:5432/DBNAME"
 export GOVAI_LEDGER_DIR="/var/lib/govai/ledger"
 export GOVAI_API_KEYS="replace_with_real_secret"
-export GOVAI_BASE_URL="https://audit.example.com"
+export GOVAI_BASE_URL="https://audit.govbase.dev"
 
 cargo run -p aigov_audit
 ```
