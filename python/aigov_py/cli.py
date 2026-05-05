@@ -309,6 +309,12 @@ def _print_final_summary(
     next_action: str,
     repro: str,
 ) -> None:
+    # Preserve "verdict-first" stdout contract even when CI merges stdout+stderr.
+    # If stdout is buffered and stderr is unbuffered, stderr can appear first unless we flush.
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
     v = (verdict or "").strip().upper() or "ERROR"
     if v not in {"VALID", "INVALID", "BLOCKED", "ERROR"}:
         v = "ERROR"
@@ -316,14 +322,14 @@ def _print_final_summary(
     rc = _stable_reason_codes(reason_codes)
 
     # Printed to stderr so existing stdout remains machine-friendly (verdict-only / JSON-only).
-    print("--------------------------------", file=sys.stderr)
-    print("GovAI summary", file=sys.stderr)
-    print(f"verdict: {v}", file=sys.stderr)
-    print(f"category: {cat}", file=sys.stderr)
-    print(f"reason_codes: {rc}", file=sys.stderr)
-    print(f"next_action: {next_action}", file=sys.stderr)
-    print(f"repro: {repro}", file=sys.stderr)
-    print("--------------------------------", file=sys.stderr)
+    print("--------------------------------", file=sys.stderr, flush=True)
+    print("GovAI summary", file=sys.stderr, flush=True)
+    print(f"verdict: {v}", file=sys.stderr, flush=True)
+    print(f"category: {cat}", file=sys.stderr, flush=True)
+    print(f"reason_codes: {rc}", file=sys.stderr, flush=True)
+    print(f"next_action: {next_action}", file=sys.stderr, flush=True)
+    print(f"repro: {repro}", file=sys.stderr, flush=True)
+    print("--------------------------------", file=sys.stderr, flush=True)
 
 
 def _summary_for_compliance(
@@ -1567,7 +1573,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             summary_obj = summary
             verdict = str(summary.get("verdict") or "").strip()
-            print(verdict)
+            print(verdict, flush=True)
             if verdict in ("BLOCKED", "INVALID"):
                 _print_check_failure_details(summary, verdict)
 
