@@ -1,3 +1,9 @@
+#
+# NOTE (non-production gate / legacy workflow):
+# - This workflow is a legacy/basic integration smoke workflow.
+# - It is NOT the authoritative hosted compliance gate.
+# - The authoritative pilot/production gate is `.github/workflows/compliance.yml` / `govai-compliance-gate`.
+#
 name: govai-ci
 
 on:

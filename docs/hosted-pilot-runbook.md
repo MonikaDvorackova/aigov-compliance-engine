@@ -43,7 +43,8 @@ For the hosted pilot environment, the audit service is exposed as a **public HTT
 
 This base URL must serve the audit service endpoints directly, e.g.:
 
-- `GET /health`
+- `GET /ready` (primary readiness probe)
+- `GET /health` (liveness-only)
 - `GET /status`
 - `GET /compliance-summary?run_id=...`
 - `POST /evidence`
@@ -58,11 +59,19 @@ From the repo root:
 
 ```bash
 docker compose up -d --build
-curl -sS http://127.0.0.1:8088/health
+curl -sS -i http://127.0.0.1:8088/ready
 curl -sS http://127.0.0.1:8088/status
+curl -sS http://127.0.0.1:8088/health
 ```
 
 If you are running this on a VM, ensure inbound access to port `8088` (or put it behind an HTTPS reverse proxy and expose `443`).
+
+### Operational smoke check: use `/ready` (primary)
+
+- **`GET /health`** only proves the HTTP process is alive **after successful startup**. It is liveness-only and does **not** prove Postgres connectivity, migrations state, or ledger writability.
+- **`GET /ready`** is the primary “is the hosted audit service operational?” probe:
+  - **HTTP 503** means dependencies are **not ready** (Postgres unreachable, migrations incomplete, or ledger directory not writable).
+  - **HTTP 200** means the service is operational: **Postgres reachable + migrations applied + ledger writable**.
 
 ---
 
@@ -235,7 +244,7 @@ Collect:
 
 - **GovAI check failed (cannot fetch verdict)**
   - Root cause: invalid URL, auth rejected, or server not reachable.
-  - Fix: curl `GET /health` and `GET /status`; verify the bearer token is a key in `GOVAI_API_KEYS_JSON` on the server.
+  - Fix: curl `GET /ready` and `GET /status` (`/health` is liveness-only); verify the bearer token is a key in `GOVAI_API_KEYS_JSON` on the server.
 
 - **Onboarding demo never reaches `VALID`**
   - Root cause: server policy differs from what the demo expects, or evidence submission is failing.

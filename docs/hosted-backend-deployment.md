@@ -158,7 +158,11 @@ export GOVAI_LEDGER_DIR="/var/lib/govai/ledger"
 export GOVAI_API_KEYS="replace_with_real_secret"
 export GOVAI_BASE_URL="https://audit.govbase.dev"
 
-cargo run -p aigov_audit
+# Run the explicit `aigov_audit` binary (matches Makefile/CI expectations).
+cargo run --bin aigov_audit --locked
+
+# Or if already built:
+./target/debug/aigov_audit
 ```
 
 ### Health / status

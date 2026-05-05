@@ -31,6 +31,8 @@ HTTP 200
 
 The audit service is **fail-fast at startup**: Postgres must be reachable and correctly configured **before** HTTP listens. **`GET /health`** does not hit the database, but it is **only available after** that startup succeeds — it is **liveness-only**, not proof that Postgres or the ledger are still healthy. Use **`GET /ready`** for operational readiness (Postgres + migrations + writable ledger); see **`docs/hosted-backend-deployment.md`** (“HTTP startup and operational probes”).
 
+**Operator probe note (hosted):** treat **`GET /health`** as liveness-only after successful startup; treat **`GET /ready`** as operational readiness; in hosted environments use **`/ready`** for CI and load-balancer readiness checks. See `docs/hosted-backend-deployment.md`.
+
 4. What you just did
 - started the audit service
 - exposed the API on port `8088`
