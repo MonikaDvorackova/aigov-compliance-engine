@@ -46,6 +46,33 @@ That flat set is what GovAI uses as “required evidence” for a run (and what 
 
 ---
 
+## How discovery affects policy (automatic requirements)
+
+GovAI supports a deterministic “policy binding” layer that can **augment** policy-required evidence based on deterministic discovery signals.
+
+Conceptually:
+
+`discovery signals` + `policy module` → `required_evidence` (flat set) → verdict
+
+Examples (deterministic mapping):
+
+- If `llm_used` is detected → require `evaluation_reported` and `usage_policy_defined`.
+- If `user_facing` is detected → require `human_approved`.
+- If `pii_possible` is detected → require `privacy_review_completed`.
+
+Important constraints:
+
+- Discovery does **not** replace policy modules.
+- The output of binding is still a **flat deterministic set** (`required_evidence` codes).
+- No runtime policy logic is introduced: it is a static mapping from signals to evidence codes.
+
+See also:
+
+- `docs/discovery-v2.md`
+- `docs/reports/discovery-v2-and-policy-binding.md`
+
+---
+
 ## How this affects `BLOCKED` / `VALID` outcomes
 
 This product-layer policy module mechanism does **not** change semantics:

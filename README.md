@@ -10,6 +10,11 @@ Minimal deterministic local example using the **existing evidence-pack format**:
 
 - `docs/golden-path.md`
 
+## Troubleshooting and operator docs
+
+- **Troubleshooting matrix (customers + operators)**: `docs/troubleshooting.md`
+- **Operator runbook (hosted/self-hosted)**: `docs/operator-runbook.md`
+
 ## Quickstart (5 minutes)
 
 Choose one:
@@ -90,6 +95,23 @@ Policy is a **configuration layer** that compiles into a flat `required_evidence
 Customers can replace the AI Act mapping with an internal policy module **without changing the core GovAI engine**.
 The engine remains deterministic: evidence log + policy requirements → `GET /compliance-summary` → `VALID` / `BLOCKED` / `INVALID`.
 See `docs/customer-policy-modules.md` and `docs/policies/`.
+
+## How GovAI decides what is required
+
+GovAI compiles “what is required” into a deterministic **flat set**:
+
+`discovery (context detection)` + `policy modules (static mapping)` → `required_evidence (flat set)` → existing GovAI engine → verdict (`VALID` / `INVALID` / `BLOCKED`)
+
+Key constraints:
+
+- discovery is heuristic-only and deterministic (no ML, no scoring)
+- policy modules are static mappings (no conditionals)
+- the core decision semantics and API contracts remain unchanged
+
+See:
+
+- `docs/discovery-v2.md`
+- `docs/customer-policy-modules.md`
 
 ## When to use GovAI
 
