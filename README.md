@@ -6,6 +6,11 @@ GovAI is an **audit-backed decision system** for AI deployments: append-only evi
 
 ## Quickstart (5 minutes)
 
+Choose one:
+
+- **Hosted (recommended)**: follow `docs/customer-onboarding-10min.md` (canonical hosted onboarding: `BLOCKED → VALID`, then export).
+- **Local (Docker, this repo)**: continue below (for local evaluation / contributor setup).
+
 1. Clone the repo
 
 ```bash

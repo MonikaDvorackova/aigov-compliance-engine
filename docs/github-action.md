@@ -97,6 +97,52 @@ jobs:
           api_key: ${{ secrets.GOVAI_API_KEY }}
 ```
 
+## Minimal “example customer repo” layout (what your repo should contain)
+
+This is the smallest practical shape that is easy to copy and hard to misuse. Your repo produces:
+
+- **`evidence_digest_manifest.json`** (digest manifest)
+- **`<run_id>.json`** (evidence bundle)
+
+and then runs the composite action against the directory that contains both.
+
+Suggested layout:
+
+```text
+.
+├── .github/workflows/compliance.yml
+└── artefacts/
+    ├── evidence_digest_manifest.json
+    └── <run_id>.json
+```
+
+Minimal workflow snippet (caller supplies artefacts, then gates):
+
+```yaml
+name: compliance
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  govai:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Your pipeline step(s) must create / download:
+      # - artefacts/evidence_digest_manifest.json
+      # - artefacts/<run_id>.json
+
+      - name: GovAI artefact-bound compliance gate
+        uses: MonikaDvorackova/aigov-compliance-engine@v1
+        with:
+          run_id: ${{ vars.GOVAI_RUN_ID }}
+          artifacts_path: artefacts
+          base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}
+          api_key: ${{ secrets.GOVAI_API_KEY }}
+```
+
 ## Example misconfiguration (**USAGE / exit 4**)
 
 Missing **`artifacts_path`**, **`api_key`**, or missing directory → action exits **`4`** with **`::error::`** annotations.
