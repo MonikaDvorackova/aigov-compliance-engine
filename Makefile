@@ -18,7 +18,8 @@ AIGOV_MODE ?= ci
 	pr_prepare gate \
 	audit_close \
 	demo demo_new \
-	env_check
+	env_check \
+	engineering_loc
 
 .PHONY: discovery_scan
 discovery_scan:
@@ -50,6 +51,9 @@ env_check:
 # ensure that generated audit reports include the minimum required sections.
 gate:
 	@python3 scripts/gate_reports.py
+
+engineering_loc:
+	@python3 scripts/engineering_loc.py
 
 # ================================
 # Audit service
