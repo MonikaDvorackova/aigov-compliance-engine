@@ -250,7 +250,7 @@ If you are onboarding a new pilot customer, follow `docs/hosted-pilot-runbook.md
 
 ```yaml
       - name: GovAI artefact-bound gate (submit + verify digest + VALID)
-        uses: Kovali/GovAI@v1
+        uses: MonikaDvorackova/aigov-compliance-engine@v1
         with:
           run_id: ${{ vars.GOVAI_RUN_ID }}
           artifacts_path: ${{ github.workspace }}/downloaded-artifacts

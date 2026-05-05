@@ -886,7 +886,7 @@ def build_parser() -> GovaiArgumentParser:
     p.add_argument(
         "--project",
         default=None,
-        help="Optional tenant/project context for requests via X-GovAI-Project header (or GOVAI_PROJECT / X_GOVAI_PROJECT).",
+        help="Optional project label for requests via X-GovAI-Project header (or GOVAI_PROJECT / X_GOVAI_PROJECT). Metadata only; does not select the ledger tenant.",
     )
     p.add_argument(
         "--timeout",

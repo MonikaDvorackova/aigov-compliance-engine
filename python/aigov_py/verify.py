@@ -174,9 +174,9 @@ def verify(run_id: str, *, as_json: bool = False) -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         if ok:
-            print("VERDICT VALID")
+            print("ARTIFACTS_OK")
         else:
-            print("VERDICT INVALID")
+            print("ARTIFACTS_INVALID")
 
     return 0 if ok else 2
 

@@ -38,6 +38,7 @@ After successful startup:
 
 - **Auth / API keys**
   - [ ] Set `GOVAI_API_KEYS` (recommended for hosted mode). Without it, the audit endpoints are **unauthenticated** (legacy local behavior).
+  - [ ] **Hosted staging/prod MUST define `GOVAI_API_KEYS_JSON`** (JSON map `api_key → tenant_id`). Dev mode without API keys is **not** suitable for pilots.
   - [ ] Distribute one API key to each customer.
 
 - **Base URL config**
