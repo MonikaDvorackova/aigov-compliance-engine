@@ -77,6 +77,14 @@ Non-guarantees:
 - not full compliance coverage
 - does not generate missing evidence
 
+## Bring your own policy
+
+GovAI is **policy-agnostic**: the engine enforces evidence completeness and deterministic decision semantics, not a specific legal framework.
+Policy is a **configuration layer** that compiles into a flat `required_evidence` set (static mapping, no runtime logic).
+Customers can replace the AI Act mapping with an internal policy module **without changing the core GovAI engine**.
+The engine remains deterministic: evidence log + policy requirements → `GET /compliance-summary` → `VALID` / `BLOCKED` / `INVALID`.
+See `docs/customer-policy-modules.md` and `docs/policies/`.
+
 ## When to use GovAI
 
 - deploying ML models via CI/CD
