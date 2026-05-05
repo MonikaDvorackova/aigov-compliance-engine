@@ -173,8 +173,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Report hygiene (gate is authoritative)
-        run: echo "make gate enforces required sections; stale report removal is not blocked here."
+      - name: Report hygiene — docs tree reachable
+        run: |
+          set -euo pipefail
+          test -d docs/reports
+          test "$(find docs/reports -maxdepth 1 -type d | wc -l | tr -d '[:space:]')" -ge 1
 
   make_verify:
     name: make_verify
@@ -211,6 +214,13 @@ jobs:
         run: |
           set -euo pipefail
           make gate
+
+      - name: Python tests (pytest)
+        working-directory: python
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          python -m pytest -q
 
       - name: Engineering LOC smoke
         run: |
@@ -313,6 +323,7 @@ jobs:
           GOVAI_LEDGER_DIR: ${{ runner.temp }}/govai-ledger
           GOVAI_API_KEYS_JSON: '{"ci-test-api-key":"github-actions"}'
           AIGOV_ENVIRONMENT: dev
+          AIGOV_POLICY_DIR: ${{ github.workspace }}/rust
           AIGOV_BIND: 127.0.0.1:8088
         run: |
           set -euo pipefail

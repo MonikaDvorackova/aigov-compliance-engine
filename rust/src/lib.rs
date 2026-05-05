@@ -121,7 +121,16 @@ pub async fn run() -> Result<(), String> {
         });
 
     let policy_version = govai_environment::policy_version_for(deployment_env);
-    let resolved_policy = policy_config::load_with_env(deployment_env.as_str());
+    let resolved_policy = match policy_config::load_for_deployment(deployment_env) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{}", e);
+            eprintln!(
+                "Fix policy files (policy.<env>.json / policy.json under AIGOV_POLICY_DIR), set AIGOV_POLICY_FILE to a valid file, or for local dev-only relaxed loading unset AIGOV_POLICY_STRICT and use AIGOV_ENVIRONMENT=dev."
+            );
+            return Err(e);
+        }
+    };
 
     if let Err(e) = db::postgres_url_configured_nonempty() {
         eprintln!("{e}");

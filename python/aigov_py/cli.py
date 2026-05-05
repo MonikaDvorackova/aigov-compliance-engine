@@ -314,9 +314,21 @@ def _category_for_verdict(verdict: str) -> str:
     return "policy" if v == "VALID" else "integration"
 
 
+def _shell_argv_join(argv: Sequence[str]) -> str:
+    """Join argv for copy/paste into bash; preserve ``$GOVAI_API_KEY`` without quoting so it expands."""
+    parts: list[str] = []
+    for a in argv:
+        s = str(a)
+        if s == "$GOVAI_API_KEY":
+            parts.append(s)
+        else:
+            parts.append(shlex.quote(s))
+    return " ".join(parts)
+
+
 def _format_repro_command(args_list: Sequence[str]) -> str:
     # Exact CLI reproduction command, with stable shell quoting.
-    return " ".join(["govai", *[shlex.quote(str(a)) for a in args_list]])
+    return _shell_argv_join(["govai", *[str(a) for a in args_list]])
 
 
 def _print_final_summary(
@@ -1610,19 +1622,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"run_id: {res.run_id}", file=stream)
         print(f"artefacts_path: {res.artefacts_path}", file=stream)
         print("", file=stream)
-        print("next step:", file=stream)
+        print("next steps (run in order — submit before verify/check):", file=stream)
         print("", file=stream)
-        verify_cmd = ["govai"]
+        prefix: list[str] = ["govai"]
+        project = _resolve_project(args)
+        if project:
+            prefix += ["--project", project]
         if audit_url:
-            verify_cmd += ["--audit-base-url", audit_url]
+            prefix += ["--audit-base-url", audit_url]
         # Never leak key by default; always prefer env var placeholder for copy/paste onboarding.
         if api_key and bool(getattr(args, "show_api_key", False)):
-            verify_cmd += ["--api-key", api_key]
+            prefix += ["--api-key", api_key]
         else:
-            verify_cmd += ["--api-key", "$GOVAI_API_KEY"]
-        verify_cmd += ["verify-evidence-pack", "--path", str(res.artefacts_path), "--run-id", res.run_id]
+            prefix += ["--api-key", "$GOVAI_API_KEY"]
+        artefacts = str(res.artefacts_path)
+        submit_cmd = prefix + ["submit-evidence-pack", "--path", artefacts, "--run-id", res.run_id]
+        verify_cmd = prefix + ["verify-evidence-pack", "--path", artefacts, "--run-id", res.run_id]
+        check_cmd = prefix + ["check", "--run-id", res.run_id]
 
-        print(" ".join([shlex.quote(str(x)) for x in verify_cmd]), file=stream)
+        print(_shell_argv_join(submit_cmd), file=stream)
+        print(_shell_argv_join(verify_cmd), file=stream)
+        print(_shell_argv_join(check_cmd), file=stream)
 
         if not api_key:
             print("", file=stream)

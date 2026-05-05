@@ -5,13 +5,40 @@
 //! - **`AIGOV_POLICY_DIR`** if set and non-empty (absolute or relative path), else
 //! - the **process working directory** (`.`).
 //!
-//! If **`AIGOV_POLICY_FILE`** is set to a non-empty path, only that file is read (same error handling:
-//! missing / unreadable / invalid JSON → warning + defaults). Relative paths resolve from the process cwd.
+//! If **`AIGOV_POLICY_FILE`** is set to a non-empty path, only that file is read.
+//! Relative paths resolve from the process cwd.
+//!
+//! # Fail-fast vs dev fallback
+//! - **`AIGOV_POLICY_STRICT=true`** (or `1` / `on` / `yes`): invalid or missing policy always aborts startup.
+//! - **`GovaiEnvironment::Dev`** without strict policy: missing / unreadable / invalid JSON can fall back to
+//!   compiled defaults (**not** allowed in staging or production).
+//! Staging and production **always** require a resolvable valid policy file (env-specific file or `policy.json`
+//! unless `AIGOV_POLICY_FILE` overrides).
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+
+use crate::govai_environment::GovaiEnvironment;
+
+pub const POLICY_REFUSE_MESSAGE: &str = "Invalid policy configuration: refusing to start";
+
+fn policy_strict_from_env() -> bool {
+    std::env::var("AIGOV_POLICY_STRICT")
+        .ok()
+        .map(|s| {
+            matches!(
+                s.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "on" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn allow_runtime_policy_fallback(deployment_env: GovaiEnvironment) -> bool {
+    matches!(deployment_env, GovaiEnvironment::Dev) && !policy_strict_from_env()
+}
 
 #[cfg(test)]
 pub(crate) mod test_sync {
@@ -166,8 +193,13 @@ impl ResolvedPolicyConfig {
     }
 }
 
-/// Load policy for tier `env` (`dev` | `staging` | `prod`).
-pub fn load_with_env(env: &str) -> ResolvedPolicyConfig {
+fn policy_err(detail: impl std::fmt::Display) -> String {
+    format!("{POLICY_REFUSE_MESSAGE} — {detail}")
+}
+
+/// Load policy for process startup. Fails closed when staging/prod (or **`AIGOV_POLICY_STRICT`**) forbids fallback.
+pub fn load_for_deployment(deployment_env: GovaiEnvironment) -> Result<ResolvedPolicyConfig, String> {
+    let allow_fallback = allow_runtime_policy_fallback(deployment_env);
     let override_path = std::env::var("AIGOV_POLICY_FILE")
         .ok()
         .filter(|s| !s.trim().is_empty());
@@ -176,14 +208,20 @@ pub fn load_with_env(env: &str) -> ResolvedPolicyConfig {
         .filter(|s| !s.trim().is_empty())
         .map(|s| PathBuf::from(s.trim()))
         .unwrap_or_else(|| PathBuf::from("."));
-    load_from_filesystem(env, override_path, search_base.as_path())
+    load_from_filesystem(
+        deployment_env.as_str(),
+        override_path,
+        search_base.as_path(),
+        allow_fallback,
+    )
 }
 
 fn load_from_filesystem(
     env: &str,
     policy_file_override: Option<String>,
     search_dir: &Path,
-) -> ResolvedPolicyConfig {
+    allow_fallback: bool,
+) -> Result<ResolvedPolicyConfig, String> {
     let env_label = env.trim().to_ascii_lowercase();
 
     if let Some(raw) = policy_file_override {
@@ -195,12 +233,18 @@ fn load_from_filesystem(
                     path: Some(p.display().to_string()),
                 };
                 log_loaded(&p, &env_label, &cfg);
-                ResolvedPolicyConfig {
+                Ok(ResolvedPolicyConfig {
                     config: cfg,
                     source: src,
-                }
+                })
             }
             ReadOutcome::Missing => {
+                if !allow_fallback {
+                    return Err(policy_err(format!(
+                        "AIGOV_POLICY_FILE not found: {}",
+                        p.display()
+                    )));
+                }
                 eprintln!(
                     "[policy] warning: AIGOV_POLICY_FILE not found: {} (env={}) — using defaults",
                     p.display(),
@@ -208,28 +252,31 @@ fn load_from_filesystem(
                 );
                 let d = PolicyConfig::default();
                 log_values(&d);
-                ResolvedPolicyConfig {
+                Ok(ResolvedPolicyConfig {
                     config: d,
                     source: PolicySource {
                         kind: PolicySourceKind::Defaults,
                         path: None,
                     },
-                }
+                })
             }
             ReadOutcome::Bad(msg) => {
+                if !allow_fallback {
+                    return Err(policy_err(msg));
+                }
                 eprintln!(
                     "[policy] warning: {} (env={}) — using defaults",
                     msg, env_label
                 );
                 let d = PolicyConfig::default();
                 log_values(&d);
-                ResolvedPolicyConfig {
+                Ok(ResolvedPolicyConfig {
                     config: d,
                     source: PolicySource {
                         kind: PolicySourceKind::Defaults,
                         path: None,
                     },
-                }
+                })
             }
         };
     }
@@ -250,31 +297,41 @@ fn load_from_filesystem(
             ReadOutcome::Ok(cfg) => {
                 let path_label = path_for_metadata(&p, search_dir);
                 log_loaded(&p, &env_label, &cfg);
-                return ResolvedPolicyConfig {
+                return Ok(ResolvedPolicyConfig {
                     config: cfg,
                     source: PolicySource {
                         kind,
                         path: Some(path_label),
                     },
-                };
+                });
             }
             ReadOutcome::Missing => continue,
             ReadOutcome::Bad(msg) => {
+                if !allow_fallback {
+                    return Err(policy_err(msg));
+                }
                 eprintln!(
                     "[policy] warning: {} (env={}) — using defaults",
                     msg, env_label
                 );
                 let d = PolicyConfig::default();
                 log_values(&d);
-                return ResolvedPolicyConfig {
+                return Ok(ResolvedPolicyConfig {
                     config: d,
                     source: PolicySource {
                         kind: PolicySourceKind::Defaults,
                         path: None,
                     },
-                };
+                });
             }
         }
+    }
+
+    if !allow_fallback {
+        return Err(policy_err(format!(
+            "no policy file found for env={env_label}; expected policy.{env_label}.json or policy.json under {}",
+            search_dir.display()
+        )));
     }
 
     let d = PolicyConfig::default();
@@ -283,13 +340,13 @@ fn load_from_filesystem(
         env_label
     );
     log_values(&d);
-    ResolvedPolicyConfig {
+    Ok(ResolvedPolicyConfig {
         config: d,
         source: PolicySource {
             kind: PolicySourceKind::Defaults,
             path: None,
         },
-    }
+    })
 }
 
 fn path_for_metadata(path: &Path, search_dir: &Path) -> String {
@@ -363,8 +420,14 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn load_in_dir(env: &str, dir: &Path) -> ResolvedPolicyConfig {
-        load_from_filesystem(env, None, dir)
+    /// Production-like resolution: missing or invalid policy files are errors.
+    fn load_strict(env: &str, dir: &Path) -> ResolvedPolicyConfig {
+        load_from_filesystem(env, None, dir, false).unwrap()
+    }
+
+    /// Dev-only relaxed resolution (no strict flag): missing/invalid may fall back to defaults.
+    fn load_dev_fallback(dir: &Path) -> ResolvedPolicyConfig {
+        load_from_filesystem("dev", None, dir, true).unwrap()
     }
 
     #[test]
@@ -372,7 +435,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let body = r#"{"require_approval":false,"block_if_missing_evidence":false,"enforce_approver_allowlist":false}"#;
         fs::write(dir.path().join("policy.dev.json"), body).unwrap();
-        let r = load_in_dir("dev", dir.path());
+        let r = load_strict("dev", dir.path());
         assert_eq!(
             r.config,
             PolicyConfig {
@@ -394,7 +457,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let body = r#"{"require_approval":false,"block_if_missing_evidence":true}"#;
         fs::write(dir.path().join("policy.json"), body).unwrap();
-        let r = load_in_dir("staging", dir.path());
+        let r = load_strict("staging", dir.path());
         assert_eq!(
             r.config,
             PolicyConfig {
@@ -412,22 +475,37 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_defaults_when_no_files() {
+    fn prod_without_policy_file_errors_when_no_fallback() {
         let dir = TempDir::new().unwrap();
-        let r = load_in_dir("prod", dir.path());
+        let e = load_from_filesystem("prod", None, dir.path(), false).unwrap_err();
+        assert!(e.contains(POLICY_REFUSE_MESSAGE));
+    }
+
+    #[test]
+    fn dev_without_policy_file_uses_defaults_when_fallback_allowed() {
+        let dir = TempDir::new().unwrap();
+        let r = load_dev_fallback(dir.path());
         assert_eq!(r.config, PolicyConfig::default());
         assert_eq!(r.source.kind, PolicySourceKind::Defaults);
         assert_eq!(r.source.path, None);
     }
 
     #[test]
-    fn invalid_json_uses_defaults() {
+    fn invalid_json_uses_defaults_only_with_dev_fallback() {
         let dir = TempDir::new().unwrap();
         fs::write(dir.path().join("policy.dev.json"), "{ not json").unwrap();
-        let r = load_in_dir("dev", dir.path());
+        let r = load_dev_fallback(dir.path());
         assert_eq!(r.config, PolicyConfig::default());
         assert_eq!(r.source.kind, PolicySourceKind::Defaults);
         assert_eq!(r.source.path, None);
+    }
+
+    #[test]
+    fn invalid_staging_json_errors_when_no_fallback() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("policy.staging.json"), "{ not json").unwrap();
+        let e = load_from_filesystem("staging", None, dir.path(), false).unwrap_err();
+        assert!(e.contains(POLICY_REFUSE_MESSAGE));
     }
 
     #[test]
@@ -443,7 +521,7 @@ mod tests {
             r#"{"require_approval":true,"block_if_missing_evidence":true}"#,
         )
         .unwrap();
-        let r = load_in_dir("dev", dir.path());
+        let r = load_strict("dev", dir.path());
         assert_eq!(
             r.config,
             PolicyConfig {
@@ -472,7 +550,9 @@ mod tests {
             "prod",
             Some(custom.to_string_lossy().into_owned()),
             dir.path(),
-        );
+            false,
+        )
+        .unwrap();
         assert_eq!(
             r.config,
             PolicyConfig {
@@ -490,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn load_with_env_honors_aigov_policy_dir() {
+    fn load_for_deployment_honors_aigov_policy_dir() {
         use std::sync::Mutex;
         static DIR_LOCK: Mutex<()> = Mutex::new(());
         let _g = DIR_LOCK.lock().unwrap();
@@ -503,12 +583,13 @@ mod tests {
         .unwrap();
         let empty_cwd = TempDir::new().unwrap();
         std::env::remove_var("AIGOV_POLICY_FILE");
+        std::env::remove_var("AIGOV_POLICY_STRICT");
         std::env::set_var(
             "AIGOV_POLICY_DIR",
             policies.path().to_string_lossy().as_ref(),
         );
         std::env::set_current_dir(empty_cwd.path()).unwrap();
-        let r = super::load_with_env("staging");
+        let r = super::load_for_deployment(GovaiEnvironment::Staging).unwrap();
         assert!(!r.config.enforce_approver_allowlist);
         assert_eq!(r.source.kind, PolicySourceKind::EnvFile);
         assert_eq!(r.source.path.as_deref(), Some("policy.staging.json"));
@@ -528,14 +609,26 @@ mod tests {
     }
 
     #[test]
-    fn invalid_policy_empty_allowlist_with_enforce_uses_defaults() {
+    fn invalid_policy_empty_allowlist_with_enforce_errors_without_fallback() {
         let dir = TempDir::new().unwrap();
         fs::write(
             dir.path().join("policy.prod.json"),
             r#"{"enforce_approver_allowlist":true,"approver_allowlist":[]}"#,
         )
         .unwrap();
-        let r = load_in_dir("prod", dir.path());
+        let e = load_from_filesystem("prod", None, dir.path(), false).unwrap_err();
+        assert!(e.contains(POLICY_REFUSE_MESSAGE));
+    }
+
+    #[test]
+    fn invalid_policy_empty_allowlist_dev_fallback_still_defaults() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("policy.dev.json"),
+            r#"{"enforce_approver_allowlist":true,"approver_allowlist":[]}"#,
+        )
+        .unwrap();
+        let r = load_dev_fallback(dir.path());
         assert_eq!(r.config, PolicyConfig::default());
         assert_eq!(r.source.kind, PolicySourceKind::Defaults);
     }
@@ -544,7 +637,7 @@ mod tests {
     fn empty_object_json_uses_all_defaults_including_allowlist() {
         let dir = TempDir::new().unwrap();
         fs::write(dir.path().join("policy.dev.json"), "{}").unwrap();
-        let r = load_in_dir("dev", dir.path());
+        let r = load_strict("dev", dir.path());
         assert_eq!(r.config, PolicyConfig::default());
         assert_eq!(r.source.kind, PolicySourceKind::EnvFile);
     }
@@ -557,7 +650,7 @@ mod tests {
             r#"{"enforce_approver_allowlist":true,"approver_allowlist":[" Lead ", "lead"]}"#,
         )
         .unwrap();
-        let r = load_in_dir("staging", dir.path());
+        let r = load_strict("staging", dir.path());
         assert_eq!(r.config.approver_allowlist, vec!["lead"]);
         assert_eq!(r.source.kind, PolicySourceKind::EnvFile);
     }
@@ -570,10 +663,25 @@ mod tests {
             r#"{"require_approval":false}"#,
         )
         .unwrap();
-        let r = load_in_dir("dev", dir.path());
+        let r = load_strict("dev", dir.path());
         assert!(!r.config.require_approval);
         assert!(r.config.require_passed_evaluation_for_promotion);
         assert!(r.config.require_risk_review_for_approval);
         assert!(r.config.require_risk_review_for_promotion);
+    }
+
+    #[test]
+    fn load_for_deployment_strict_env_rejects_missing_file_even_on_dev() {
+        use std::sync::Mutex;
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        let _g = ENV_LOCK.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        std::env::remove_var("AIGOV_POLICY_FILE");
+        std::env::set_var("AIGOV_POLICY_DIR", dir.path().to_string_lossy().as_ref());
+        std::env::set_var("AIGOV_POLICY_STRICT", "true");
+        let e = super::load_for_deployment(GovaiEnvironment::Dev).unwrap_err();
+        assert!(e.contains(POLICY_REFUSE_MESSAGE));
+        std::env::remove_var("AIGOV_POLICY_STRICT");
+        std::env::remove_var("AIGOV_POLICY_DIR");
     }
 }

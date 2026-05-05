@@ -38,10 +38,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install GovAI
+      - name: Install GovAI from workspace (truthful parity with CI + local)
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install "aigov-py==0.2.1"
+          python -m pip install -e "./python[dev]"
           govai --help >/dev/null
 
       - name: Set up Rust
@@ -78,13 +79,16 @@ jobs:
           echo "Common causes: Postgres unreachable, migrations incomplete, or ledger dir not writable."
           exit 1
           
-      - name: Run blocked deployment example (should fail)
+      - name: Run blocked deployment example (must exit 3 BLOCKED)
+        env:
+          GOVAI_AUDIT_BASE_URL: http://127.0.0.1:8088
+          GOVAI_API_KEY: ci-test-api-key
+          GOVAI_PROJECT: github-actions
         run: |
           set -euo pipefail
-
-          if [ -f examples/blocked_deployment.sh ]; then
-            chmod +x examples/blocked_deployment.sh
-            bash examples/blocked_deployment.sh
-          else
-            echo "Skipping examples/blocked_deployment.sh: file does not exist"
-          fi
+          test -f examples/blocked_deployment.sh || {
+            echo "::error::examples/blocked_deployment.sh is required for govai-ci (BLOCKED contract gate)."
+            exit 1
+          }
+          chmod +x examples/blocked_deployment.sh
+          bash examples/blocked_deployment.sh

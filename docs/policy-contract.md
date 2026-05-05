@@ -16,7 +16,10 @@ JSON files: `policy.<env>.json` then `policy.json`, resolved under `AIGOV_POLICY
 | `enforce_approver_allowlist` | bool | `true` | `human_approved` approver must appear in the **effective** allowlist (below). |
 | `approver_allowlist` | string array | `["compliance_officer","risk_officer"]` | Allowed approver identifiers. Loaded values are trimmed, lowercased, de-duplicated in order. Must be non-empty when `enforce_approver_allowlist` is `true`. |
 
-**Invalid file policy:** malformed JSON, or `enforce_approver_allowlist: true` with an empty allowlist after normalization, causes a logged warning and **fallback to compile-time defaults** (same as a missing file). This keeps startup resilient while keeping validation explicit.
+**Invalid or missing policy file:**
+
+- **`staging` / `prod`**: startup **fails** (non-zero exit) with **`Invalid policy configuration: refusing to start`** unless a valid file is resolved.
+- **`dev`**: fallback to compiled defaults remains **allowed** unless **`AIGOV_POLICY_STRICT=true`** (strict always fails startup on invalid or missing resolved policy).
 
 ## Environment override (backward compatible)
 
