@@ -27,6 +27,12 @@ A green job using **this action** therefore means CI artefacts were anchored by 
 
 **CI integration:** this composite action is the artefact-bound CI integration. The currently supported customer-facing decision endpoint is `GET /compliance-summary`. Runtime decision APIs are separate hardening work and are not documented as available in this branch.
 
+## Golden path (local, deterministic)
+
+If you want a minimal **copy/paste** example that uses the same **evidence pack** format as CI (`<run_id>.json` + `evidence_digest_manifest.json`) and shows `BLOCKED → VALID`, see:
+
+- `docs/golden-path.md`
+
 ## Synthetic smoke workflow (explicitly labelled)
 
 Manual workflow **`.github/workflows/govai-smoke.yml`** is labelled **SYNTHETIC SMOKE TEST ONLY**. It pushes scripted curls and optionally runs **`govai check`**; it runs **only** on **`workflow_dispatch`** — not automatically on merges to **`main`**. Use it for demos and connectivity probes, never as proof of artefact-bound production compliance.

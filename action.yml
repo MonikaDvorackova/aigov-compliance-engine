@@ -139,4 +139,42 @@ runs:
         esac
         printf 'Exit codes (cli_exit): 1=ERROR · 2=INVALID · 3=BLOCKED · 4=USAGE\n'
 
+        # Deterministic one-screen summary (append-only; control flow unchanged).
+        verdict="ERROR"
+        category="integration"
+        reason_codes='["INTEGRATION_ERROR"]'
+        next_action="Check GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY (and network), then re-run this job."
+        if [ "${verify_code}" = "0" ]; then
+          verdict="VALID"
+          category="policy"
+          reason_codes="[]"
+          next_action="Proceed with deployment."
+        elif [ "${verify_code}" = "2" ]; then
+          verdict="INVALID"
+          category="policy"
+          reason_codes='["EVALUATION_FAILED"]'
+          next_action="Fix the failed evaluation evidence and re-run this job."
+        elif [ "${verify_code}" = "3" ]; then
+          verdict="BLOCKED"
+          category="evidence"
+          reason_codes='["EVIDENCE_MISSING"]'
+          next_action="Submit the missing evidence for this run_id, then re-run this job."
+        elif [ "${verify_code}" = "4" ]; then
+          verdict="ERROR"
+          category="integration"
+          reason_codes='["USAGE_ERROR"]'
+          next_action="Fix action inputs (run_id/artifacts_path/base_url/api_key), then re-run this job."
+        fi
+
+        repro_cmd="govai --project \"${GOVAI_PROJECT:-github-actions}\" verify-evidence-pack --path \"${ARTIFACTS}\" --run-id \"${RUN_ID}\" ${REQUIRE_EXPORT_FLAG}"
+
+        printf '%s\n' "--------------------------------"
+        printf '%s\n' "GovAI summary"
+        printf 'verdict: %s\n' "${verdict}"
+        printf 'category: %s\n' "${category}"
+        printf 'reason_codes: %s\n' "${reason_codes}"
+        printf 'next_action: %s\n' "${next_action}"
+        printf 'repro: %s\n' "${repro_cmd}"
+        printf '%s\n' "--------------------------------"
+
         exit "${verify_code}"
