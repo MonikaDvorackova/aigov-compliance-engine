@@ -31,6 +31,7 @@ from aigov_py.discovery_policy_mapping import (
     discovery_required_evidence_additions,
     triggered_by_discovery,
 )
+from aigov_py.policy_loader import load_policy_module, policy_identity, required_evidence_from_policy
 from aigov_py import export_bundle as export_bundle_mod
 from aigov_py import fetch_bundle_from_govai
 from aigov_py.prototype_domain import (
@@ -1431,6 +1432,25 @@ def build_parser() -> GovaiArgumentParser:
         help="Directory containing real_world_ci_injection.json.",
     )
 
+    # Policy tooling (compile-only product layer)
+    s_policy = sub.add_parser("policy", help="Policy module tools (compile-only).")
+    s_policy_sub = s_policy.add_subparsers(dest="policy_cmd", required=True)
+
+    s_policy_compile = s_policy_sub.add_parser(
+        "compile",
+        help="Compile a policy module YAML into a flat required_evidence set.",
+    )
+    s_policy_compile.add_argument(
+        "--path",
+        required=True,
+        help="Path to policy module YAML (e.g. docs/policies/ai-act-high-risk.example.yaml).",
+    )
+    s_policy_compile.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON (policy identity + required_evidence).",
+    )
+
     return p
 
 
@@ -1444,6 +1464,34 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.cmd is None:
         parser.print_help()
+        return cli_exit.EX_OK
+
+    if args.cmd == "policy" and getattr(args, "policy_cmd", None) == "compile":
+        raw_path = str(getattr(args, "path", "") or "").strip()
+        if not raw_path:
+            print("error: --path is required", file=sys.stderr)
+            return cli_exit.EX_USAGE
+        try:
+            pol = load_policy_module(raw_path)
+            req = sorted(required_evidence_from_policy(pol))
+        except ValueError as e:
+            print(f"error: invalid policy module: {e}", file=sys.stderr)
+            return cli_exit.EX_USAGE
+        except OSError as e:
+            print(f"error: cannot read policy module: {e}", file=sys.stderr)
+            return cli_exit.EX_ERR
+
+        if bool(getattr(args, "json", False)):
+            _print_json(
+                {
+                    "policy": policy_identity(pol),
+                    "required_evidence": req,
+                },
+                compact=False,
+            )
+        else:
+            for item in req:
+                print(item)
         return cli_exit.EX_OK
 
     if args.cmd == "experiment":

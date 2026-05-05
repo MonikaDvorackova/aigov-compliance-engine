@@ -125,3 +125,18 @@ def merge_required_evidence(
     merged.update(discovery_required_evidence_additions(discovery_signals))
     return merged
 
+
+def merge_policy_and_discovery_required_evidence(
+    policy_required_evidence: Iterable[str],
+    discovery_required_evidence: Iterable[str],
+) -> set[str]:
+    """
+    Deterministic union helper (compile-only).
+
+    This is intentionally separate from runtime discovery signal processing so callers can
+    union two already-compiled evidence lists without introducing dynamic policy behavior.
+    """
+    merged: set[str] = {str(x).strip() for x in policy_required_evidence if str(x or "").strip()}
+    merged.update({str(x).strip() for x in discovery_required_evidence if str(x or "").strip()})
+    return merged
+

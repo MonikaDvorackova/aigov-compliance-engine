@@ -35,6 +35,63 @@ Important: policy modules are **static mappings**. No conditionals, no discovery
 
 ---
 
+## Compile a policy module (inspect required evidence)
+
+Compile a policy module YAML into the flat deterministic `required_evidence` set:
+
+```bash
+govai policy compile --path docs/policies/ai-act-high-risk.example.yaml
+```
+
+Default output is **newline-separated evidence codes**, sorted.
+
+To get machine-readable output:
+
+```bash
+govai policy compile --path docs/policies/ai-act-high-risk.example.yaml --json
+```
+
+This prints:
+
+- `policy.id`, `policy.name`, `policy.version`
+- `required_evidence[]` (sorted)
+
+This command is **compile-only**:
+
+- no network calls
+- no backend calls
+- no enforcement or upload behavior change
+
+---
+
+## Compare two policies
+
+To compare two policies, compile both and diff the resulting evidence lists:
+
+```bash
+govai policy compile --path docs/policies/ai-act-high-risk.example.yaml > /tmp/policy_a.txt
+govai policy compile --path docs/policies/internal-genai-policy.example.yaml > /tmp/policy_b.txt
+diff -u /tmp/policy_a.txt /tmp/policy_b.txt
+```
+
+This comparison is about **required evidence codes**, not legal interpretation.
+
+---
+
+## Separate from backend enforcement (current limitation)
+
+Today, policy modules are a **customer-facing product layer** that compiles into a flat evidence set.
+
+They are intentionally separate from backend enforcement:
+
+- The Rust audit service and its decision semantics are unchanged.
+- There is **no policy upload API** in this iteration.
+- There is **no runtime policy switching** via the backend in this iteration.
+
+Current limitation: **compile-only** (local inspection). Enforcement remains whatever policy the backend is configured to use.
+
+---
+
 ## How policy maps to required evidence
 
 The mapping is a deterministic union:

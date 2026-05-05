@@ -94,6 +94,7 @@ GovAI is **policy-agnostic**: the engine enforces evidence completeness and dete
 Policy is a **configuration layer** that compiles into a flat `required_evidence` set (static mapping, no runtime logic).
 Customers can replace the AI Act mapping with an internal policy module **without changing the core GovAI engine**.
 The engine remains deterministic: evidence log + policy requirements → `GET /compliance-summary` → `VALID` / `BLOCKED` / `INVALID`.
+Use `govai policy compile --path <policy.yaml>` to inspect the flat `required_evidence` set for a policy module.
 See `docs/customer-policy-modules.md` and `docs/policies/`.
 
 ## How GovAI decides what is required
