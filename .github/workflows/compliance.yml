@@ -212,6 +212,11 @@ jobs:
           set -euo pipefail
           make gate
 
+      - name: Engineering LOC smoke
+        run: |
+          set -euo pipefail
+          python3 scripts/test_engineering_loc_smoke.py
+
   evidence_pack:
     name: evidence_pack
     runs-on: ubuntu-latest
