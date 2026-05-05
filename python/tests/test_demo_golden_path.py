@@ -6,6 +6,9 @@ from unittest.mock import patch
 
 from aigov_py import cli_exit
 from aigov_py.cli import main
+from aigov_py.demo_golden_path import generate_demo_golden_path
+from aigov_py.portable_evidence_digest import portable_evidence_digest_v1
+from aigov_py.prototype_domain import assessment_id_for_run, model_version_id_for_run, risk_id_for_run
 
 
 def _read_json(p: Path) -> dict:
@@ -35,15 +38,57 @@ def test_demo_golden_path_creates_valid_structure(tmp_path: Path) -> None:
     assert isinstance(events, list)
     assert [e["event_type"] for e in events] == [
         "ai_discovery_reported",
+        "data_registered",
+        "model_trained",
         "evaluation_reported",
+        "risk_recorded",
+        "risk_mitigated",
+        "risk_reviewed",
         "human_approved",
         "model_promoted",
     ]
 
     manifest = _read_json(out / "evidence_digest_manifest.json")
     assert manifest["run_id"] == rid
-    assert isinstance(manifest.get("events_content_sha256"), str)
-    assert len(manifest["events_content_sha256"]) == 64
+    sha = manifest.get("events_content_sha256")
+    assert isinstance(sha, str)
+    assert len(sha) == 64
+    assert sha == portable_evidence_digest_v1(rid, events).lower()
+
+
+def test_demo_golden_path_linkage_fields_match_policy(tmp_path: Path) -> None:
+    """Payloads include linkage required by rust/src/policy.rs for human_approved and model_promoted."""
+    rid = "00000000-0000-0000-0000-000000000099"
+    res = generate_demo_golden_path(run_id=rid, output_dir=tmp_path / "gp")
+    bundle = _read_json(res.bundle_path)
+
+    mvi = model_version_id_for_run(rid)
+    aid = assessment_id_for_run(rid)
+    rsk = risk_id_for_run(rid)
+    commitment = "basic_compliance"
+
+    human = next(e for e in bundle["events"] if e["event_type"] == "human_approved")
+    mp = next(e for e in bundle["events"] if e["event_type"] == "model_promoted")
+    hp = human["payload"]
+    pp = mp["payload"]
+
+    for ev in (human, mp):
+        assert ev["run_id"] == rid
+
+    assert hp["assessment_id"] == aid
+    assert hp["risk_id"] == rsk
+    assert hp["dataset_governance_commitment"] == commitment
+    assert hp["ai_system_id"] == "golden-path-ai-system"
+    assert hp["dataset_id"] == "golden-path-dataset-v1"
+    assert hp["model_version_id"] == mvi
+
+    assert pp["approved_human_event_id"] == human["event_id"]
+    assert pp["assessment_id"] == aid
+    assert pp["risk_id"] == rsk
+    assert pp["dataset_governance_commitment"] == commitment
+    assert pp["ai_system_id"] == "golden-path-ai-system"
+    assert pp["dataset_id"] == "golden-path-dataset-v1"
+    assert pp["model_version_id"] == mvi
 
 
 def _normalize_bundle(bundle: dict) -> dict:
@@ -91,4 +136,3 @@ def test_demo_golden_path_is_deterministic_except_run_id(tmp_path: Path) -> None
     m1 = _read_json(out1 / "evidence_digest_manifest.json")
     m2 = _read_json(out2 / "evidence_digest_manifest.json")
     assert _normalize_manifest(m1) == _normalize_manifest(m2)
-
