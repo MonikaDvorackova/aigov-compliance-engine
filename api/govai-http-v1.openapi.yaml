@@ -57,7 +57,10 @@ info:
 
     ## Authentication (summary)
 
-    - **Audit API keys:** When `GOVAI_API_KEYS` is non-empty, routes behind the audit middleware require `Authorization: Bearer <secret>`. When unset or empty, those routes accept unauthenticated requests (local default).
+    - **Audit API keys (tenant isolation):** The ledger is isolated by **API key → tenant mapping**. Each request uses `Authorization: Bearer <secret>` to resolve the **ledger tenant**; all reads/writes are scoped to that tenant.
+      - **Hosted / multi-tenant:** Configure `GOVAI_API_KEYS_JSON` to map API keys to tenant identifiers.
+      - **Dev / simple:** `GOVAI_API_KEYS` can be used as a single-tenant or local development shortcut.
+      - **Project label header:** `X-GovAI-Project` is **optional metadata only** (usage/billing attribution label) and **does not determine the tenant**.
     - **Supabase JWT:** `/api/me`, `/api/assessments`, `/api/compliance-workflow*` require `Authorization: Bearer <JWT>` and JWKS (`SUPABASE_URL`, optional `SUPABASE_JWT_AUD`). Optional `x-govai-team-id` for team scope.
 
 servers:
@@ -203,6 +206,7 @@ paths:
           required: false
           schema:
             type: string
+          description: Optional metadata label for usage/billing attribution only. This header does **not** determine the ledger tenant (tenant isolation is based on API key → tenant mapping).
       responses:
         "200":
           description: Success (no top-level `ok` field in current implementation).
@@ -866,7 +870,12 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: Raw secret from `GOVAI_API_KEYS` when enforcement is enabled; optional when unset.
+      description: |
+        API key used to resolve the ledger tenant (API key → tenant mapping).
+
+        - Hosted / multi-tenant: use `GOVAI_API_KEYS_JSON` mapping.
+        - Dev / simple: `GOVAI_API_KEYS` may be used as a shortcut.
+        - When keys are unset/empty, some deployments may accept unauthenticated requests (local default).
     supabaseJWT:
       type: http
       scheme: bearer
