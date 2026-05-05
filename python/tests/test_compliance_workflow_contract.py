@@ -71,9 +71,9 @@ def test_hosted_gate_artifact_bound_submit_and_verify() -> None:
     assert "evidence_digest_manifest.json" in block
 
 
-def test_workflow_still_uses_editable_for_repo_local_ci_build() -> None:
+def test_workflow_still_uses_editable_dev_for_repo_local_ci_build() -> None:
     text = _compliance_yml()
-    assert "pip install -e ." in text
+    assert 'pip install -e ".[dev]"' in text
 
 
 def test_govai_emit_run_id_appends_github_workflow_identity() -> None:
