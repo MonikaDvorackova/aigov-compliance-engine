@@ -266,6 +266,69 @@ def _print_check_failure_details(summary: dict[str, Any], verdict: str) -> None:
                 print(f"  - {reason}")
 
 
+def _print_doctor_block(title: str) -> None:
+    print("")
+    print(f"== {title} ==")
+
+
+def doctor(audit_url: str, api_key: str | None, *, timeout_sec: float) -> int:
+    """
+    ``govai doctor``: read-only preflight checks for first-time success.
+
+    This does not change compliance semantics; it probes `/status` and `/ready` for operator clarity.
+    """
+    client = GovAIClient(audit_url.rstrip("/"), api_key=api_key, default_project=os.environ.get("GOVAI_PROJECT"))
+
+    _print_doctor_block("GovAI doctor")
+    print(f"govai_cli_version: {__version__}")
+    print(f"audit_base_url: {audit_url}")
+    print(f"api_key_configured: {bool(api_key)}")
+
+    _print_doctor_block("HTTP checks")
+    ok_status = False
+    ok_ready = False
+
+    try:
+        status = client.request_json("GET", "/status", timeout=timeout_sec, raise_on_body_ok_false=False)
+        if isinstance(status, dict) and status.get("ok") is not False:
+            ok_status = True
+            pv = status.get("policy_version")
+            env = status.get("environment")
+            print(f"PASS /status (policy_version={pv} environment={env})")
+        else:
+            msg = status.get("message") if isinstance(status, dict) else None
+            print(f"FAIL /status ({msg or 'unexpected response'})")
+    except GovAIHTTPError as e:
+        hint = ""
+        if e.status_code == 404:
+            hint = " hint: base_url must point to audit service origin (no /api or /v1 prefix)."
+        print(f"FAIL /status ({e}).{hint}")
+    except Exception as e:
+        print(f"FAIL /status ({e})")
+
+    try:
+        ready = client.request_json("GET", "/ready", timeout=timeout_sec, raise_on_body_ok_false=False)
+        if isinstance(ready, dict) and ready.get("ok") is not False:
+            ok_ready = True
+            print("PASS /ready (operational readiness: DB + migrations + ledger)")
+        else:
+            msg = ready.get("message") if isinstance(ready, dict) else None
+            print(f"FAIL /ready ({msg or 'not ready'})")
+    except GovAIHTTPError as e:
+        if e.status_code in (401, 403):
+            print(
+                "FAIL /ready (auth rejected). hint: verify GOVAI_API_KEY and server GOVAI_API_KEYS_JSON / GOVAI_API_KEYS configuration."
+            )
+        else:
+            print(f"FAIL /ready ({e})")
+    except Exception as e:
+        print(f"FAIL /ready ({e})")
+
+    if ok_status and ok_ready:
+        return cli_exit.EX_OK
+    return cli_exit.EX_ERR
+
+
 def _exit_for_compliance_verdict(verdict: str) -> int:
     if verdict == "VALID":
         return cli_exit.EX_OK
@@ -925,6 +988,11 @@ def build_parser() -> GovaiArgumentParser:
         help="Deterministic demo: BLOCKED → missing evidence → VALID → export audit JSON (requires GOVAI_* env vars).",
     )
 
+    sub.add_parser(
+        "doctor",
+        help="Preflight checks: validate audit base URL + auth and ensure /ready is HTTP 200 (DB+migrations+ledger).",
+    )
+
     s_verify = sub.add_parser("verify", help="Verify local docs/* artifacts and governance hash chain.")
     s_verify.add_argument("--run-id", default=None, help="Run UUID (fallback: env GOVAI_RUN_ID or RUN_ID).")
     s_verify.add_argument("--json", action="store_true", help="Machine-readable output on stdout.")
@@ -1287,6 +1355,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     audit_url = _audit_url(args)
     api_key = _api_key(args)
     project = _resolve_project(args)
+
+    if args.cmd == "doctor":
+        return doctor(audit_url, api_key, timeout_sec=float(getattr(args, "timeout", 30.0)))
 
     if args.cmd == "verify":
         run_id = _resolve_run_id(args)

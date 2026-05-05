@@ -55,14 +55,27 @@ jobs:
 
       - name: Wait for audit readiness (GET /ready)
         run: |
+          set -euo pipefail
           for i in $(seq 1 60); do
-            code="$(curl -sS -o /tmp/govai_ready_body -w "%{http_code}" --max-time 2 -H "Authorization: Bearer ci-test-api-key" "http://127.0.0.1:8088/ready" || true)"
+            code="$(curl -sS -o /tmp/govai_ready_body -w "%{http_code}" --max-time 2 \
+              -H "Authorization: Bearer ci-test-api-key" \
+              "http://127.0.0.1:8088/ready" || true)"
             if [ "${code}" = "200" ]; then
               exit 0
+            fi
+            if [ "${i}" = "1" ] || [ "${i}" = "20" ] || [ "${i}" = "40" ] || [ "${i}" = "60" ]; then
+              echo "waiting for /ready (attempt ${i}/60): last_http=${code}"
+              echo "last /ready body:"
+              sed -n '1,120p' /tmp/govai_ready_body || true
+              echo ""
+              echo "status snapshot (/status):"
+              curl -sS --max-time 2 -H "Authorization: Bearer ci-test-api-key" "http://127.0.0.1:8088/status" || true
+              echo ""
             fi
             sleep 0.5
           done
           echo "audit GET /ready did not return HTTP 200 (/health and /status are not substitutes for readiness)"
+          echo "Common causes: Postgres unreachable, migrations incomplete, or ledger dir not writable."
           exit 1
           
       - name: Run blocked deployment example (should fail)
