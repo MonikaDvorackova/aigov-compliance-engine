@@ -79,7 +79,7 @@ jobs:
           path: artefacts
 
       - name: Artefact-bound GovAI gate
-        uses: Kovali/GovAI@v1
+        uses: MonikaDvorackova/aigov-compliance-engine@v1
         with:
           run_id: ${{ vars.GOVAI_RUN_ID }}
           artifacts_path: artefacts
@@ -107,7 +107,7 @@ Missing **`artifacts_path`**, **`api_key`**, or missing directory → action exi
 - **`BLOCKED`** — missing required evidence, missing risk/human approval, not yet promoted, digest/trace prerequisites not met, or any other “not yet eligible” state.
 - **`VALID`** — evaluation passed, approvals satisfied, promotion recorded.
 
-**Operational probes:** **`GET /health`** (liveness-only **after** successful startup; handler does not query Postgres, but HTTP is not bound until DB-backed startup succeeds) vs **`GET /ready`** (authoritative readiness: Postgres + migrations + ledger writable) — point load balancers and automation at **`/ready`** for safe traffic shifting, not at **`/health`** for dependency checks.
+**Operational probes:** see **`docs/hosted-backend-deployment.md` → “HTTP startup and operational probes”** for the canonical contract of **`GET /health`** (liveness-only, after successful startup) vs **`GET /ready`** (authoritative readiness: DB + migrations + ledger writability).
 
 ## Runtime decision API (non-CI)
 

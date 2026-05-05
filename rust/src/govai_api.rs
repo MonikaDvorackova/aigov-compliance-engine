@@ -2915,7 +2915,7 @@ mod api_error_response_tests {
     use serde_json::Value;
 
     const TENANT_SCOPED_NOT_FOUND_HINT: &str =
-        "The resource was not found under the current tenant context. Check the run id, API key, and tenant or project header.";
+        "The resource was not found under the current tenant context. Check the run id and API key. Note: X-GovAI-Project is metadata only and does not select the ledger tenant.";
 
     fn pool_lazy_for_tests() -> DbPool {
         sqlx::PgPool::connect_lazy("postgres://postgres:postgres@localhost/postgres")

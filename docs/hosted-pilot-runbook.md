@@ -83,7 +83,7 @@ If you are using the Docker Compose quickstart, set `GOVAI_BASE_URL` in `docker-
 
 ## Provision API key (operator)
 
-In hosted mode, enable authentication by setting **`GOVAI_API_KEYS_JSON`** on the server (recommended even for pilots). This is a JSON object mapping **raw API key string → tenant id** (the tenant id selects the per-tenant ledger file).
+In hosted mode, hosted pilots **MUST** enable authentication and tenant isolation by setting **`GOVAI_API_KEYS_JSON`** on the server. This is a JSON object mapping **raw API key string → tenant id** (the tenant id selects the per-tenant ledger file). **Dev mode without API keys is not suitable for pilots**.
 
 - For local pilot setups, you can use: `GOVAI_API_KEYS_JSON='{"test-key":"default"}'`
 
