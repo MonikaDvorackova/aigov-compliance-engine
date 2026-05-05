@@ -1,70 +1,54 @@
-## Golden path (2 minutes): generate artefacts → submit → verify
+## Golden path: audit service → artefacts → submit → verify → `VALID`
 
-Goal: exercise the **artifact-bound** workflow end-to-end using the **existing evidence-pack format**:
+This is the **proven contractual shape** used in CI (`govai-compliance-gate` after `submit-evidence-pack` + `verify-evidence-pack`). A first-line **`VALID`** from `govai check` alone is **not** sufficient proof unless the ledger ingest and digest continuity steps completed successfully beforehand.
 
-- `./artefacts/<run_id>.json` (JSON object with `events: [...]`)
-- `./artefacts/evidence_digest_manifest.json` (portable digest manifest for artifact-bound replay)
+### Required components
 
-This guide is **local and deterministic**. `VALID` is only reached after **both** `submit-evidence-pack` **and** `verify-evidence-pack` succeed against a running audit service whose **default ingest policy** matches this repository (see `rust/src/policy.rs`). This doc does **not** claim hosted success unless you provide a matching base URL + API key.
+- Running **GovAI audit HTTP API** (Rust `aigov_audit`) with DB + writable ledger (**`GET /ready` = HTTP 200**).
+- **`govai` CLI** from this repo (`pip install -e "./python[dev]"` from the repository root) or an equivalent **`aigov-py`** pin.
+- Environment for CLI:
+  - **`GOVAI_AUDIT_BASE_URL`** — audit base URL (no trailing ambiguity; strip trailing slashes in your head when comparing).
+  - **`GOVAI_API_KEY`** — bearer token accepted by the service (`GOVAI_API_KEYS_JSON` / `GOVAI_API_KEYS` mapping on the server), unless your dev server is explicitly configured to allow unauthenticated audit routes (**not** for staging/production).
 
-### Prerequisites (exact)
-
-1. **`govai` CLI installed** — same as `docs/quickstart-5min.md` (editable install from `python/` **or** `pip install aigov-py` at the repo’s pinned version).
-2. **Audit HTTP API running** with **default PolicyConfig** (for example **`docker compose up -d`** from repo root — uses `GOVAI_API_KEYS=test-key`; or **`make audit_bg`** after Postgres + keys per `docs/quickstart-5min.md`).
-3. **Environment:**
-   ```bash
-   export GOVAI_AUDIT_BASE_URL="http://127.0.0.1:8088"
-   export GOVAI_API_KEY="test-key"
-   ```
-   Adjust `GOVAI_API_KEY` if your operator maps a **different** secret to `GOVAI_API_KEYS` / `GOVAI_API_KEYS_JSON` on the server. Missing/wrong credentials produce **ERROR** (integration failure), not `BLOCKED` / `INVALID`.
-
-4. **`/api/export`** — optional for `verify-evidence-pack` **unless** you pass **`--require-export`** (composite GitHub Action defaults that on). Local golden path commands below use the CLI default (**no** `--require-export`), so export need not succeed for **`VALID`** on verify.
-
-### Step 1: Generate deterministic artefacts
+### Exact working sequence (repository root)
 
 ```bash
-govai demo-golden-path --output-dir artefacts
+export DATABASE_URL='postgresql://USER:PASSWORD@127.0.0.1:5432/DATABASE'
+export GOVAI_AUTO_MIGRATE=true
+make audit_bg
 ```
 
-To script the next steps, emit only `run_id` on stdout:
+Install the CLI (`python/` venv):
 
 ```bash
-RUN_ID="$(govai demo-golden-path --output-dir artefacts --print-run-id)"
+cd python && python -m venv .venv && . .venv/bin/activate && pip install -U pip && pip install -e ".[dev]" && cd ..
 ```
 
-Example copy/paste from default output:
+Golden-path artefacts (**new `run_id` every invocation**):
 
-```text
-run_id: 550e8400-e29b-41d4-a716-446655440000
-artefacts_path: /abs/path/to/artefacts
-
-next step:
-
-govai --audit-base-url http://127.0.0.1:8088 --api-key '$GOVAI_API_KEY' verify-evidence-pack --path '/abs/path/to/artefacts' --run-id 550e8400-e29b-41d4-a716-446655440000
+```bash
+export GOVAI_AUDIT_BASE_URL='http://127.0.0.1:8088'
+export GOVAI_API_KEY='YOUR_LOCAL_OR_CI_KEY'
+RUN_ID="$(govai demo-golden-path --output-dir artefacts --print-run-id 2>/dev/null)"
 ```
 
-The CLI prints **`verify-evidence-pack` first**, but ingestion must happen **before** verify (see step 2).
-
-### Step 2: Submit evidence, then verify (production shape)
-
-Replay the bundle to the ledger, then enforce digest continuity **and** `GET /compliance-summary` **`VALID`**:
+Ingest, verify digest/host continuity (same path + `RUN_ID`), then **`check`**:
 
 ```bash
 govai submit-evidence-pack --path artefacts --run-id "$RUN_ID"
 govai verify-evidence-pack --path artefacts --run-id "$RUN_ID"
-```
-
-### Step 3: Optional explicit check
-
-```bash
 govai check --run-id "$RUN_ID"
 ```
 
-Expected stdout: **`VALID`**, exit code **0**.
+### Expected **`VALID`** output (stdout contract)
 
-### Expected final result (**only after submit succeeded**)
+Immediately on stdout:
 
-`verify-evidence-pack` exits **0** and the trailing summary includes:
+```text
+VALID
+```
+
+Trailing **`GovAI summary`** block ends with **`verdict: VALID`**:
 
 ```text
 GovAI summary
@@ -74,11 +58,19 @@ reason_codes: []
 next_action: Proceed with deployment.
 ```
 
-If **`submit-evidence-pack` fails**, fix **`POLICY_VIOLATION`** / schema messages first — **`verify-evidence-pack` cannot pass** until the hosted ledger contains a matching canonical event stream.
+Exit code **`0`** for `govai check` only when **`verdict === VALID`**.
 
-If verify fails:
+### Failure modes (explicit)
 
-- **Digest / ERROR:** ensure you did **not** edit `artefacts/<run_id>.json` after generation; rerun `demo-golden-path` fresh.
-- **Missing API key / 401:** set `GOVAI_API_KEY` to a key accepted by `GOVAI_API_KEYS*` on the audit service.
-- **Audit not reachable:** ensure the process listens (e.g. `curl -sS "$GOVAI_AUDIT_BASE_URL/health"`).
-- **`--require-export`:** if you opted in, **`GET /api/export/:run_id`** must succeed or verify exits **1** (integration), not **`INVALID`**.
+| Symptom | Likely cause | Next action |
+|--------|----------------|-------------|
+| `doctor`/`curl` **`/health` OK but `/ready` not 200** | DB down, migrations not applied, ledger dir not writable | Fix `DATABASE_URL`, `GOVAI_AUTO_MIGRATE` vs operator migration discipline, **`GOVAI_LEDGER_DIR`** mounts/permissions |
+| **`401` / missing API key** | Wrong or unset `GOVAI_API_KEY` vs server mapping | Align CLI key with `GOVAI_API_KEYS_JSON` (or disable keys only in deliberate local dev) |
+| **`404` RUN_NOT_FOUND** on check | Wrong tenant / key; run id never ingested under this ledger | Submit again with the correct key; verify `RUN_ID` |
+| **`verify-evidence-pack` ≠ 0 before check** | Skipped submit, corrupted `artefacts/<run_id>.json`, or tampered digest | Regenerate artefacts; rerun **submit → verify** before asserting `VALID` |
+
+### Operational notes
+
+- **`--require-export`** on `verify-evidence-pack` adds a hard dependency on **`GET /api/export/:run_id`**. Omit it unless your environment guarantees export parity (hosted gate may enable it explicitly).
+- **Determinism:** bundle content is stable for a fixed `run_id`; **`demo-golden-path` generates a new UUID** except when tests patch `uuid.uuid4`. Stable digest hashing is **`portable_evidence_digest_v1`** (`python/aigov_py/portable_evidence_digest.py`; mirrors Rust canonical JSON rules).
+- **API keys in logs:** reuse **`export GOVAI_API_KEY='…'`**; use **`govai demo-golden-path --show-api-key`** only when you consciously want the literal secret in regenerated command text.

@@ -31,6 +31,35 @@ Use these in order:
   - Typically requires: DB ok, ledger ok, any required keys/config present, and internal components initialized.
   - Operator use: gate before declaring an environment usable for customers/CI.
 
+### Readiness contract (authoritative)
+
+- **`GET /health`** — **liveness only** (process responds). **Does not** prove Postgres, migrations, ledger writes, or correct API key configuration.
+- **`GET /ready`** — **operational readiness** (DB reachable, schema/migrations expectations met, ledger writable). **This** is what automation and operators should gate on before traffic or artefact-bound compliance.
+
+### Required components / inputs
+
+| Area | Requirement |
+|------|----------------|
+| **Postgres** | `DATABASE_URL` / `GOVAI_DATABASE_URL` reachable from the service; credentials correct |
+| **Migrations** | Applied out-of-band or via `GOVAI_AUTO_MIGRATE=true` according to operator policy |
+| **Ledger directory** | `GOVAI_LEDGER_DIR` set in staging/production; directory exists and is **writable** by the runtime user |
+| **API keys (hosted)** | `GOVAI_API_KEYS_JSON` (map of bearer token → tenant id) non-empty JSON object in staging/prod |
+| **Policy files** | Valid `policy.<env>.json` or `policy.json` under **`AIGOV_POLICY_DIR`** / cwd (or `AIGOV_POLICY_FILE`). Staging/prod **fail startup** when missing or invalid; dev may default unless **`AIGOV_POLICY_STRICT=true`** |
+
+### Minimum healthy system checklist
+
+- **`GET /ready` → 200** against the deployed base URL using a **real** operator or tenant key shape (not `/health`).
+- Postgres: connect + `\dt` / migration version aligns with release notes.
+- Ledger: persistence volume mounted; free space adequate; permission errors absent in logs.
+- API keys: a smoke **`POST /evidence`** with a disposable `run_id` succeeds for a known-good key (**then** discard or isolate that run in non-prod).
+- Evidence gates: **`submit-evidence-pack` → `verify-evidence-pack` → `govai check`** succeeds for a deterministic bundle when running the artefact-bound flow (see **`docs/golden-path.md`**).
+
+### System is **NOT** healthy if
+
+- **`/ready` ≠ 200** while operators claim the environment is usable (treat as **infra not ready**, not INVALID/BLOCKED semantics).
+- **DB unavailable**, migration mismatch, or read-only **`GOVAI_DATA_DIR`/ledger path** failures appear in logs.
+- **Staging/prod audit** starts **without** resolvable **`GOVAI_API_KEYS_JSON`** or **policy** (**process should exit**).
+
 CLI equivalents (preferred):
 
 ```bash

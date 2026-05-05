@@ -12,8 +12,9 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY migrations ./migrations
+COPY policy.json policy.dev.json policy.staging.json policy.prod.json ./
 
-RUN cargo build --release
+RUN cargo build --locked --release
 
 FROM debian:bookworm-slim
 

@@ -2939,7 +2939,9 @@ mod api_error_response_tests {
             ledger_base: ledger_base_static,
             policy_version,
             deployment_env: GovaiEnvironment::Dev,
-            policy: crate::policy_config::load_with_env("dev").config,
+            policy: crate::policy_config::load_for_deployment(GovaiEnvironment::Dev)
+                .expect("test policy load")
+                .config,
             pool: pool_lazy_for_tests(),
             metering: crate::metering::MeteringConfig {
                 enabled: false,
