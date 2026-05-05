@@ -1,18 +1,20 @@
-# Operator troubleshooting runbook update
+# Operator troubleshooting runbook
 
 ## Evaluation gate
 
-This change improves troubleshooting and operator documentation clarity.
+This change adds operational troubleshooting documentation for GovAI.
 
-Added:
-- “Step 1: Identify failure type” (ERROR / BLOCKED / INVALID)
-- explicit ERROR classification (auth / not found / backend / digest)
-- “Everything looks correct but still BLOCKED” guidance
-- “Minimum healthy system” definition for operators
+Covered:
+- ERROR vs BLOCKED vs INVALID diagnosis
+- MISSING_API_KEY / 401
+- RUN_NOT_FOUND
+- /health vs /status vs /ready
+- /status OK but /ready fails
+- missing evidence debugging
+- operator/customer support handoff
 
 Verification:
-- manual review of docs/troubleshooting.md and docs/operator-runbook.md
-- rg checks for added sections
+- rg checks over docs
 - git diff --check
 
 ## Human approval gate
@@ -24,4 +26,5 @@ No changes were made to:
 - VALID / INVALID / BLOCKED semantics
 - fail-closed behavior
 - schemas or API payloads
+- API or CLI behavior
 - CI behavior or exit codes
