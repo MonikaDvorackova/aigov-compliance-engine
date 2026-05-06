@@ -56,7 +56,10 @@ def test_evidence_pack_init_is_consumable_by_existing_pack_loaders(tmp_path: Pat
     assert manifest.get("run_id") == rid
 
 
-def test_evidence_pack_init_respects_default_run_id(tmp_path: Path) -> None:
+def test_evidence_pack_init_respects_default_run_id(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
+
     out = tmp_path / "pack"
     code = main(["evidence-pack", "init", "--out", str(out)])
     assert code == cli_exit.EX_OK
