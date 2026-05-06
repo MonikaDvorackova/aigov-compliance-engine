@@ -6,7 +6,6 @@ use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
-use std::sync::Mutex;
 use tower::ServiceExt;
 
 use aigov_audit::govai_api;
@@ -14,7 +13,8 @@ use aigov_audit::govai_environment::{policy_version_for, GovaiEnvironment};
 use aigov_audit::metering::{GovaiPlan, MeteringConfig};
 use aigov_audit::policy_config::ResolvedPolicyConfig;
 
-static CWD_LOCK: Mutex<()> = Mutex::new(());
+mod test_support;
+use test_support::env_lock;
 
 fn database_url() -> Option<String> {
     std::env::var("TEST_DATABASE_URL")
@@ -50,7 +50,7 @@ async fn ready_ok_when_db_migrated_and_ledger_writable() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let cwd = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(cwd.path()).expect("chdir");
     let ledger = cwd.path().join("govai-led");
@@ -103,7 +103,7 @@ async fn ready_not_ready_when_tenant_ledger_probe_path_cannot_be_created() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = env_lock().await;
     let cwd = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(cwd.path()).expect("chdir");
     let ledger = cwd.path().join("govai-led");

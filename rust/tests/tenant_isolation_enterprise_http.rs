@@ -22,17 +22,13 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 use std::net::SocketAddr;
-use std::sync::{Mutex, OnceLock};
+mod test_support;
+use test_support::env_lock;
 use tokio::task::JoinHandle;
 use tower::ServiceExt;
 use uuid::Uuid;
 
 use aigov_audit::govai_api;
-
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
-}
 
 fn database_url() -> Option<String> {
     std::env::var("TEST_DATABASE_URL")
@@ -153,7 +149,7 @@ async fn enterprise_team_isolation_assessments_and_compliance_workflow() {
         return;
     };
 
-    let _g = env_lock();
+    let _g = env_lock().await;
 
     // Generate an RSA keypair and serve a JWKS locally.
     let mut rng = OsRng;

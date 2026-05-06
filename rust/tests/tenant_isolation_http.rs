@@ -11,7 +11,6 @@ use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
-use std::sync::Mutex;
 use tower::ServiceExt;
 
 use aigov_audit::api_usage::ApiUsageState;
@@ -22,7 +21,8 @@ use aigov_audit::metering::{GovaiPlan, MeteringConfig};
 use aigov_audit::policy_config::ResolvedPolicyConfig;
 use aigov_audit::project;
 
-static CWD_LOCK: Mutex<()> = Mutex::new(());
+mod test_support;
+use test_support::env_lock;
 
 fn ensure_test_tenant_map() {
     if audit_api_key::api_key_tenant_map_is_initialized() {
@@ -116,7 +116,7 @@ async fn first_evidence_event_creates_tenant_ledger_from_api_key_mapping() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
 
@@ -178,7 +178,7 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
 
@@ -301,7 +301,7 @@ async fn missing_tenant_context_is_rejected_in_prod() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
 
@@ -346,7 +346,7 @@ async fn spoofing_x_govai_project_has_no_effect_on_ledger_tenant() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
 
@@ -410,7 +410,7 @@ async fn dev_defaults_to_default_tenant_ledger_without_headers() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
     seed_empty_tenant_ledger("default");
@@ -465,7 +465,7 @@ async fn verify_log_missing_tenant_context_is_rejected_in_prod() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
 

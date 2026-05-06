@@ -24,17 +24,11 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
-use std::sync::OnceLock;
+
+mod test_support;
+use test_support::env_lock;
 
 const TEST_DEFAULT_API_KEY: &str = "key_default";
-
-/// Integration tests run concurrently; env vars + current dir are process-global.
-/// Use a non-poisoning async lock and hold it for the full duration of any test
-/// that mutates env/CWD (this entire file does).
-async fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(())).lock().await
-}
 
 /// Same key→tenant mapping contract as `tenant_isolation_http` tests (init once per process).
 fn ensure_dev_api_key_tenant_map(env: &mut TestEnv) {

@@ -7,7 +7,6 @@ use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
-use std::sync::Mutex;
 use tower::ServiceExt;
 
 use aigov_audit::api_usage::ApiUsageState;
@@ -17,7 +16,8 @@ use aigov_audit::metering::{GovaiPlan, MeteringConfig};
 use aigov_audit::policy_config::ResolvedPolicyConfig;
 use aigov_audit::stripe_billing::{self, BILLING_UNIT_EVIDENCE_EVENT};
 
-static CWD_LOCK: Mutex<()> = Mutex::new(());
+mod test_support;
+use test_support::env_lock;
 
 fn database_url() -> Option<String> {
     std::env::var("TEST_DATABASE_URL")
@@ -48,7 +48,7 @@ async fn stripe_billing_product_suite() {
         eprintln!("skip stripe_billing_product: set DATABASE_URL or TEST_DATABASE_URL");
         return;
     };
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
 
