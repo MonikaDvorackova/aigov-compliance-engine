@@ -32,7 +32,6 @@ jobs:
       GOVAI_API_KEY: ci-test-api-key
       GOVAI_PROJECT: github-actions
       # CI must not rely on implicit working-directory ledger defaults.
-      GOVAI_LEDGER_DIR: ${{ runner.temp }}/govai-ledger
 
     steps:
       - name: Checkout
@@ -42,6 +41,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Set up GOVAI_LEDGER_DIR (runner temp)
+        run: |
+          set -euo pipefail
+          echo "GOVAI_LEDGER_DIR=$RUNNER_TEMP/govai-ledger" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/govai-ledger"
 
       - name: Install GovAI from workspace (truthful parity with CI + local)
         run: |

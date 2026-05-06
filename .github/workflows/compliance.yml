@@ -295,7 +295,6 @@ jobs:
       # CI must never rely on implicit working-directory ledger defaults.
       # Use an explicit writable ledger dir under RUNNER_TEMP and keep it consistent
       # across: audit service startup, local evidence submit, and local govai check.
-      GOVAI_LEDGER_DIR: ${{ runner.temp }}/govai-ledger
       GOVAI_API_KEY: ci-test-api-key
       GOVAI_PROJECT: github-actions
       AIGOV_COMPLIANCE_FETCH_STRICT: "1"
@@ -327,6 +326,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Set up GOVAI_LEDGER_DIR (runner temp)
+        run: |
+          set -euo pipefail
+          echo "GOVAI_LEDGER_DIR=$RUNNER_TEMP/govai-ledger" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/govai-ledger"
 
       - name: Prepare local ledger dir (writable)
         if: ${{ env.RUN_ARTIFACT_GATE == 'true' }}
