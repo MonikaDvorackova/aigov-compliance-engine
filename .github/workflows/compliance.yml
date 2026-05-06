@@ -128,7 +128,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p docs/reports
-          ls -la docs/reports | head -n 50
+          find docs/reports -maxdepth 1 -type f -printf '%f\n' | sort | head -n 200
 
   report_gate:
     name: report_gate
@@ -467,7 +467,7 @@ jobs:
             ls -la "${GOVAI_LEDGER_DIR}" || true
             exit 1
           fi
-          ls -la "${GOVAI_LEDGER_DIR}" | head -n 200 || true
+          find "${GOVAI_LEDGER_DIR}" -maxdepth 1 -mindepth 1 -printf '%f\n' 2>/dev/null | sort | head -n 200 || true
           echo "Ledger smoke append OK"
 
       - id: govai_emit_run_id
@@ -762,7 +762,7 @@ jobs:
           set -euo pipefail
           mkdir -p "${GITHUB_WORKSPACE}/.aigov_ci_artifacts"
           printf "keep\n" > "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/keep.txt"
-          ls -la "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" | head -n 200
+          find "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" -maxdepth 1 -mindepth 1 -printf '%f\n' | sort | head -n 200
 
       - name: Upload evidence artifacts
         uses: actions/upload-artifact@v4
@@ -869,7 +869,7 @@ jobs:
           GOVAI_RUN_ID: ${{ needs.evidence_pack.outputs.run_id }}
         run: |
           set -euo pipefail
-          ls -la "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" | head -n 200
+          find "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" -maxdepth 1 -mindepth 1 -printf '%f\n' | sort | head -n 200
           test -f "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/evidence_digest_manifest.json" \
             || { echo "::error::Missing evidence_digest_manifest.json from evidence_pack — production gate aborted."; exit 1; }
           test -f "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/${GOVAI_RUN_ID}.json" \
@@ -982,7 +982,7 @@ jobs:
       - name: Verify downloaded artifacts
         run: |
           set -euo pipefail
-          ls -la "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" | head -n 200
+          find "${GITHUB_WORKSPACE}/.aigov_ci_artifacts" -maxdepth 1 -mindepth 1 -printf '%f\n' | sort | head -n 200
           test -f "${GITHUB_WORKSPACE}/.aigov_ci_artifacts/keep.txt"
 
       - name: Upload evidence artifacts final
