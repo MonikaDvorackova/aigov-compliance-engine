@@ -2,6 +2,8 @@
 
 This repo ships a minimal, deterministic evidence pack generator so customers can create a valid evidence pack without reverse-engineering tests or demos.
 
+Canonical customer onboarding (hosted): see [customer-onboarding-10min.md](customer-onboarding-10min.md).
+
 ## Generate an evidence pack
 
 This writes exactly two files:

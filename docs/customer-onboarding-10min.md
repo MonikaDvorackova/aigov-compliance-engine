@@ -1,17 +1,23 @@
-# Customer onboarding (hosted pilot, ~10 minutes)
+# Customer onboarding (self-serve hosted pilot, ~10 minutes)
 
-Goal: verify a hosted GovAI backend is wired correctly by running a deterministic evidence flow that transitions:
+Goal: go from **zero → `BLOCKED` → `VALID`** using only supported customer commands and documentation — no source code reading.
 
-`BLOCKED` → `VALID`, then exporting the audit JSON.
+This is the **canonical customer entrypoint** for hosted pilots. It assumes your GovAI operator provides:
 
-This is the **canonical hosted-pilot onboarding** entry point. It assumes manual or semi-automated provisioning by an operator (not a self-serve signup flow).
+- `GOVAI_AUDIT_BASE_URL` (your hosted audit API base URL)
+- `GOVAI_API_KEY` (Bearer token)
+
+This doc uses the **evidence pack** flow (same shape as CI):
+
+`govai evidence-pack init` → `govai submit-evidence-pack` → `govai verify-evidence-pack --require-export` → `govai check`
+
+If you want background and exact file shape, see [evidence-pack.md](evidence-pack.md).
 
 ## Prereqs
 
 - Python 3.10+
-- Your GovAI admin/operator provides (pilot provisioning):
-  - `GOVAI_AUDIT_BASE_URL` (e.g. `https://api.example.com`)
-  - `GOVAI_API_KEY` (Bearer token)
+- A working hosted GovAI audit backend (operator responsibility):
+  - `GET /ready` returns HTTP 200 (not just `/health`)
 
 ## 1) Install the CLI
 
@@ -21,65 +27,84 @@ python -m pip install "aigov-py==0.2.1"
 govai --version
 ```
 
-## 2) Set GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY
+## 2) Configure audit service URL and API key
 
 ```bash
-export GOVAI_AUDIT_BASE_URL="https://api.example.com"
+export GOVAI_AUDIT_BASE_URL="https://audit.example.com"
 export GOVAI_API_KEY="YOUR_API_KEY"
 ```
 
-## 3) Create GOVAI_RUN_ID
-
-Use a new UUID for this onboarding run:
+Sanity check (must be 200):
 
 ```bash
-export GOVAI_RUN_ID="$(python3 - <<'PY'
+govai ready
+```
+
+## 3) Copy-paste runnable onboarding flow (one run id, one out dir)
+
+This block is the supported customer flow. It uses an explicit `RUN_ID` and `OUT_DIR` and reuses the **same** `RUN_ID` through init → submit → verify → check.
+
+```bash
+set -euo pipefail
+
+export RUN_ID="$(python3 - <<'PY'
 import uuid
 print(uuid.uuid4())
 PY
 )"
-echo "$GOVAI_RUN_ID"
+export OUT_DIR="./evidence_pack_${RUN_ID}"
+
+echo "RUN_ID=$RUN_ID"
+echo "OUT_DIR=$OUT_DIR"
+
+# a) generate evidence pack (writes: <run_id>.json + evidence_digest_manifest.json)
+govai evidence-pack init --out "$OUT_DIR" --run-id "$RUN_ID"
+
+# b) submit evidence pack to the hosted ledger (append-only)
+govai submit-evidence-pack --path "$OUT_DIR" --run-id "$RUN_ID"
+
+# c) verify digest continuity + require export cross-check + require VALID
+govai verify-evidence-pack --require-export --path "$OUT_DIR" --run-id "$RUN_ID"
+
+# d) read the authoritative verdict (still must be VALID to exit 0)
+govai check --run-id "$RUN_ID"
 ```
 
-## 4) Run the deterministic demo (hosted)
+## 4) Interpret results (VALID / BLOCKED / INVALID)
 
-Force the deterministic demo to use your `GOVAI_RUN_ID`:
+`govai check` prints the verdict on stdout and exits non-zero unless the verdict is **`VALID`**.
+
+- **`VALID`**: all required evidence is present, evaluation passed, and promotion prerequisites are satisfied. Deployment allowed.
+- **`BLOCKED`**: evidence is incomplete or prerequisites (risk/human approval/promotion/digest/export) are not satisfied yet. This is not “failed”; it means “not eligible yet”. Fix is to provide the missing evidence for the same `RUN_ID`.
+- **`INVALID`**: evaluation explicitly failed policy rules. This is a real failure; fix the underlying issue, then produce new evidence and re-check.
+
+Important: **Do not assume you can reach `VALID` without `submit` + `verify` + `check`.** `verify-evidence-pack` is the artefact/digest continuity gate; `check` is the verdict readout.
+
+## Troubleshooting (first-run failures)
+
+If you get stuck, capture the exact command output and start with:
 
 ```bash
-export GOVAI_DEMO_RUN_ID="$GOVAI_RUN_ID"
-govai run demo-deterministic
+govai health
+govai status
+govai ready
+govai check --run-id "$RUN_ID"
 ```
 
-Expected output includes:
+Most common issues:
 
-- `verdict: BLOCKED`
-- `missing evidence:` (one or more entries)
-- later: `verdict: VALID`
+- **`/ready` not 200**: the backend is not operationally ready (DB/migrations/ledger). This is an operator issue, not a policy verdict. Fix the environment until `govai ready` succeeds.
+- **Missing or wrong `GOVAI_AUDIT_BASE_URL`**: you are pointing at the wrong environment or an invalid base URL. Re-export `GOVAI_AUDIT_BASE_URL` and re-run `govai ready`.
+- **Missing or wrong `GOVAI_API_KEY`**: auth failure (often 401). Re-export `GOVAI_API_KEY` for the correct environment/tenant.
+- **`APPEND_ERROR`** during `submit-evidence-pack`: the server rejected an evidence append (commonly wrong ordering/prereqs, wrong tenant key, or a backend ledger/DB issue). Re-check `govai ready`, confirm the correct API key, and retry submit.
+- **`RUN_NOT_FOUND`**: the run does not exist in the tenant/ledger you’re querying (wrong `RUN_ID`, wrong base URL, or wrong API key/tenant). Ensure you use the same `RUN_ID` you submitted and the correct `GOVAI_API_KEY` for that environment.
+- **Digest mismatch** (**digest mismatch**, verify fails): the local `evidence_digest_manifest.json` does not match the hosted `/bundle-hash` for that `RUN_ID`. Regenerate the evidence pack and re-run `submit` then `verify` for the same `RUN_ID`, or use a fresh `RUN_ID` to eliminate stale/partial ingestion.
+- **`BLOCKED` because evidence is incomplete**: `govai check` will print `BLOCKED` and explain missing evidence / blocked reasons. The fix is to submit the missing evidence (in real customer integration this comes from your CI/app pipeline, not this demo pack).
 
-## 5) Verify the final decision explicitly
-
-```bash
-govai check --run-id "$GOVAI_RUN_ID"
-```
-
-Expected: prints `VALID` and exits `0`.
-
-## 6) Export audit JSON (machine-readable)
-
-```bash
-govai export-run --run-id "$GOVAI_RUN_ID" > "govai-export-${GOVAI_RUN_ID}.json"
-ls -la "govai-export-${GOVAI_RUN_ID}.json"
-```
+For a broader matrix, see [troubleshooting.md](troubleshooting.md).
 
 ## What to do next
 
-- Read the precise definitions and non-claims:
-  - [trust-model.md](trust-model.md)
-
-- Add the GitHub Action compliance gate: see [github-action.md](github-action.md).
-  - Your CI must submit evidence events for the same `GOVAI_RUN_ID` before the gate runs.
-
-## Advanced usage
-
-For manual control over evidence submission (without the deterministic demo), see:
-[manual-evidence-flow.md](manual-evidence-flow.md)
+- **Integrate the CI gate** (artefact-bound): see [github-action.md](github-action.md).
+- **Understand the evidence pack shape**: see [evidence-pack.md](evidence-pack.md).
+- **Manual evidence control** (advanced): see [manual-evidence-flow.md](manual-evidence-flow.md).
