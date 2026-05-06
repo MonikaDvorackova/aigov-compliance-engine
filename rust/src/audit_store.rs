@@ -22,6 +22,7 @@ fn append_fail_test_hook_active() -> bool {
 
 const GENESIS: &str = "GENESIS";
 const STATE_SUFFIX: &str = ".state.json";
+const CHECKPOINTS_SUFFIX: &str = ".checkpoints.jsonl";
 
 #[cfg(test)]
 thread_local! {
@@ -41,6 +42,16 @@ pub struct StoredRecord {
     pub prev_hash: String,
     pub record_hash: String,
     pub event_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LedgerCheckpoint {
+    pub run_id: String,
+    pub last_event_id: String,
+    /// Digest of ledger event content in file order up to (and including) `last_event_id`.
+    pub events_content_sha256: String,
+    /// Timestamp (UTC) associated with the checkpoint (derived from the referenced last event).
+    pub ts_utc: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +134,10 @@ fn ensure_parent_dir_exists(path: &str) -> Result<(), String> {
 
 fn state_path_for_ledger(log_path: &str) -> String {
     format!("{log_path}{STATE_SUFFIX}")
+}
+
+fn checkpoints_path_for_ledger(log_path: &str) -> String {
+    format!("{log_path}{CHECKPOINTS_SUFFIX}")
 }
 
 fn sanitize_segment(s: &str) -> String {
@@ -647,6 +662,175 @@ pub fn append_record_atomic_with_run_count(
         t0.elapsed().as_millis()
     );
     Ok((rec, pre_count))
+}
+
+fn scan_checkpoints_tolerant(log_path: &str) -> Result<Vec<LedgerCheckpoint>, String> {
+    let p = checkpoints_path_for_ledger(log_path);
+    let f = match File::open(&p) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut reader = BufReader::new(f);
+    let mut buf: Vec<u8> = Vec::new();
+    let mut out: Vec<LedgerCheckpoint> = Vec::new();
+    let mut offset: u64 = 0;
+    let mut line_no: usize = 0;
+    loop {
+        buf.clear();
+        let n = reader
+            .read_until(b'\n', &mut buf)
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        offset = offset
+            .checked_add(n as u64)
+            .ok_or_else(|| "checkpoint scan offset overflow".to_string())?;
+        let line = std::str::from_utf8(&buf).map_err(|e| {
+            format!(
+                "checkpoint file contains non-utf8 bytes at offset {}: {}",
+                offset.saturating_sub(n as u64),
+                e
+            )
+        })?;
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        line_no += 1;
+        match serde_json::from_str::<LedgerCheckpoint>(t) {
+            Ok(cp) => out.push(cp),
+            Err(e) => {
+                let at_eof = reader.fill_buf().map_err(|e| e.to_string())?.is_empty();
+                if at_eof {
+                    break;
+                }
+                return Err(format!(
+                    "checkpoint corruption before EOF at line {}: {}",
+                    line_no, e
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+pub fn latest_checkpoint(log_path: &str) -> Result<Option<LedgerCheckpoint>, String> {
+    let cps = scan_checkpoints_tolerant(log_path)?;
+    Ok(cps.into_iter().last())
+}
+
+/// Compute a deterministic digest over *ledger event content* in file order.
+///
+/// This does **not** use the hash chain; it is an independent integrity anchor derived from stored event JSON.
+pub fn compute_ledger_events_content_sha256(
+    log_path: &str,
+) -> Result<(String, Option<(EvidenceEvent, String)>), String> {
+    let scan = scan_ledger_records_tolerant(log_path)?;
+    let mut h = Sha256::new();
+    let mut last_ev: Option<EvidenceEvent> = None;
+    let mut last_digest_hex: Option<String> = None;
+    for rec in scan.records {
+        // Hash the stored JSON exactly as persisted (no re-serialization).
+        h.update(rec.event_json.as_bytes());
+        h.update(b"\n");
+        let ev: EvidenceEvent = serde_json::from_str(&rec.event_json).map_err(|e| e.to_string())?;
+        last_ev = Some(ev);
+        // Snapshot digest after this event for checkpoint mapping.
+        last_digest_hex = Some(hex::encode(h.clone().finalize()));
+    }
+    let digest_hex = hex::encode(h.finalize());
+    Ok((
+        digest_hex,
+        match (last_ev, last_digest_hex) {
+            (Some(ev), Some(d)) => Some((ev, d)),
+            _ => None,
+        },
+    ))
+}
+
+/// Append a checkpoint record (append-only, fsync).
+pub fn append_checkpoint(log_path: &str, cp: &LedgerCheckpoint) -> Result<(), String> {
+    ensure_parent_dir_exists(log_path)?;
+    let p = checkpoints_path_for_ledger(log_path);
+    let mut f = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&p)
+        .map_err(|e| e.to_string())?;
+    let line = serde_json::to_string(cp).map_err(|e| e.to_string())?;
+    f.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+    f.write_all(b"\n").map_err(|e| e.to_string())?;
+    f.flush().map_err(|e| e.to_string())?;
+    f.sync_data().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Ensure a fresh checkpoint exists for the current ledger head.
+///
+/// This is an explicit trigger used by export/ops paths; it never mutates the main ledger.
+pub fn ensure_checkpoint_current(log_path: &str) -> Result<Option<LedgerCheckpoint>, String> {
+    let (digest, last) = compute_ledger_events_content_sha256(log_path)?;
+    let Some((ev, digest_at_last)) = last else {
+        return Ok(None);
+    };
+    // digest_at_last should equal digest when ev is the final record.
+    let digest_at_last = if digest_at_last.is_empty() { digest.clone() } else { digest_at_last };
+    let existing = latest_checkpoint(log_path)?;
+    if let Some(ref cp) = existing {
+        if cp.run_id == ev.run_id
+            && cp.last_event_id == ev.event_id
+            && cp.events_content_sha256 == digest_at_last
+        {
+            return Ok(existing);
+        }
+    }
+    let cp = LedgerCheckpoint {
+        run_id: ev.run_id.clone(),
+        last_event_id: ev.event_id.clone(),
+        events_content_sha256: digest_at_last,
+        ts_utc: ev.ts_utc.clone(),
+    };
+    append_checkpoint(log_path, &cp)?;
+    Ok(Some(cp))
+}
+
+/// Verify checkpoint continuity: each checkpoint must match the digest computed from the ledger up to its last event.
+pub fn verify_checkpoints(log_path: &str) -> Result<(), String> {
+    let cps = scan_checkpoints_tolerant(log_path)?;
+    if cps.is_empty() {
+        return Ok(());
+    }
+
+    // Precompute digest snapshots for each (run_id, event_id) pair in ledger order.
+    let scan = scan_ledger_records_tolerant(log_path)?;
+    let mut h = Sha256::new();
+    let mut snapshots: HashMap<(String, String), String> = HashMap::new();
+    for rec in scan.records {
+        h.update(rec.event_json.as_bytes());
+        h.update(b"\n");
+        let ev: EvidenceEvent = serde_json::from_str(&rec.event_json).map_err(|e| e.to_string())?;
+        let d = hex::encode(h.clone().finalize());
+        snapshots.insert((ev.run_id, ev.event_id), d);
+    }
+
+    for (i, cp) in cps.iter().enumerate() {
+        let key = (cp.run_id.clone(), cp.last_event_id.clone());
+        let Some(expected) = snapshots.get(&key) else {
+            return Err(format!(
+                "checkpoint_invalid index={} reason=missing_last_event run_id={} last_event_id={}",
+                i, cp.run_id, cp.last_event_id
+            ));
+        };
+        if expected != &cp.events_content_sha256 {
+            return Err(format!(
+                "checkpoint_invalid index={} reason=digest_mismatch run_id={} last_event_id={} expected={} actual={}",
+                i, cp.run_id, cp.last_event_id, expected, cp.events_content_sha256
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Scan a JSONL ledger file and tolerate exactly one trailing partial/corrupted line.
@@ -1246,5 +1430,39 @@ mod tests {
         let state_scans = LEDGER_STATE_SCAN_CALLS.with(|c| c.get());
         assert!(state_scans >= 1, "repair should force state rebuild scan");
         verify_chain(&log_path_s).expect("chain valid after repair");
+    }
+
+    #[test]
+    fn checkpoint_digest_deterministic_and_tamper_detected() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("ledger.jsonl");
+        let log_path_s = log_path.to_string_lossy().to_string();
+
+        append_record(&log_path_s, mk_event("r1", "e1", "2026-01-01T00:00:00Z"))
+            .expect("append e1");
+        append_record(&log_path_s, mk_event("r2", "e2", "2026-01-01T00:00:01Z"))
+            .expect("append e2");
+
+        let cp1 = ensure_checkpoint_current(&log_path_s)
+            .expect("checkpoint")
+            .expect("non-empty");
+        let cp2 = ensure_checkpoint_current(&log_path_s)
+            .expect("checkpoint")
+            .expect("non-empty");
+        assert_eq!(cp1, cp2, "checkpoint should be stable when ledger unchanged");
+        verify_checkpoints(&log_path_s).expect("checkpoints valid");
+
+        // Tamper with the first record's event_json by modifying the persisted line.
+        let raw = std::fs::read_to_string(&log_path).expect("read ledger");
+        let mut lines: Vec<String> = raw.lines().map(|s| s.to_string()).collect();
+        assert!(!lines.is_empty());
+        let mut first: StoredRecord = serde_json::from_str(lines[0].trim()).expect("parse first record");
+        first.event_json = first.event_json.replace("\"k\":\"v\"", "\"k\":\"tampered\"");
+        lines[0] = serde_json::to_string(&first).expect("re-encode record");
+        std::fs::write(&log_path, lines.join("\n") + "\n").expect("write tampered ledger");
+
+        // Chain verification should fail (hash mismatch), and checkpoint verification should fail (digest mismatch).
+        assert!(verify_chain(&log_path_s).is_err());
+        assert!(verify_checkpoints(&log_path_s).is_err());
     }
 }

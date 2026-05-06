@@ -3,7 +3,6 @@
 use crate::db::DbPool;
 use crate::stripe_billing;
 use axum::http::StatusCode;
-use base64::Engine;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
 use serde_json::Value;
@@ -26,17 +25,23 @@ fn webhook_signing_key_bytes(secret: &str) -> Result<Vec<u8>, String> {
     if s.is_empty() {
         return Err("empty webhook secret".into());
     }
-    if let Some(b64) = s.strip_prefix("whsec_") {
-        base64::engine::general_purpose::STANDARD
-            .decode(b64.trim())
-            .map_err(|e| format!("invalid whsec_ base64: {e}"))
-    } else {
-        Ok(s.as_bytes().to_vec())
-    }
+    // Stripe webhook secrets (including the `whsec_` prefix) are opaque strings.
+    // They must be used as-is as the HMAC key bytes, not base64-decoded.
+    Ok(s.as_bytes().to_vec())
 }
 
 /// Stripe `Stripe-Signature` header: `t=...,v1=...` (possibly multiple v1).
 pub fn verify_stripe_signature(payload: &[u8], stripe_signature: &str, secret: &str) -> Result<(), String> {
+    verify_stripe_signature_at_time(payload, stripe_signature, secret, Utc::now().timestamp(), 300)
+}
+
+fn verify_stripe_signature_at_time(
+    payload: &[u8],
+    stripe_signature: &str,
+    secret: &str,
+    now_ts: i64,
+    tolerance_secs: i64,
+) -> Result<(), String> {
     let key = webhook_signing_key_bytes(secret)?;
     let mut ts: Option<i64> = None;
     let mut v1_sigs: Vec<&str> = Vec::new();
@@ -51,16 +56,18 @@ pub fn verify_stripe_signature(payload: &[u8], stripe_signature: &str, secret: &
         }
     }
     let t = ts.ok_or_else(|| "missing t=".to_string())?;
-    let now = Utc::now().timestamp();
-    if (now - t).abs() > 300 {
+    if (now_ts - t).abs() > tolerance_secs {
         return Err("timestamp outside tolerance".to_string());
     }
     if v1_sigs.is_empty() {
         return Err("missing v1 signature".to_string());
     }
-    let signed_payload = format!("{}.{t}", String::from_utf8_lossy(payload));
     let mut mac = HmacSha256::new_from_slice(&key).map_err(|e| e.to_string())?;
-    mac.update(signed_payload.as_bytes());
+    // Stripe signing scheme: signed_payload = t + "." + raw_body (raw UTF-8 bytes, no reserialization).
+    // See https://docs.stripe.com/webhooks/signature
+    mac.update(t.to_string().as_bytes());
+    mac.update(b".");
+    mac.update(payload);
     let expected: [u8; 32] = mac.finalize().into_bytes().into();
     let mut ok = false;
     for sig in v1_sigs {
@@ -178,7 +185,10 @@ pub async fn handle_stripe_webhook(
                 StatusCode::SERVICE_UNAVAILABLE,
                 serde_json::json!({
                     "ok": false,
-                    "error": "GOVAI_STRIPE_WEBHOOK_SECRET not configured"
+                    "error": {
+                        "code": "STRIPE_NOT_CONFIGURED",
+                        "message": "GOVAI_STRIPE_WEBHOOK_SECRET not configured"
+                    }
                 }),
             );
         }
@@ -188,7 +198,10 @@ pub async fn handle_stripe_webhook(
             StatusCode::SERVICE_UNAVAILABLE,
             serde_json::json!({
                 "ok": false,
-                "error": "GOVAI_STRIPE_WEBHOOK_SECRET is empty"
+                "error": {
+                    "code": "STRIPE_NOT_CONFIGURED",
+                    "message": "GOVAI_STRIPE_WEBHOOK_SECRET is empty"
+                }
             }),
         );
     }
@@ -203,8 +216,8 @@ pub async fn handle_stripe_webhook(
     };
     if let Err(e) = verify_stripe_signature(body, sig_header, &secret) {
         return (
-            StatusCode::UNAUTHORIZED,
-            serde_json::json!({ "ok": false, "error": "invalid_signature", "detail": e }),
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({ "ok": false, "error": { "code": "STRIPE_INVALID_SIGNATURE", "message": "invalid Stripe webhook signature", "detail": e } }),
         );
     }
     let v: Value = match serde_json::from_slice(body) {
@@ -309,9 +322,10 @@ mod tests {
         let secret = "plain_test_secret";
         let body = br#"{"id":"evt_test_1","type":"invoice.paid"}"#;
         let t = Utc::now().timestamp();
-        let signed_payload = format!("{}.{t}", String::from_utf8_lossy(body));
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac key");
-        mac.update(signed_payload.as_bytes());
+        mac.update(t.to_string().as_bytes());
+        mac.update(b".");
+        mac.update(body);
         let sig = hex::encode(mac.finalize().into_bytes());
         let header = format!("t={t},v1={sig}");
         verify_stripe_signature(body, &header, secret).expect("signature verifies");
@@ -322,12 +336,30 @@ mod tests {
         let secret = "plain_test_secret";
         let body = br#"{"id":"evt_test_1","type":"invoice.paid"}"#;
         let t = Utc::now().timestamp();
-        let signed_payload = format!("{}.{t}", String::from_utf8_lossy(body));
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac key");
-        mac.update(signed_payload.as_bytes());
+        mac.update(t.to_string().as_bytes());
+        mac.update(b".");
+        mac.update(body);
         let sig = hex::encode(mac.finalize().into_bytes());
         let header = format!("t={t},v1={sig}");
         let bad_body = br#"{"id":"evt_other","type":"invoice.paid"}"#;
         assert!(verify_stripe_signature(bad_body, &header, secret).is_err());
+    }
+
+    #[test]
+    fn stripe_signature_matches_known_fixture_from_algorithm_spec() {
+        // Deterministic fixture to catch signing-string regressions:
+        // signed_payload = t + "." + raw_body (exact bytes), HMAC-SHA256(key=secret).
+        let secret = "whsec_test_secret";
+        let t: i64 = 1_600_000_000;
+        let body = b"{\"id\":\"evt_1\",\"type\":\"invoice.paid\"}";
+        // Precomputed independently (e.g. via `python -c 'import hmac,hashlib; ...'`).
+        let expected_v1 = "91a2f151d68387be250f0701b95d4d51540d7158d65ff2d525153e586f9ccf04";
+
+        let header = format!("t={t},v1={expected_v1}");
+        assert!(
+            verify_stripe_signature_at_time(body, &header, secret, t, 300).is_ok(),
+            "expected known fixture signature to verify"
+        );
     }
 }

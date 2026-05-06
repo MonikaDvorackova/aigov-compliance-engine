@@ -1010,12 +1010,8 @@ async fn verify(
             );
         }
     };
-    match crate::audit_store::verify_chain(&log_path) {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(json!({ "ok": true, "policy_version": audit.policy_version })),
-        ),
-        Err(e) => api_err(
+    if let Err(e) = crate::audit_store::verify_chain(&log_path) {
+        return api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "CHAIN_INVALID",
             "The append-only chain failed verification. The ledger may have been corrupted.",
@@ -1023,8 +1019,23 @@ async fn verify(
             Some(json!({ "raw": e })),
             Some(audit.policy_version),
             None,
-        ),
+        );
     }
+    if let Err(e) = crate::audit_store::verify_checkpoints(&log_path) {
+        return api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "CHECKPOINT_INVALID",
+            "Ledger checkpoint verification failed. The ledger or checkpoint log may have been tampered with.",
+            "Retry later. If this persists, contact support (this is a server-side integrity issue).",
+            Some(json!({ "raw": e })),
+            Some(audit.policy_version),
+            None,
+        );
+    }
+    (
+        StatusCode::OK,
+        Json(json!({ "ok": true, "policy_version": audit.policy_version })),
+    )
 }
 
 async fn bundle_route(
@@ -1265,6 +1276,23 @@ async fn export_run_route(
     );
     let events_content_sha256 = bundle::portable_evidence_digest_v1(&run_id, &events);
 
+    // Explicit integrity anchor: persist a checkpoint of the full tenant ledger digest.
+    let latest_checkpoint = match crate::audit_store::ensure_checkpoint_current(&log_path) {
+        Ok(cp) => cp,
+        Err(e) => {
+            eprintln!("export_run_route: ensure_checkpoint_current: {e}");
+            return api_err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "CHECKPOINT_NOT_AVAILABLE",
+                "export not available",
+                "Retry in a moment. If this persists, contact support.",
+                Some(json!({ "raw": e, "run_id": run_id })),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+
     let chain_records = match crate::audit_store::collect_stored_records_for_run(&log_path, &run_id)
     {
         Ok(r) => r,
@@ -1375,6 +1403,7 @@ async fn export_run_route(
             "bundle_sha256": bundle_sha256,
             "events_content_sha256": events_content_sha256,
             "evidence_digest_schema": "aigov.evidence_digest.v1",
+            "ledger_checkpoint": latest_checkpoint,
             "chain_head_record_sha256": head_sha256,
             "log_chain": log_chain
         },
