@@ -31,6 +31,8 @@ jobs:
       GOVAI_API_KEYS_JSON: '{"ci-test-api-key":"github-actions"}'
       GOVAI_API_KEY: ci-test-api-key
       GOVAI_PROJECT: github-actions
+      # CI must not rely on implicit working-directory ledger defaults.
+      GOVAI_LEDGER_DIR: ${{ runner.temp }}/govai-ledger
 
     steps:
       - name: Checkout
@@ -53,6 +55,13 @@ jobs:
 
       - name: Build audit service
         run: cd rust && cargo build --locked --bin aigov_audit
+
+      - name: Prepare ledger dir (writable)
+        run: |
+          set -euo pipefail
+          test -n "${GOVAI_LEDGER_DIR:-}" || { echo "::error::GOVAI_LEDGER_DIR is missing"; exit 1; }
+          mkdir -p "${GOVAI_LEDGER_DIR}"
+          ls -ld "${GOVAI_LEDGER_DIR}"
 
       - name: Start audit service
         run: make audit_bg
