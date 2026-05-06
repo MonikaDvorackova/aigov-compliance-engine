@@ -25,6 +25,28 @@ def test_evidence_pack_init_creates_required_files(tmp_path: Path) -> None:
     assert (out / f"{rid}.json").is_file()
 
 
+def test_evidence_pack_init_output_file_shape_contract(tmp_path: Path) -> None:
+    out = tmp_path / "pack"
+    rid = "00000000-0000-0000-0000-00000000f00d"
+    code = main(["evidence-pack", "init", "--out", str(out), "--run-id", rid])
+    assert code == cli_exit.EX_OK
+
+    files = sorted(p.name for p in out.iterdir())
+    assert len(files) == 2
+    assert files == [f"{rid}.json", "evidence_digest_manifest.json"]
+
+    bundle = _read_json(out / f"{rid}.json")
+    assert "run_id" in bundle
+    assert "events" in bundle
+    assert isinstance(bundle["events"], list)
+
+    manifest = _read_json(out / "evidence_digest_manifest.json")
+    assert "schema" in manifest
+    assert "run_id" in manifest
+    assert "events_content_sha256" in manifest
+    assert manifest["run_id"] == bundle["run_id"] == rid
+
+
 def test_evidence_pack_init_manifest_matches_bundle_digest(tmp_path: Path) -> None:
     out = tmp_path / "pack"
     rid = "00000000-0000-0000-0000-000000000def"
