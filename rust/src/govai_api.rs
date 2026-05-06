@@ -765,6 +765,16 @@ async fn ingest(
                     None,
                 )
             } else {
+                let cwd = std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "(unavailable)".to_string());
+                let ledger_dir = crate::ledger_storage::configured_ledger_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "(unset)".to_string());
+                eprintln!(
+                    "ingest: append_error tenant_id={} log_path={} cwd={} ledger_dir={} err={}",
+                    ledger_tid, log_path, cwd, ledger_dir, e
+                );
                 api_err(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "APPEND_ERROR",
@@ -1634,6 +1644,15 @@ async fn readiness_check(State(audit): State<AuditState>) -> (StatusCode, Json<s
 
     let probe_path = probe_path_override
         .unwrap_or_else(|| project::resolve_ledger_path(audit.ledger_base, &probe_tenant));
+    eprintln!(
+        "readiness: tenant_ledger_probe path={} ledger_base={} env={} ledger_dir={}",
+        probe_path,
+        audit.ledger_base,
+        audit.deployment_env.as_str(),
+        crate::ledger_storage::configured_ledger_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "(unset)".to_string())
+    );
     if let Some(parent) = std::path::Path::new(&probe_path).parent() {
         if !parent.as_os_str().is_empty() && parent != std::path::Path::new(".") {
             if let Err(e) = std::fs::create_dir_all(parent) {
