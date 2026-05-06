@@ -102,6 +102,14 @@ fn authz_default(req: axum::http::request::Builder) -> axum::http::request::Buil
     req.header(header::AUTHORIZATION, format!("Bearer {TEST_DEFAULT_API_KEY}"))
 }
 
+async fn read_json_response(res: axum::response::Response) -> (StatusCode, Value, String) {
+    let status = res.status();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let raw = String::from_utf8_lossy(&bytes).to_string();
+    let json: Value = serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({ "raw": raw }));
+    (status, json, raw)
+}
+
 fn database_url() -> Option<String> {
     std::env::var("TEST_DATABASE_URL")
         .or_else(|_| std::env::var("DATABASE_URL"))
@@ -697,7 +705,10 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
         .await
         .expect("insert team");
 
-    const RAW_KEY: &str = "metering_on_http_test_secret";
+    // Use a key present in the global `GOVAI_API_KEYS_JSON` tenant map. Once that map is
+    // initialized, all audit routes require the bearer token to be present in it (401 otherwise).
+    ensure_dev_api_key_tenant_map(&mut env);
+    const RAW_KEY: &str = "key_default";
     env.set_var("GOVAI_API_KEYS", RAW_KEY);
     let api_usage = ApiUsageState::from_env(&pool).expect("api usage");
     let metering_cfg = MeteringConfig {
@@ -715,7 +726,7 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
     );
 
     let kh = key_fingerprint(RAW_KEY);
-    seed_empty_tenant_ledger(&kh);
+    seed_empty_tenant_ledger("default");
     sqlx::query("DELETE FROM public.govai_api_key_billing WHERE key_hash = $1")
         .bind(&kh)
         .execute(&pool)
@@ -767,10 +778,12 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
         .await
         .unwrap();
 
-    assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
-    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let (status, v, raw) = read_json_response(res).await;
+    if status != StatusCode::TOO_MANY_REQUESTS {
+        eprintln!("metering_on_monthly_new_runs_limit response {status}: {raw}");
+    }
     env.remove_var("GOVAI_API_KEYS");
-    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(v["ok"], false);
     assert_eq!(v["error"]["code"], "MONTHLY_RUN_LIMIT_EXCEEDED");
     assert!(v["error"]["message"].as_str().unwrap_or("").trim().len() > 0);
@@ -832,6 +845,8 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
     let _g = env_lock().await;
     let mut env = TestEnv::new();
     force_explicit_db_url_for_process_helpers(&mut env, &url);
+    ensure_dev_api_key_tenant_map(&mut env);
+    env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
     seed_empty_tenant_ledger("default");
     env.remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
     env.set_var("GOVAI_STRIPE_WEBHOOK_SECRET", "plain_webhook_secret");
@@ -869,7 +884,11 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
         )
         .await
         .unwrap();
-    assert_eq!(r1.status(), StatusCode::OK);
+    let (s1, b1, raw1) = read_json_response(r1).await;
+    if s1 != StatusCode::OK {
+        eprintln!("stripe_webhook r1 {s1}: {raw1}");
+    }
+    assert_eq!(s1, StatusCode::OK, "unexpected webhook response: {b1}");
 
     let r2 = app
         .clone()
@@ -884,8 +903,11 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
         )
         .await
         .unwrap();
-    assert_eq!(r2.status(), StatusCode::OK);
-    let b2: Value = serde_json::from_slice(&r2.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let (s2, b2, raw2) = read_json_response(r2).await;
+    if s2 != StatusCode::OK {
+        eprintln!("stripe_webhook r2 {s2}: {raw2}");
+    }
+    assert_eq!(s2, StatusCode::OK, "unexpected webhook response: {b2}");
     assert_eq!(b2["duplicate"], true);
 
     let run_id = Uuid::new_v4().to_string();
@@ -1174,6 +1196,27 @@ async fn billing_report_usage_is_idempotent_without_stripe_item() {
         .await
         .expect("migrate");
 
+    // Ensure `report-usage` uses a stable (period_start, period_end) across both calls.
+    // Otherwise it falls back to (month_start..now), which changes every call and breaks idempotency.
+    let period_start = chrono::Utc::now() - chrono::Duration::days(2);
+    let period_end = chrono::Utc::now() + chrono::Duration::days(20);
+    sqlx::query(
+        r#"
+        insert into public.tenant_billing_accounts (tenant_id, subscription_status, current_period_start, current_period_end)
+        values ('tenant-b', 'active', $1, $2)
+        on conflict (tenant_id) do update set
+          subscription_status = excluded.subscription_status,
+          current_period_start = excluded.current_period_start,
+          current_period_end = excluded.current_period_end,
+          updated_at = now()
+        "#,
+    )
+    .bind(period_start)
+    .bind(period_end)
+    .execute(&pool)
+    .await
+    .expect("seed billing period");
+
     let app = test_router(pool).await;
     let r1 = app
         .clone()
@@ -1188,8 +1231,11 @@ async fn billing_report_usage_is_idempotent_without_stripe_item() {
         )
         .await
         .unwrap();
-    assert_eq!(r1.status(), StatusCode::OK);
-    let b1: Value = serde_json::from_slice(&r1.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let (s1, b1, raw1) = read_json_response(r1).await;
+    if s1 != StatusCode::OK {
+        eprintln!("billing_report_usage r1 {s1}: {raw1}");
+    }
+    assert_eq!(s1, StatusCode::OK, "unexpected report-usage response: {b1}");
     assert_eq!(b1["idempotent_hit"], false);
 
     let r2 = app
@@ -1204,8 +1250,11 @@ async fn billing_report_usage_is_idempotent_without_stripe_item() {
         )
         .await
         .unwrap();
-    assert_eq!(r2.status(), StatusCode::OK);
-    let b2: Value = serde_json::from_slice(&r2.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let (s2, b2, raw2) = read_json_response(r2).await;
+    if s2 != StatusCode::OK {
+        eprintln!("billing_report_usage r2 {s2}: {raw2}");
+    }
+    assert_eq!(s2, StatusCode::OK, "unexpected report-usage response: {b2}");
     assert_eq!(b2["idempotent_hit"], true);
     assert_eq!(b1["report_id"], b2["report_id"]);
 
