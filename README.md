@@ -9,6 +9,7 @@ GovAI is an **audit-backed decision system** for AI deployments: append-only evi
 Minimal deterministic local example using the **existing evidence-pack format**:
 
 - `docs/golden-path.md`
+- `docs/evidence-pack.md` (generate a minimal customer-ready evidence pack)
 
 ## Troubleshooting and operator docs
 
