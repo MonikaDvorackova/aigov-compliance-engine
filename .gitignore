@@ -44,3 +44,5 @@ docs/packs/
 python/artifacts/
 rust/audit_log*.jsonl
 .aigov_audit.pid
+
+python/.venv_audit/

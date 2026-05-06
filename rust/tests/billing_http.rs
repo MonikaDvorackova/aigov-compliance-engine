@@ -833,6 +833,10 @@ async fn stripe_webhook_secret_missing_returns_503() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let v: Value =
+        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["error"]["code"], "STRIPE_NOT_CONFIGURED");
 }
 
 #[tokio::test]
@@ -867,9 +871,10 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
     // handler requires `data.object` to exist; invoice processing reads `customer` if present.
     let body = br#"{"id":"evt_stripe_integration_1","type":"invoice.paid","data":{"object":{"customer":"cus_test_1"}}}"#;
     let t = chrono::Utc::now().timestamp();
-    let signed = format!("{}.{t}", String::from_utf8_lossy(body));
     let mut mac = Hmac::<Sha256>::new_from_slice(b"plain_webhook_secret").expect("hmac key");
-    mac.update(signed.as_bytes());
+    mac.update(t.to_string().as_bytes());
+    mac.update(b".");
+    mac.update(body);
     let sig = hex::encode(mac.finalize().into_bytes());
     let hdr = format!("t={t},v1={sig}");
 
@@ -1094,9 +1099,10 @@ async fn stripe_webhook_subscription_updated_upserts_tenant_billing_account() {
     });
     let body_bytes = serde_json::to_vec(&payload).unwrap();
     let t = chrono::Utc::now().timestamp();
-    let signed = format!("{}.{t}", String::from_utf8_lossy(&body_bytes));
     let mut mac = Hmac::<Sha256>::new_from_slice(b"plain_webhook_secret_sub_upd").expect("hmac");
-    mac.update(signed.as_bytes());
+    mac.update(t.to_string().as_bytes());
+    mac.update(b".");
+    mac.update(&body_bytes);
     let sig = hex::encode(mac.finalize().into_bytes());
     let hdr = format!("t={t},v1={sig}");
 
