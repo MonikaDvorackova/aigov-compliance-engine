@@ -22,6 +22,8 @@ use aigov_audit::project;
 use aigov_audit::schema::EvidenceEvent;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use std::collections::{HashMap, HashSet};
+use std::ffi::{OsStr, OsString};
 use std::sync::OnceLock;
 
 const TEST_DEFAULT_API_KEY: &str = "key_default";
@@ -29,15 +31,15 @@ const TEST_DEFAULT_API_KEY: &str = "key_default";
 /// Integration tests run concurrently; env vars + current dir are process-global.
 /// Use a non-poisoning async lock and hold it for the full duration of any test
 /// that mutates env/CWD (this entire file does).
-fn env_lock() -> &'static tokio::sync::Mutex<()> {
+async fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(())).lock().await
 }
 
 /// Same key→tenant mapping contract as `tenant_isolation_http` tests (init once per process).
-fn ensure_dev_api_key_tenant_map() {
+fn ensure_dev_api_key_tenant_map(env: &mut TestEnv) {
     // Make the test mapping explicit and deterministic. Initialization itself is still once-per-process.
-    std::env::set_var(
+    env.set_var(
         "GOVAI_API_KEYS_JSON",
         r#"{"key_default":"default","key_github_actions":"github-actions","key_tenant_a":"tenant-a","key_tenant_b":"tenant-b"}"#,
     );
@@ -51,30 +53,53 @@ fn ensure_dev_api_key_tenant_map() {
 struct TestEnv {
     _ledger_dir: tempfile::TempDir,
     original_cwd: std::path::PathBuf,
+    original_vars: HashMap<&'static str, Option<OsString>>,
+    touched_vars: HashSet<&'static str>,
 }
 
 impl TestEnv {
     fn new() -> Self {
         let original_cwd = std::env::current_dir().expect("getcwd");
         let dir = tempfile::tempdir().expect("tempdir");
+        let ledger_dir_path = dir.path().to_path_buf();
         std::env::set_current_dir(dir.path()).expect("chdir temp");
-        std::env::set_var("GOVAI_LEDGER_DIR", dir.path());
-        Self {
+        let mut env = Self {
             _ledger_dir: dir,
             original_cwd,
+            original_vars: HashMap::new(),
+            touched_vars: HashSet::new(),
+        };
+        env.set_var("GOVAI_LEDGER_DIR", ledger_dir_path);
+        env
+    }
+
+    fn touch(&mut self, key: &'static str) {
+        if self.touched_vars.insert(key) {
+            let prev = std::env::var_os(key);
+            self.original_vars.insert(key, prev);
         }
+    }
+
+    fn set_var(&mut self, key: &'static str, value: impl AsRef<OsStr>) {
+        self.touch(key);
+        std::env::set_var(key, value);
+    }
+
+    fn remove_var(&mut self, key: &'static str) {
+        self.touch(key);
+        std::env::remove_var(key);
     }
 }
 
 impl Drop for TestEnv {
     fn drop(&mut self) {
-        // Keep cleanup best-effort; tests should not depend on teardown ordering.
-        std::env::remove_var("GOVAI_LEDGER_DIR");
-        std::env::remove_var("GOVAI_API_KEYS");
-        std::env::remove_var("GOVAI_BILLING_ENFORCEMENT");
-        std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
-        std::env::remove_var("GOVAI_STRIPE_SECRET_KEY");
-        std::env::remove_var("AIGOV_TEST_APPEND_FAIL");
+        // Restore only vars this test touched; never clobber unrelated concurrent tests.
+        for (k, prev) in self.original_vars.drain() {
+            match prev {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
         let _ = std::env::set_current_dir(&self.original_cwd);
     }
 }
@@ -210,11 +235,11 @@ async fn canonical_evidence_billing_http() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
-    ensure_dev_api_key_tenant_map();
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
-    std::env::set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
+    env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
 
     let pool = PgPoolOptions::new()
         .max_connections(3)
@@ -371,11 +396,11 @@ async fn append_failure_does_not_increment_billing_counter() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
-    ensure_dev_api_key_tenant_map();
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
-    std::env::set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
+    env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
 
     let pool = PgPoolOptions::new()
         .max_connections(3)
@@ -396,7 +421,7 @@ async fn append_failure_does_not_increment_billing_counter() {
         .await
         .ok();
 
-    std::env::set_var("AIGOV_TEST_APPEND_FAIL", "1");
+    env.set_var("AIGOV_TEST_APPEND_FAIL", "1");
     let app = test_router(pool.clone()).await;
     let run_id = uuid::Uuid::new_v4().to_string();
     let event_id = uuid::Uuid::new_v4().to_string();
@@ -414,7 +439,7 @@ async fn append_failure_does_not_increment_billing_counter() {
         )
         .await
         .unwrap();
-    std::env::remove_var("AIGOV_TEST_APPEND_FAIL");
+    env.remove_var("AIGOV_TEST_APPEND_FAIL");
 
     assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let c = aigov_audit::evidence_usage::get_evidence_usage(&pool, &tenant)
@@ -433,11 +458,11 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
-    ensure_dev_api_key_tenant_map();
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
-    std::env::set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
+    env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -527,11 +552,11 @@ async fn ingest_policy_violation_includes_code_and_message() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
-    ensure_dev_api_key_tenant_map();
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
-    std::env::set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
+    env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
 
     let pool = PgPoolOptions::new()
         .max_connections(3)
@@ -590,11 +615,11 @@ async fn allowed_ingest_emits_policy_decision_record() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
-    ensure_dev_api_key_tenant_map();
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
-    std::env::set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
+    env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
 
     let pool = PgPoolOptions::new()
         .max_connections(3)
@@ -642,8 +667,8 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
     seed_empty_tenant_ledger("default");
 
     let pool = PgPoolOptions::new()
@@ -665,7 +690,7 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
         .expect("insert team");
 
     const RAW_KEY: &str = "metering_on_http_test_secret";
-    std::env::set_var("GOVAI_API_KEYS", RAW_KEY);
+    env.set_var("GOVAI_API_KEYS", RAW_KEY);
     let api_usage = ApiUsageState::from_env(&pool).expect("api usage");
     let metering_cfg = MeteringConfig {
         enabled: true,
@@ -736,7 +761,7 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
 
     assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
-    std::env::remove_var("GOVAI_API_KEYS");
+    env.remove_var("GOVAI_API_KEYS");
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["ok"], false);
     assert_eq!(v["error"]["code"], "MONTHLY_RUN_LIMIT_EXCEEDED");
@@ -759,10 +784,10 @@ async fn stripe_webhook_secret_missing_returns_503() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
     seed_empty_tenant_ledger("default");
-    std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
+    env.remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -795,11 +820,11 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
     seed_empty_tenant_ledger("default");
-    std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
-    std::env::set_var("GOVAI_STRIPE_WEBHOOK_SECRET", "plain_webhook_secret");
+    env.remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
+    env.set_var("GOVAI_STRIPE_WEBHOOK_SECRET", "plain_webhook_secret");
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -885,7 +910,7 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
     assert!(v["usage_count"].as_i64().unwrap() >= 1);
     assert!(!v["traces"].as_array().unwrap().is_empty());
 
-    std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
+    env.remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
 }
 
 #[tokio::test]
@@ -895,13 +920,13 @@ async fn billing_checkout_session_missing_stripe_secret_returns_503() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
-    ensure_dev_api_key_tenant_map();
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
 
-    std::env::set_var("GOVAI_API_KEYS", "key_default");
-    std::env::remove_var("GOVAI_STRIPE_SECRET_KEY");
+    env.set_var("GOVAI_API_KEYS", "key_default");
+    env.remove_var("GOVAI_STRIPE_SECRET_KEY");
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -936,7 +961,7 @@ async fn billing_checkout_session_missing_stripe_secret_returns_503() {
     assert_eq!(v["ok"], false);
     assert_eq!(v["error"]["code"], "STRIPE_NOT_CONFIGURED");
 
-    std::env::remove_var("GOVAI_API_KEYS");
+    env.remove_var("GOVAI_API_KEYS");
 }
 
 #[tokio::test]
@@ -946,13 +971,13 @@ async fn billing_checkout_session_requires_api_key_when_keys_configured() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
-    ensure_dev_api_key_tenant_map();
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
 
-    std::env::set_var("GOVAI_API_KEYS", "key_default");
-    std::env::set_var("GOVAI_STRIPE_SECRET_KEY", "sk_test_fake_for_auth_gate");
+    env.set_var("GOVAI_API_KEYS", "key_default");
+    env.set_var("GOVAI_STRIPE_SECRET_KEY", "sk_test_fake_for_auth_gate");
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -983,8 +1008,8 @@ async fn billing_checkout_session_requires_api_key_when_keys_configured() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 
-    std::env::remove_var("GOVAI_API_KEYS");
-    std::env::remove_var("GOVAI_STRIPE_SECRET_KEY");
+    env.remove_var("GOVAI_API_KEYS");
+    env.remove_var("GOVAI_STRIPE_SECRET_KEY");
 }
 
 #[tokio::test]
@@ -994,10 +1019,10 @@ async fn stripe_webhook_subscription_updated_upserts_tenant_billing_account() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
     seed_empty_tenant_ledger("default");
-    std::env::set_var("GOVAI_STRIPE_WEBHOOK_SECRET", "plain_webhook_secret_sub_upd");
+    env.set_var("GOVAI_STRIPE_WEBHOOK_SECRET", "plain_webhook_secret_sub_upd");
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -1063,7 +1088,7 @@ async fn stripe_webhook_subscription_updated_upserts_tenant_billing_account() {
     assert_eq!(row.2.as_deref(), Some("sub_webhook_test_42"));
     assert_eq!(row.3, "active");
 
-    std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
+    env.remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
 }
 
 #[tokio::test]
@@ -1073,10 +1098,10 @@ async fn billing_status_returns_none_before_checkout() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
-    ensure_dev_api_key_tenant_map();
-    std::env::set_var("GOVAI_API_KEYS", "key_github_actions");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    ensure_dev_api_key_tenant_map(&mut env);
+    env.set_var("GOVAI_API_KEYS", "key_github_actions");
     seed_empty_tenant_ledger("github-actions");
 
     let pool = PgPoolOptions::new()
@@ -1108,7 +1133,7 @@ async fn billing_status_returns_none_before_checkout() {
     assert_eq!(v["subscription_status"], "none");
     assert!(v["stripe_customer_id"].is_null());
 
-    std::env::remove_var("GOVAI_API_KEYS");
+    env.remove_var("GOVAI_API_KEYS");
 }
 
 #[tokio::test]
@@ -1118,10 +1143,10 @@ async fn billing_report_usage_is_idempotent_without_stripe_item() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
-    ensure_dev_api_key_tenant_map();
-    std::env::set_var("GOVAI_API_KEYS", "key_tenant_b");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    ensure_dev_api_key_tenant_map(&mut env);
+    env.set_var("GOVAI_API_KEYS", "key_tenant_b");
     seed_empty_tenant_ledger("tenant-b");
 
     let pool = PgPoolOptions::new()
@@ -1169,7 +1194,7 @@ async fn billing_report_usage_is_idempotent_without_stripe_item() {
     assert_eq!(b2["idempotent_hit"], true);
     assert_eq!(b1["report_id"], b2["report_id"]);
 
-    std::env::remove_var("GOVAI_API_KEYS");
+    env.remove_var("GOVAI_API_KEYS");
 }
 
 #[tokio::test]
@@ -1179,11 +1204,11 @@ async fn billing_enforcement_blocks_evidence_when_subscription_inactive() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
-    ensure_dev_api_key_tenant_map();
-    std::env::set_var("GOVAI_API_KEYS", "key_tenant_a");
-    std::env::set_var("GOVAI_BILLING_ENFORCEMENT", "on");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    ensure_dev_api_key_tenant_map(&mut env);
+    env.set_var("GOVAI_API_KEYS", "key_tenant_a");
+    env.set_var("GOVAI_BILLING_ENFORCEMENT", "on");
     seed_empty_tenant_ledger("tenant-a");
 
     let pool = PgPoolOptions::new()
@@ -1216,8 +1241,8 @@ async fn billing_enforcement_blocks_evidence_when_subscription_inactive() {
     let v: Value = serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(v["error"]["code"], "BILLING_INACTIVE");
 
-    std::env::remove_var("GOVAI_API_KEYS");
-    std::env::remove_var("GOVAI_BILLING_ENFORCEMENT");
+    env.remove_var("GOVAI_API_KEYS");
+    env.remove_var("GOVAI_BILLING_ENFORCEMENT");
 }
 
 #[tokio::test]
@@ -1227,11 +1252,11 @@ async fn billing_enforcement_allows_evidence_when_subscription_active() {
         return;
     };
 
-    let _g = env_lock().lock().await;
-    let _env = TestEnv::new();
-    ensure_dev_api_key_tenant_map();
-    std::env::set_var("GOVAI_API_KEYS", "key_tenant_b");
-    std::env::set_var("GOVAI_BILLING_ENFORCEMENT", "on");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    ensure_dev_api_key_tenant_map(&mut env);
+    env.set_var("GOVAI_API_KEYS", "key_tenant_b");
+    env.set_var("GOVAI_BILLING_ENFORCEMENT", "on");
     seed_empty_tenant_ledger("tenant-b");
 
     let pool = PgPoolOptions::new()
@@ -1274,6 +1299,6 @@ async fn billing_enforcement_allows_evidence_when_subscription_active() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 
-    std::env::remove_var("GOVAI_API_KEYS");
-    std::env::remove_var("GOVAI_BILLING_ENFORCEMENT");
+    env.remove_var("GOVAI_API_KEYS");
+    env.remove_var("GOVAI_BILLING_ENFORCEMENT");
 }
