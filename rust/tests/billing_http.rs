@@ -22,8 +22,17 @@ use aigov_audit::project;
 use aigov_audit::schema::EvidenceEvent;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use std::sync::OnceLock;
 
 const TEST_DEFAULT_API_KEY: &str = "key_default";
+
+/// Integration tests run concurrently; env vars + current dir are process-global.
+/// Use a non-poisoning async lock and hold it for the full duration of any test
+/// that mutates env/CWD (this entire file does).
+fn env_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
 
 /// Same key→tenant mapping contract as `tenant_isolation_http` tests (init once per process).
 fn ensure_dev_api_key_tenant_map() {
@@ -41,13 +50,19 @@ fn ensure_dev_api_key_tenant_map() {
 /// Test env guard: isolates ledger storage + auth env vars per-test.
 struct TestEnv {
     _ledger_dir: tempfile::TempDir,
+    original_cwd: std::path::PathBuf,
 }
 
 impl TestEnv {
     fn new() -> Self {
+        let original_cwd = std::env::current_dir().expect("getcwd");
         let dir = tempfile::tempdir().expect("tempdir");
+        std::env::set_current_dir(dir.path()).expect("chdir temp");
         std::env::set_var("GOVAI_LEDGER_DIR", dir.path());
-        Self { _ledger_dir: dir }
+        Self {
+            _ledger_dir: dir,
+            original_cwd,
+        }
     }
 }
 
@@ -60,6 +75,7 @@ impl Drop for TestEnv {
         std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
         std::env::remove_var("GOVAI_STRIPE_SECRET_KEY");
         std::env::remove_var("AIGOV_TEST_APPEND_FAIL");
+        let _ = std::env::set_current_dir(&self.original_cwd);
     }
 }
 
@@ -194,6 +210,7 @@ async fn canonical_evidence_billing_http() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     ensure_dev_api_key_tenant_map();
     seed_empty_tenant_ledger("default");
@@ -354,6 +371,7 @@ async fn append_failure_does_not_increment_billing_counter() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     ensure_dev_api_key_tenant_map();
     seed_empty_tenant_ledger("default");
@@ -415,6 +433,7 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     ensure_dev_api_key_tenant_map();
     seed_empty_tenant_ledger("default");
@@ -508,6 +527,7 @@ async fn ingest_policy_violation_includes_code_and_message() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     ensure_dev_api_key_tenant_map();
     seed_empty_tenant_ledger("default");
@@ -570,6 +590,7 @@ async fn allowed_ingest_emits_policy_decision_record() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     ensure_dev_api_key_tenant_map();
     seed_empty_tenant_ledger("default");
@@ -621,6 +642,7 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     seed_empty_tenant_ledger("default");
 
@@ -737,6 +759,7 @@ async fn stripe_webhook_secret_missing_returns_503() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     seed_empty_tenant_ledger("default");
     std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
@@ -772,6 +795,7 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     seed_empty_tenant_ledger("default");
     std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
@@ -871,6 +895,7 @@ async fn billing_checkout_session_missing_stripe_secret_returns_503() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     ensure_dev_api_key_tenant_map();
     seed_empty_tenant_ledger("default");
@@ -921,6 +946,7 @@ async fn billing_checkout_session_requires_api_key_when_keys_configured() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     ensure_dev_api_key_tenant_map();
     seed_empty_tenant_ledger("default");
@@ -968,6 +994,7 @@ async fn stripe_webhook_subscription_updated_upserts_tenant_billing_account() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     seed_empty_tenant_ledger("default");
     std::env::set_var("GOVAI_STRIPE_WEBHOOK_SECRET", "plain_webhook_secret_sub_upd");
@@ -1046,6 +1073,7 @@ async fn billing_status_returns_none_before_checkout() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     ensure_dev_api_key_tenant_map();
     std::env::set_var("GOVAI_API_KEYS", "key_github_actions");
@@ -1090,6 +1118,7 @@ async fn billing_report_usage_is_idempotent_without_stripe_item() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     ensure_dev_api_key_tenant_map();
     std::env::set_var("GOVAI_API_KEYS", "key_tenant_b");
@@ -1150,6 +1179,7 @@ async fn billing_enforcement_blocks_evidence_when_subscription_inactive() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     ensure_dev_api_key_tenant_map();
     std::env::set_var("GOVAI_API_KEYS", "key_tenant_a");
@@ -1197,6 +1227,7 @@ async fn billing_enforcement_allows_evidence_when_subscription_active() {
         return;
     };
 
+    let _g = env_lock().lock().await;
     let _env = TestEnv::new();
     ensure_dev_api_key_tenant_map();
     std::env::set_var("GOVAI_API_KEYS", "key_tenant_b");
