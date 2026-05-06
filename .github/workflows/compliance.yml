@@ -20,6 +20,8 @@ jobs:
     outputs:
       reports_changed: ${{ steps.diff.outputs.reports_changed }}
       needs_report: ${{ steps.diff.outputs.needs_report }}
+      core_changed: ${{ steps.diff.outputs.core_changed }}
+      run_artifact_gate: ${{ steps.diff.outputs.run_artifact_gate }}
       base_sha: ${{ steps.diff.outputs.base_sha }}
       head_sha: ${{ steps.diff.outputs.head_sha }}
     steps:
@@ -89,8 +91,17 @@ jobs:
 
           if [ -n "${CORE_CHANGED}" ]; then
             echo "needs_report=true" >> "${GITHUB_OUTPUT}"
+            echo "core_changed=true" >> "${GITHUB_OUTPUT}"
           else
             echo "needs_report=false" >> "${GITHUB_OUTPUT}"
+            echo "core_changed=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+          # Single semantic: run local artifact-bound gate when core changed OR a report changed.
+          if [ -n "${CORE_CHANGED}" ] || [ -n "${REPORTS_CHANGED}" ]; then
+            echo "run_artifact_gate=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "run_artifact_gate=false" >> "${GITHUB_OUTPUT}"
           fi
 
   reports_present:
@@ -276,6 +287,13 @@ jobs:
     env:
       AUDIT_URL: http://127.0.0.1:8088
       GOVAI_AUDIT_BASE_URL: http://127.0.0.1:8088
+      # Single switch for the artifact-bound gate path (local audit + evidence pack + hosted gate).
+      # Keep this condition in sync everywhere: ledger prep, service startup, pack generation, local check, hosted run_id.
+      RUN_ARTIFACT_GATE: ${{ needs.changes.outputs.run_artifact_gate }}
+      # CI must never rely on implicit working-directory ledger defaults.
+      # Use an explicit writable ledger dir under RUNNER_TEMP and keep it consistent
+      # across: audit service startup, local evidence submit, and local govai check.
+      GOVAI_LEDGER_DIR: ${{ runner.temp }}/govai-ledger
       GOVAI_API_KEY: ci-test-api-key
       GOVAI_PROJECT: github-actions
       AIGOV_COMPLIANCE_FETCH_STRICT: "1"
@@ -308,6 +326,14 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Prepare local ledger dir (writable)
+        if: ${{ env.RUN_ARTIFACT_GATE == 'true' }}
+        run: |
+          set -euo pipefail
+          test -n "${GOVAI_LEDGER_DIR:-}" || { echo "::error::GOVAI_LEDGER_DIR is missing"; exit 1; }
+          mkdir -p "${GOVAI_LEDGER_DIR}"
+          ls -ld "${GOVAI_LEDGER_DIR}"
+
       - name: Install python package
         working-directory: python
         run: |
@@ -319,7 +345,7 @@ jobs:
 
       # Embedded migrations via GOVAI_AUTO_MIGRATE are authoritative for audit service startup; this sqlx step is non-authoritative and kept only for debug visibility.
       - name: Apply audit DB migrations (sqlx)
-        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
+        if: ${{ env.RUN_ARTIFACT_GATE == 'true' }}
         run: |
           set -euo pipefail
           test -n "${DATABASE_URL:-}" || { echo "DATABASE_URL is missing"; exit 1; }
@@ -334,7 +360,7 @@ jobs:
           sqlx migrate run --source "${GITHUB_WORKSPACE}/.aigov_ci_migrations" --database-url "${DATABASE_URL}"
 
       - name: Build local audit server (aigov_audit)
-        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
+        if: ${{ env.RUN_ARTIFACT_GATE == 'true' }}
         working-directory: rust
         run: |
           set -euo pipefail
@@ -343,9 +369,8 @@ jobs:
 
       - id: start_audit_service
         name: Start audit service
-        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
+        if: ${{ env.RUN_ARTIFACT_GATE == 'true' }}
         env:
-          GOVAI_LEDGER_DIR: ${{ runner.temp }}/govai-ledger
           GOVAI_API_KEYS_JSON: '{"ci-test-api-key":"github-actions"}'
           AIGOV_ENVIRONMENT: dev
           AIGOV_POLICY_DIR: ${{ github.workspace }}/rust
@@ -353,6 +378,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${DATABASE_URL:-}" || { echo "DATABASE_URL is missing"; exit 1; }
+          test -n "${GOVAI_LEDGER_DIR:-}" || { echo "::error::GOVAI_LEDGER_DIR is missing"; exit 1; }
           mkdir -p "${GOVAI_LEDGER_DIR}"
 
           pwd
@@ -410,7 +436,7 @@ jobs:
         run: |
           set -euo pipefail
           OUT="${GITHUB_OUTPUT:?}"
-          if [ "${REPORTS_CHANGED_FLAG}" != "true" ]; then
+          if [ "${RUN_ARTIFACT_GATE}" != "true" ]; then
             echo "run_id=" >> "${OUT}"
             exit 0
           fi
@@ -447,7 +473,7 @@ jobs:
           echo "run_id=${only}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "${OUT}"
 
       - name: Enforce emitted run_id when docs/reports changed
-        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' }}
+        if: ${{ env.RUN_ARTIFACT_GATE == 'true' }}
         run: |
           set -euo pipefail
           rid="${{ steps.govai_emit_run_id.outputs.run_id }}"
@@ -457,7 +483,7 @@ jobs:
           fi
 
       - name: Build evidence packs
-        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' && steps.start_audit_service.outputs.ready == 'true' }}
+        if: ${{ env.RUN_ARTIFACT_GATE == 'true' && steps.start_audit_service.outputs.ready == 'true' }}
         env:
           EMITTED_RUN_ID: ${{ steps.govai_emit_run_id.outputs.run_id }}
         run: |
@@ -649,7 +675,7 @@ jobs:
           done
 
       - name: GovAI check (local audit, must be VALID)
-        if: ${{ env.REPORTS_CHANGED_FLAG == 'true' && steps.govai_emit_run_id.outputs.run_id != '' && steps.govai_emit_run_id.outputs.run_id != 'normalized-api-errors' }}
+        if: ${{ env.RUN_ARTIFACT_GATE == 'true' && steps.govai_emit_run_id.outputs.run_id != '' && steps.govai_emit_run_id.outputs.run_id != 'normalized-api-errors' }}
         working-directory: python
         env:
           GOVAI_AUDIT_BASE_URL: http://127.0.0.1:8088
@@ -664,6 +690,7 @@ jobs:
           fi
           echo "GovAI check RUN_ID=${RUN_ID}"
           echo "GovAI base URL=${GOVAI_AUDIT_BASE_URL}"
+          echo "GovAI ledger dir (server): ${GOVAI_LEDGER_DIR:-"(unset)"}"
           . .venv/bin/activate
           set +e
           out="$(govai check --run-id "${RUN_ID}" 2>&1)"
