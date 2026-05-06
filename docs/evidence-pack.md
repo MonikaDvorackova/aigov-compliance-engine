@@ -12,13 +12,17 @@ This writes exactly two files:
 Run:
 
 ```bash
-govai evidence-pack init --out evidence_pack --run-id "00000000-0000-0000-0000-000000000123"
+RUN_ID="example-id"
+govai evidence-pack init --out evidence_pack --run-id "$RUN_ID"
 ```
 
-Or, to use the deterministic default run id (good for a copy/paste demo path):
+Note:
+
+- The command **fails if the output directory already exists**.
+- Use `--force` to allow overwrite.
 
 ```bash
-govai evidence-pack init --out evidence_pack
+govai evidence-pack init --out evidence_pack --run-id "$RUN_ID" --force
 ```
 
 ## Submit it
@@ -33,7 +37,7 @@ export GOVAI_API_KEY="YOUR_API_KEY"
 Then submit:
 
 ```bash
-govai submit-evidence-pack --path evidence_pack --run-id "00000000-0000-0000-0000-000000000123"
+govai submit-evidence-pack --path evidence_pack --run-id "$RUN_ID"
 ```
 
 ## Verify it (production gate)
@@ -41,12 +45,12 @@ govai submit-evidence-pack --path evidence_pack --run-id "00000000-0000-0000-000
 This checks digest continuity (`evidence_digest_manifest.json` vs hosted `/bundle-hash`) and then requires the run to be `VALID`.
 
 ```bash
-govai verify-evidence-pack --require-export --path evidence_pack --run-id "00000000-0000-0000-0000-000000000123"
+govai verify-evidence-pack --require-export --path evidence_pack --run-id "$RUN_ID"
 ```
 
 ## Run `govai check`
 
 ```bash
-govai check --run-id "00000000-0000-0000-0000-000000000123"
+govai check --run-id "$RUN_ID"
 ```
 

@@ -119,6 +119,20 @@ def _resolve_run_id(ns: argparse.Namespace) -> str | None:
     return None
 
 
+def _default_run_id_for_evidence_pack_init() -> str:
+    """
+    Evidence-pack init run_id rules:
+    - explicit --run-id wins
+    - in CI (GitHub Actions): deterministic `ci-<GITHUB_RUN_ID>-<GITHUB_RUN_ATTEMPT or 1>`
+    - otherwise: uuid4 (unique)
+    """
+    gh_run_id = (os.environ.get("GITHUB_RUN_ID") or "").strip()
+    if gh_run_id:
+        gh_attempt = (os.environ.get("GITHUB_RUN_ATTEMPT") or "").strip() or "1"
+        return f"ci-{gh_run_id}-{gh_attempt}"
+    return str(uuid.uuid4())
+
+
 def _print_json(data: Any, *, compact: bool) -> None:
     if compact:
         print(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
@@ -1198,7 +1212,7 @@ def build_parser() -> GovaiArgumentParser:
     s_ep_init.add_argument(
         "--run-id",
         default=None,
-        help="Run id to embed in the evidence pack (default: deterministic demo UUID).",
+        help="Run id to embed in the evidence pack (default: CI-deterministic in GitHub Actions; otherwise uuid4).",
     )
     s_ep_init.add_argument(
         "--out",
@@ -1206,6 +1220,11 @@ def build_parser() -> GovaiArgumentParser:
         type=Path,
         default=Path("evidence_pack"),
         help="Output directory for the evidence pack files (default: evidence_pack).",
+    )
+    s_ep_init.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow overwriting an existing output directory.",
     )
 
     sub.add_parser(
@@ -1678,10 +1697,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cli_exit.EX_OK
 
     if args.cmd == "evidence-pack" and getattr(args, "evidence_pack_cmd", None) == "init":
-        # Deterministic by default so customers have a valid copy/paste path.
-        # For production usage, callers should always provide a unique run_id.
-        run_id = (str(getattr(args, "run_id", "") or "").strip()) or "00000000-0000-0000-0000-000000000000"
-        out_dir = Path(getattr(args, "evidence_pack_out_dir"))
+        raw_run_id = getattr(args, "run_id", None)
+        run_id = raw_run_id if isinstance(raw_run_id, str) and raw_run_id != "" else _default_run_id_for_evidence_pack_init()
+        out_dir = Path(getattr(args, "evidence_pack_out_dir")).expanduser().resolve()
+        force = bool(getattr(args, "force", False))
+
+        if out_dir.exists():
+            if not out_dir.is_dir():
+                print(
+                    f"error: output path exists and is not a directory: {out_dir}",
+                    file=sys.stderr,
+                )
+                return cli_exit.EX_USAGE
+            if not force:
+                print(
+                    "error: output directory already exists; refusing to overwrite.\n"
+                    f"  path: {out_dir}\n"
+                    "  hint: choose a new --out directory, or pass --force to overwrite",
+                    file=sys.stderr,
+                )
+                return cli_exit.EX_USAGE
+
         try:
             res = generate_demo_golden_path(run_id=run_id, output_dir=out_dir)
         except ValueError as exc:
