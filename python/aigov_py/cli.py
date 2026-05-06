@@ -5,6 +5,7 @@ import json
 import os
 import shlex
 import sys
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,6 +46,7 @@ from aigov_py import report as report_mod
 from aigov_py.types import AssessmentCreate, GovaiError
 from aigov_py import verify as verify_mod
 from aigov_py.demo_golden_path import generate_demo_golden_path
+from aigov_py.portable_evidence_digest import portable_evidence_digest_v1
 
 # Thin wrappers — same package
 
@@ -513,6 +515,162 @@ def doctor(audit_url: str, api_key: str | None, *, timeout_sec: float) -> int:
     if ok_status and ok_ready:
         return cli_exit.EX_OK
     return cli_exit.EX_ERR
+
+
+def _preflight_print_section(title: str) -> None:
+    print(title)
+
+
+def _preflight_print_fail(reason: str) -> None:
+    msg = (reason or "").strip() or "preflight failed"
+    print(msg)
+    print("FAIL")
+
+
+def _preflight_print_pass() -> None:
+    print("PASS")
+
+
+def _preflight_local_evidence_pack_check(*, timeout_sec: float) -> tuple[bool, str | None]:
+    _ = timeout_sec  # reserved for future local timeouts
+    run_id = str(uuid.uuid4())
+    try:
+        with tempfile.TemporaryDirectory(prefix="govai_preflight_") as td:
+            out_dir = Path(td)
+            generate_demo_golden_path(run_id=run_id, output_dir=out_dir)
+
+            files = sorted(p.name for p in out_dir.iterdir() if p.is_file())
+            expected = sorted([f"{run_id}.json", "evidence_digest_manifest.json"])
+            if files != expected:
+                return (
+                    False,
+                    f"unexpected evidence pack files (expected {expected}, got {files})",
+                )
+
+            bundle, _bundle_path = eag.load_bundle(run_id, out_dir)
+            manifest = eag.load_manifest(out_dir)
+
+            if str(bundle.get("run_id") or "") != str(manifest.get("run_id") or ""):
+                return False, "bundle/manifest run_id mismatch"
+
+            events = bundle.get("events")
+            if not isinstance(events, list):
+                return False, "bundle.events must be a list"
+
+            required_types = {
+                "data_registered",
+                "model_trained",
+                "evaluation_reported",
+                "human_approved",
+                "model_promoted",
+            }
+            present_types: set[str] = set()
+            for e in events:
+                if isinstance(e, dict):
+                    et = e.get("event_type")
+                    if isinstance(et, str) and et.strip():
+                        present_types.add(et.strip())
+            missing = sorted(required_types.difference(present_types))
+            if missing:
+                return False, f"missing required event_type(s): {', '.join(missing)}"
+
+            expected_digest = str(manifest.get("events_content_sha256") or "").strip().lower()
+            if len(expected_digest) != 64:
+                return False, "manifest events_content_sha256 missing or invalid"
+
+            got_digest = portable_evidence_digest_v1(run_id, events).lower()
+            if got_digest != expected_digest:
+                return False, "evidence digest mismatch (recompute != manifest)"
+    except Exception:
+        # Keep production gate output actionable and minimal (no stack traces).
+        return False, "failed to generate/validate evidence pack"
+
+    return True, None
+
+
+def _preflight_audit_ready_check(*, audit_url: str, api_key: str | None, timeout_sec: float) -> tuple[bool, str | None]:
+    try:
+        client = GovAIClient(audit_url.rstrip("/"), api_key=api_key, default_project=os.environ.get("GOVAI_PROJECT"))
+        _ = client.request_json("GET", "/ready", timeout=timeout_sec, raise_on_body_ok_false=False)
+    except Exception:
+        return False, "audit service not ready (/ready != 200)"
+    return True, None
+
+
+def _preflight_submit_capability_check(
+    *,
+    audit_url: str,
+    api_key: str | None,
+    timeout_sec: float,
+) -> tuple[bool, str | None]:
+    run_id = str(uuid.uuid4())
+    try:
+        with tempfile.TemporaryDirectory(prefix="govai_preflight_submit_") as td:
+            out_dir = Path(td)
+            generate_demo_golden_path(run_id=run_id, output_dir=out_dir)
+            bundle, _bundle_path = eag.load_bundle(run_id, out_dir)
+            manifest = eag.load_manifest(out_dir)
+
+            client = GovAIClient(audit_url.rstrip("/"), api_key=api_key, default_project=os.environ.get("GOVAI_PROJECT"))
+            # Submit all evidence for this new run_id.
+            eag.submit_evidence_bundle_events(client, bundle=bundle, progress=None)
+
+            expected = str(manifest.get("events_content_sha256") or "").strip().lower()
+            got_body = eag.bundle_hash_digest(client, run_id)
+            got = str(got_body.get("events_content_sha256") or "").strip().lower()
+            if expected and got and expected != got:
+                return False, "submitted evidence digest mismatch (/bundle-hash != manifest)"
+    except Exception:
+        return False, "submit capability check failed (cannot submit evidence or verify digest)"
+
+    return True, None
+
+
+def preflight(
+    *,
+    submit: bool,
+    timeout_sec: float,
+    audit_url_env: str | None,
+    audit_url: str,
+    api_key: str | None,
+) -> int:
+    ok_all = True
+
+    _preflight_print_section("Preflight: local evidence pack")
+    ok_local, reason_local = _preflight_local_evidence_pack_check(timeout_sec=timeout_sec)
+    if ok_local:
+        _preflight_print_pass()
+    else:
+        ok_all = False
+        _preflight_print_fail(reason_local or "local evidence pack check failed")
+
+    if audit_url_env:
+        _preflight_print_section("Preflight: audit service")
+        ok_audit, reason_audit = _preflight_audit_ready_check(
+            audit_url=audit_url,
+            api_key=api_key,
+            timeout_sec=timeout_sec,
+        )
+        if ok_audit:
+            _preflight_print_pass()
+        else:
+            ok_all = False
+            _preflight_print_fail(reason_audit or "audit service check failed")
+
+        if submit:
+            _preflight_print_section("Preflight: submit capability")
+            ok_submit, reason_submit = _preflight_submit_capability_check(
+                audit_url=audit_url,
+                api_key=api_key,
+                timeout_sec=timeout_sec,
+            )
+            if ok_submit:
+                _preflight_print_pass()
+            else:
+                ok_all = False
+                _preflight_print_fail(reason_submit or "submit capability check failed")
+
+    return cli_exit.EX_OK if ok_all else cli_exit.EX_ERR
 
 
 def _exit_for_compliance_verdict(verdict: str) -> int:
@@ -1227,9 +1385,20 @@ def build_parser() -> GovaiArgumentParser:
         help="Allow overwriting an existing output directory.",
     )
 
+    s_preflight = sub.add_parser(
+        "preflight",
+        help="Production pre-deployment gate: validate local evidence-pack + (optional) audit readiness + submission capability.",
+    )
+    s_preflight.add_argument(
+        "--with-submit",
+        action="store_true",
+        dest="with_submit",
+        help="Also submit a fresh golden-path evidence pack to the audit service and verify /bundle-hash digest.",
+    )
+
     sub.add_parser(
         "doctor",
-        help="Preflight checks: validate audit base URL + auth and ensure /ready is HTTP 200 (DB+migrations+ledger).",
+        help="(Deprecated) Alias for `govai preflight`.",
     )
 
     s_verify = sub.add_parser("verify", help="Verify local docs/* artifacts and governance hash chain.")
@@ -1740,8 +1909,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     project = _resolve_project(args)
     repro = _format_repro_command(args_list)
 
+    if args.cmd == "preflight":
+        audit_env = _require_env_nonempty("GOVAI_AUDIT_BASE_URL")
+        return preflight(
+            submit=bool(getattr(args, "with_submit", False)),
+            timeout_sec=float(getattr(args, "timeout", 30.0)),
+            audit_url_env=audit_env,
+            audit_url=audit_url,
+            api_key=api_key,
+        )
+
     if args.cmd == "doctor":
-        return doctor(audit_url, api_key, timeout_sec=float(getattr(args, "timeout", 30.0)))
+        print("warning: 'govai doctor' is deprecated, use 'govai preflight'", file=sys.stderr, flush=True)
+        audit_env = _require_env_nonempty("GOVAI_AUDIT_BASE_URL")
+        return preflight(
+            submit=bool(getattr(args, "with_submit", False)),
+            timeout_sec=float(getattr(args, "timeout", 30.0)),
+            audit_url_env=audit_env,
+            audit_url=audit_url,
+            api_key=api_key,
+        )
 
     if args.cmd == "verify":
         summary_verdict = "ERROR"
