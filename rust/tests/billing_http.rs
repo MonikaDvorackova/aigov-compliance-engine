@@ -931,16 +931,20 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
 
     let r4 = app
         .oneshot(
-            Request::builder()
+            authz_default(Request::builder())
                 .method("GET")
                 .uri("/billing/usage-summary?unit=evidence_event")
+                .header("x-govai-project", "default")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(r4.status(), StatusCode::OK);
-    let v: Value = serde_json::from_slice(&r4.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let (s4, v, raw4) = read_json_response(r4).await;
+    if s4 != StatusCode::OK {
+        eprintln!("billing_usage_summary {s4}: {raw4}");
+    }
+    assert_eq!(s4, StatusCode::OK);
     assert!(v["usage_count"].as_i64().unwrap() >= 1);
     assert!(!v["traces"].as_array().unwrap().is_empty());
 
