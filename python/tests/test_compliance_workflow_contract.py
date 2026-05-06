@@ -56,11 +56,11 @@ def test_evidence_pack_prebuilds_audit_binary_before_ready_loop() -> None:
     assert "rust/target/debug/aigov_audit" in block
 
 
-def test_hosted_compliance_gate_uses_pypi_pin_not_editable_install() -> None:
+def test_hosted_compliance_gate_uses_workspace_install_not_pypi_pin() -> None:
     lines = _compliance_yml().splitlines()
     block = _workflow_job_declaration_body(lines, "govai-compliance-gate")
-    assert 'aigov-py==0.2.1' in block
-    assert "pip install -e ./python" not in block
+    assert "pip install -e ./python" in block
+    assert 'aigov-py==0.2.1' not in block
 
 
 def test_hosted_gate_artifact_bound_submit_and_verify() -> None:

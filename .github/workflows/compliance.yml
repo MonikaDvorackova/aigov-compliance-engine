@@ -10,6 +10,9 @@ on:
     branches: [main, staging]
   workflow_dispatch:
 
+env:
+  AIGOV_POLICY_STRICT: "true"
+
 jobs:
   changes:
     name: changes
@@ -184,6 +187,22 @@ jobs:
     runs-on: ubuntu-latest
     needs: [report_content]
     if: ${{ always() }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
     steps:
       - name: Branch protection prelude (upstream must succeed)
         run: |
@@ -214,6 +233,12 @@ jobs:
         run: |
           set -euo pipefail
           make gate
+
+      - name: Run Rust tests
+        run: |
+          set -euo pipefail
+          cd rust
+          cargo test --all --locked
 
       - name: Python tests (pytest)
         working-directory: python
@@ -805,12 +830,12 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install GovAI CLI (pinned release — same as public action users)
+      - name: Install GovAI CLI (workspace — truthful parity with CI)
         if: steps.gate_pre.outputs.run_hosted == 'true'
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install "aigov-py==0.2.1"
+          python -m pip install -e ./python
           govai --help >/dev/null
 
       - name: Artifact-bound hosted gate (submit CI bundle + digest continuity + VALID)
