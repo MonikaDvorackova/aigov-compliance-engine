@@ -387,6 +387,9 @@ jobs:
           echo "AIGOV_ENVIRONMENT=${AIGOV_ENVIRONMENT}"
           echo "AIGOV_BIND=${AIGOV_BIND}"
           ls -ld "$GOVAI_LEDGER_DIR"
+          echo "---- effective env (filtered) ----"
+          env | sort | grep -E '^(GOVAI|AIGOV|DATABASE_URL|PORT)=' || true
+          echo "----------------------------------"
 
           AUDIT_BIN="${GITHUB_WORKSPACE}/rust/target/debug/aigov_audit"
           if [ ! -x "${AUDIT_BIN}" ]; then
@@ -425,6 +428,40 @@ jobs:
           fi
 
           echo "ready=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Ledger append smoke (post-/ready, same tenant)
+        if: ${{ env.RUN_ARTIFACT_GATE == 'true' && steps.start_audit_service.outputs.ready == 'true' }}
+        run: |
+          set -euo pipefail
+          echo "Smoke check: append under tenant github-actions"
+          echo "Expected tenant ledger path: ${GOVAI_LEDGER_DIR%/}/audit_log__github-actions.jsonl"
+          rid="ci_ledger_smoke_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          eid="evt_ledger_smoke_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          body="$(printf '{"event_id":"%s","event_type":"data_registered","ts_utc":"%s","actor":"ci","system":"github_actions","run_id":"%s","payload":{"ai_system_id":"sys1","dataset_id":"ds1","dataset":"d","dataset_fingerprint":"fp","dataset_governance_id":"g1","dataset_governance_commitment":"c","dataset_version":"v1","source":"s","intended_use":"u","limitations":"l","quality_summary":"q","governance_status":"gs"}}' "${eid}" "${ts}" "${rid}")"
+          echo "GOVAI_LEDGER_DIR=$GOVAI_LEDGER_DIR"
+          ls -ld "$GOVAI_LEDGER_DIR"
+          status="$(
+            curl -sS -o /tmp/govai_ledger_smoke_body -w "%{http_code}" \
+              -X POST "${AUDIT_URL%/}/evidence" \
+              -H "Authorization: Bearer ci-test-api-key" \
+              -H "X-GovAI-Project: github-actions" \
+              -H "Content-Type: application/json" \
+              --data "${body}" \
+              || echo "000"
+          )"
+          echo "Smoke response (HTTP ${status}):"
+          cat /tmp/govai_ledger_smoke_body || true
+          if [ "${status}" != "200" ] && [ "${status}" != "409" ]; then
+            echo "::error::Ledger smoke append failed (expected 200 or idempotent 409)."
+            echo "Audit service log:"
+            cat "${GITHUB_WORKSPACE}/.aigov_ci_audit.log" || true
+            echo "Ledger dir listing:"
+            ls -la "${GOVAI_LEDGER_DIR}" || true
+            exit 1
+          fi
+          ls -la "${GOVAI_LEDGER_DIR}" | head -n 200 || true
+          echo "Ledger smoke append OK"
 
       - id: govai_emit_run_id
         if: success()

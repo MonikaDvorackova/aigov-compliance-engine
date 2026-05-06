@@ -1610,6 +1610,82 @@ async fn readiness_check(State(audit): State<AuditState>) -> (StatusCode, Json<s
         );
     }
 
+    // `/ready` must reflect the same effective ledger semantics as `/evidence` append:
+    // - tenant-scoped ledger filename resolution (`project::resolve_ledger_path`)
+    // - parent directory existence (CI/container paths may exist at startup but differ at runtime)
+    // - ability to create/open the tenant-scoped ledger file itself
+    //
+    // This intentionally does *not* rely on request headers (readiness is unauthenticated),
+    // but it uses the same tenant-scoping naming scheme to catch path issues early.
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let probe_tenant = format!("ready-probe-{pid}-{nanos}");
+    // Test-only override to deterministically exercise failure paths without changing production semantics.
+    #[cfg(test)]
+    let probe_path_override = std::env::var("GOVAI_TEST_READY_TENANT_PROBE_PATH")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    #[cfg(not(test))]
+    let probe_path_override: Option<String> = None;
+
+    let probe_path = probe_path_override
+        .unwrap_or_else(|| project::resolve_ledger_path(audit.ledger_base, &probe_tenant));
+    if let Some(parent) = std::path::Path::new(&probe_path).parent() {
+        if !parent.as_os_str().is_empty() && parent != std::path::Path::new(".") {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                let msg = format!(
+                    "Failed to create tenant ledger parent directory {}: {e}",
+                    parent.display()
+                );
+                eprintln!("readiness: tenant_ledger_probe_parent failed: {msg}");
+                return api_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "NOT_READY",
+                    "ledger not ready",
+                    "Ensure GOVAI_LEDGER_DIR exists and is writable (or cwd writable in dev).",
+                    Some(json!({ "checks": { "tenant_ledger_probe": false }, "details": { "probe_path": probe_path, "raw": msg } })),
+                );
+            }
+        }
+    }
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&probe_path)
+    {
+        Ok(mut f) => {
+            // Minimal write to ensure the filesystem path is usable for append semantics.
+            if let Err(e) = std::io::Write::write_all(&mut f, b"") {
+                let msg = format!("tenant ledger probe write failed: {e}");
+                eprintln!("readiness: tenant_ledger_probe_write failed: {msg}");
+                return api_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "NOT_READY",
+                    "ledger not ready",
+                    "Ensure GOVAI_LEDGER_DIR exists and is writable (or cwd writable in dev).",
+                    Some(json!({ "checks": { "tenant_ledger_probe": false }, "details": { "probe_path": probe_path, "raw": msg } })),
+                );
+            }
+            // Best-effort cleanup; ignore failure.
+            let _ = std::fs::remove_file(&probe_path);
+        }
+        Err(e) => {
+            let msg = format!("tenant ledger probe open failed: {e}");
+            eprintln!("readiness: tenant_ledger_probe_open failed: {msg}");
+            return api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NOT_READY",
+                "ledger not ready",
+                "Ensure GOVAI_LEDGER_DIR exists and is writable (or cwd writable in dev).",
+                Some(json!({ "checks": { "tenant_ledger_probe": false }, "details": { "probe_path": probe_path, "raw": msg } })),
+            );
+        }
+    }
+
     (
         StatusCode::OK,
         Json(json!({
@@ -1618,7 +1694,8 @@ async fn readiness_check(State(audit): State<AuditState>) -> (StatusCode, Json<s
             "checks": {
                 "database_ping": true,
                 "migrations_complete": true,
-                "ledger_writable": true
+                "ledger_writable": true,
+                "tenant_ledger_probe": true
             }
         })),
     )
