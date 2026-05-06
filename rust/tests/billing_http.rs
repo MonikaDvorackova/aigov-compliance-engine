@@ -108,6 +108,14 @@ fn database_url() -> Option<String> {
         .ok()
 }
 
+fn force_explicit_db_url_for_process_helpers(env: &mut TestEnv, url: &str) {
+    // Some code paths (especially app wiring) may read DB URLs from env. In CI, we must not
+    // allow falling back to libpq defaults (e.g. OS user "runner") due to missing/partial vars.
+    env.set_var("TEST_DATABASE_URL", url);
+    env.set_var("GOVAI_DATABASE_URL", url);
+    env.set_var("DATABASE_URL", url);
+}
+
 fn seed_empty_tenant_ledger(tenant_id: &str) {
     let ledger_path = project::resolve_ledger_path("audit_log.jsonl", tenant_id);
     if let Some(parent) = std::path::Path::new(&ledger_path).parent() {
@@ -231,6 +239,7 @@ async fn canonical_evidence_billing_http() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
     env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
@@ -392,6 +401,7 @@ async fn append_failure_does_not_increment_billing_counter() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
     env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
@@ -454,6 +464,7 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
     env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
@@ -548,6 +559,7 @@ async fn ingest_policy_violation_includes_code_and_message() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
     env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
@@ -611,6 +623,7 @@ async fn allowed_ingest_emits_policy_decision_record() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
     env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
@@ -663,6 +676,7 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     seed_empty_tenant_ledger("default");
 
     let pool = PgPoolOptions::new()
@@ -780,6 +794,7 @@ async fn stripe_webhook_secret_missing_returns_503() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     seed_empty_tenant_ledger("default");
     env.remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
 
@@ -816,6 +831,7 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     seed_empty_tenant_ledger("default");
     env.remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
     env.set_var("GOVAI_STRIPE_WEBHOOK_SECRET", "plain_webhook_secret");
@@ -916,6 +932,7 @@ async fn billing_checkout_session_missing_stripe_secret_returns_503() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
 
@@ -967,6 +984,7 @@ async fn billing_checkout_session_requires_api_key_when_keys_configured() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
 
@@ -1015,6 +1033,7 @@ async fn stripe_webhook_subscription_updated_upserts_tenant_billing_account() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     seed_empty_tenant_ledger("default");
     env.set_var("GOVAI_STRIPE_WEBHOOK_SECRET", "plain_webhook_secret_sub_upd");
 
@@ -1094,6 +1113,7 @@ async fn billing_status_returns_none_before_checkout() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     ensure_dev_api_key_tenant_map(&mut env);
     env.set_var("GOVAI_API_KEYS", "key_github_actions");
     seed_empty_tenant_ledger("github-actions");
@@ -1139,6 +1159,7 @@ async fn billing_report_usage_is_idempotent_without_stripe_item() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     ensure_dev_api_key_tenant_map(&mut env);
     env.set_var("GOVAI_API_KEYS", "key_tenant_b");
     seed_empty_tenant_ledger("tenant-b");
@@ -1200,6 +1221,7 @@ async fn billing_enforcement_blocks_evidence_when_subscription_inactive() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     ensure_dev_api_key_tenant_map(&mut env);
     env.set_var("GOVAI_API_KEYS", "key_tenant_a");
     env.set_var("GOVAI_BILLING_ENFORCEMENT", "on");
@@ -1248,6 +1270,7 @@ async fn billing_enforcement_allows_evidence_when_subscription_active() {
 
     let _g = env_lock().await;
     let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     ensure_dev_api_key_tenant_map(&mut env);
     env.set_var("GOVAI_API_KEYS", "key_tenant_b");
     env.set_var("GOVAI_BILLING_ENFORCEMENT", "on");
