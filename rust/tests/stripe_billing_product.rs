@@ -144,10 +144,13 @@ async fn stripe_billing_product_suite() {
         )
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    // We *do* have a Stripe customer id (set by `process_subscription_object`), but we intentionally
+    // do not configure `GOVAI_STRIPE_SECRET_KEY` in this test. That is an operator misconfiguration,
+    // so the contract is 503 (not 404).
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
     let v: Value =
         serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    assert_eq!(v["error"]["code"], "BILLING_ACCOUNT_NOT_FOUND");
+    assert_eq!(v["error"]["code"], "STRIPE_NOT_CONFIGURED");
 
     // --- report usage idempotency (Stripe call fails without real key; row still dedupes) ---
     sqlx::query(
