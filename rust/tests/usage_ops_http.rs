@@ -18,6 +18,34 @@ use aigov_audit::project;
 mod test_support;
 use test_support::env_lock;
 
+struct TestEnv {
+    original_cwd: std::path::PathBuf,
+    original_ledger_dir: Option<std::ffi::OsString>,
+}
+
+impl TestEnv {
+    fn new(dir: &std::path::Path) -> Self {
+        let original_cwd = std::env::current_dir().expect("getcwd");
+        let original_ledger_dir = std::env::var_os("GOVAI_LEDGER_DIR");
+        std::env::set_current_dir(dir).expect("chdir");
+        std::env::set_var("GOVAI_LEDGER_DIR", dir);
+        Self {
+            original_cwd,
+            original_ledger_dir,
+        }
+    }
+}
+
+impl Drop for TestEnv {
+    fn drop(&mut self) {
+        match self.original_ledger_dir.take() {
+            Some(v) => std::env::set_var("GOVAI_LEDGER_DIR", v),
+            None => std::env::remove_var("GOVAI_LEDGER_DIR"),
+        }
+        let _ = std::env::set_current_dir(&self.original_cwd);
+    }
+}
+
 fn database_url() -> Option<String> {
     std::env::var("TEST_DATABASE_URL")
         .or_else(|_| std::env::var("DATABASE_URL"))
@@ -122,7 +150,7 @@ async fn usage_increments_on_evidence_and_check_and_is_tenant_scoped() {
 
     let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _env = TestEnv::new(dir.path());
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
