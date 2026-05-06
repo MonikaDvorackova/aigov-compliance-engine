@@ -863,7 +863,9 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
 
     let app = test_router(pool).await;
 
-    let body = br#"{"id":"evt_stripe_integration_1","type":"invoice.paid"}"#;
+    // Minimal valid Stripe event shape for `invoice.paid`:
+    // handler requires `data.object` to exist; invoice processing reads `customer` if present.
+    let body = br#"{"id":"evt_stripe_integration_1","type":"invoice.paid","data":{"object":{"customer":"cus_test_1"}}}"#;
     let t = chrono::Utc::now().timestamp();
     let signed = format!("{}.{t}", String::from_utf8_lossy(body));
     let mut mac = Hmac::<Sha256>::new_from_slice(b"plain_webhook_secret").expect("hmac key");
