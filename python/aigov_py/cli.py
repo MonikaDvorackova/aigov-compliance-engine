@@ -620,6 +620,26 @@ def _preflight_submit_capability_check(
             got = str(got_body.get("events_content_sha256") or "").strip().lower()
             if expected and got and expected != got:
                 return False, "submitted evidence digest mismatch (/bundle-hash != manifest)"
+    except GovAIHTTPError as exc:
+        payload = getattr(exc, "payload", None)
+        code: str | None = None
+        if isinstance(payload, dict):
+            err = payload.get("error")
+            if isinstance(err, dict) and isinstance(err.get("code"), str):
+                code = (err.get("code") or "").strip().upper() or None
+            if code is None and isinstance(payload.get("code"), str):
+                code = (payload.get("code") or "").strip().upper() or None
+        if code:
+            return False, f"submit capability check failed ({code})"
+        return False, "submit capability check failed (HTTP error)"
+    except GovAIAPIError as exc:
+        payload = getattr(exc, "payload", None)
+        code: str | None = None
+        if isinstance(payload, dict) and isinstance(payload.get("code"), str):
+            code = (payload.get("code") or "").strip().upper() or None
+        if code:
+            return False, f"submit capability check failed ({code})"
+        return False, "submit capability check failed (API error)"
     except Exception:
         return False, "submit capability check failed (cannot submit evidence or verify digest)"
 
@@ -628,9 +648,9 @@ def _preflight_submit_capability_check(
 
 def preflight(
     *,
+    local_only: bool,
     submit: bool,
     timeout_sec: float,
-    audit_url_env: str | None,
     audit_url: str,
     api_key: str | None,
 ) -> int:
@@ -644,31 +664,33 @@ def preflight(
         ok_all = False
         _preflight_print_fail(reason_local or "local evidence pack check failed")
 
-    if audit_url_env:
-        _preflight_print_section("Preflight: audit service")
-        ok_audit, reason_audit = _preflight_audit_ready_check(
+    if local_only:
+        return cli_exit.EX_OK if ok_all else cli_exit.EX_ERR
+
+    _preflight_print_section("Preflight: audit service")
+    ok_audit, reason_audit = _preflight_audit_ready_check(
+        audit_url=audit_url,
+        api_key=api_key,
+        timeout_sec=timeout_sec,
+    )
+    if ok_audit:
+        _preflight_print_pass()
+    else:
+        ok_all = False
+        _preflight_print_fail(reason_audit or "audit service check failed")
+
+    if submit:
+        _preflight_print_section("Preflight: submit capability")
+        ok_submit, reason_submit = _preflight_submit_capability_check(
             audit_url=audit_url,
             api_key=api_key,
             timeout_sec=timeout_sec,
         )
-        if ok_audit:
+        if ok_submit:
             _preflight_print_pass()
         else:
             ok_all = False
-            _preflight_print_fail(reason_audit or "audit service check failed")
-
-        if submit:
-            _preflight_print_section("Preflight: submit capability")
-            ok_submit, reason_submit = _preflight_submit_capability_check(
-                audit_url=audit_url,
-                api_key=api_key,
-                timeout_sec=timeout_sec,
-            )
-            if ok_submit:
-                _preflight_print_pass()
-            else:
-                ok_all = False
-                _preflight_print_fail(reason_submit or "submit capability check failed")
+            _preflight_print_fail(reason_submit or "submit capability check failed")
 
     return cli_exit.EX_OK if ok_all else cli_exit.EX_ERR
 
@@ -1387,18 +1409,38 @@ def build_parser() -> GovaiArgumentParser:
 
     s_preflight = sub.add_parser(
         "preflight",
-        help="Production pre-deployment gate: validate local evidence-pack + (optional) audit readiness + submission capability.",
+        help="Fail-safe pre-deployment gate: validate local evidence-pack + audit service readiness; optional submit+digest verification.",
     )
-    s_preflight.add_argument(
+    g_preflight_mode = s_preflight.add_mutually_exclusive_group(required=False)
+    g_preflight_mode.add_argument(
+        "--local-only",
+        action="store_true",
+        dest="local_only",
+        help="Run only local evidence-pack validation (does not require GOVAI_AUDIT_BASE_URL).",
+    )
+    g_preflight_mode.add_argument(
         "--with-submit",
         action="store_true",
         dest="with_submit",
-        help="Also submit a fresh golden-path evidence pack to the audit service and verify /bundle-hash digest.",
+        help="Also submit a fresh evidence pack to the audit service and verify /bundle-hash digest (requires GOVAI_API_KEY).",
     )
 
-    sub.add_parser(
+    s_doctor = sub.add_parser(
         "doctor",
         help="(Deprecated) Alias for `govai preflight`.",
+    )
+    g_doctor_mode = s_doctor.add_mutually_exclusive_group(required=False)
+    g_doctor_mode.add_argument(
+        "--local-only",
+        action="store_true",
+        dest="local_only",
+        help="Run only local evidence-pack validation (does not require GOVAI_AUDIT_BASE_URL).",
+    )
+    g_doctor_mode.add_argument(
+        "--with-submit",
+        action="store_true",
+        dest="with_submit",
+        help="Also submit a fresh evidence pack to the audit service and verify /bundle-hash digest (requires GOVAI_API_KEY).",
     )
 
     s_verify = sub.add_parser("verify", help="Verify local docs/* artifacts and governance hash chain.")
@@ -1910,22 +1952,44 @@ def main(argv: Sequence[str] | None = None) -> int:
     repro = _format_repro_command(args_list)
 
     if args.cmd == "preflight":
+        local_only = bool(getattr(args, "local_only", False))
+        with_submit = bool(getattr(args, "with_submit", False))
         audit_env = _require_env_nonempty("GOVAI_AUDIT_BASE_URL")
+        api_env = _require_env_nonempty("GOVAI_API_KEY")
+        if not local_only and not audit_env:
+            print("error: govai preflight requires GOVAI_AUDIT_BASE_URL (unless --local-only)", file=sys.stderr)
+            print('hint: export GOVAI_AUDIT_BASE_URL="https://YOUR_GOVAI_AUDIT_SERVICE"', file=sys.stderr)
+            return cli_exit.EX_USAGE
+        if with_submit and not api_env:
+            print("error: govai preflight --with-submit requires GOVAI_API_KEY", file=sys.stderr)
+            print('hint: export GOVAI_API_KEY="YOUR_API_KEY"', file=sys.stderr)
+            return cli_exit.EX_USAGE
         return preflight(
-            submit=bool(getattr(args, "with_submit", False)),
+            local_only=local_only,
+            submit=with_submit,
             timeout_sec=float(getattr(args, "timeout", 30.0)),
-            audit_url_env=audit_env,
             audit_url=audit_url,
             api_key=api_key,
         )
 
     if args.cmd == "doctor":
         print("warning: 'govai doctor' is deprecated, use 'govai preflight'", file=sys.stderr, flush=True)
+        local_only = bool(getattr(args, "local_only", False))
+        with_submit = bool(getattr(args, "with_submit", False))
         audit_env = _require_env_nonempty("GOVAI_AUDIT_BASE_URL")
+        api_env = _require_env_nonempty("GOVAI_API_KEY")
+        if not local_only and not audit_env:
+            print("error: govai preflight requires GOVAI_AUDIT_BASE_URL (unless --local-only)", file=sys.stderr)
+            print('hint: export GOVAI_AUDIT_BASE_URL="https://YOUR_GOVAI_AUDIT_SERVICE"', file=sys.stderr)
+            return cli_exit.EX_USAGE
+        if with_submit and not api_env:
+            print("error: govai preflight --with-submit requires GOVAI_API_KEY", file=sys.stderr)
+            print('hint: export GOVAI_API_KEY="YOUR_API_KEY"', file=sys.stderr)
+            return cli_exit.EX_USAGE
         return preflight(
-            submit=bool(getattr(args, "with_submit", False)),
+            local_only=local_only,
+            submit=with_submit,
             timeout_sec=float(getattr(args, "timeout", 30.0)),
-            audit_url_env=audit_env,
             audit_url=audit_url,
             api_key=api_key,
         )
