@@ -6,7 +6,6 @@ use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
-use std::sync::Mutex;
 use tower::ServiceExt;
 
 use aigov_audit::govai_api;
@@ -14,7 +13,8 @@ use aigov_audit::govai_environment::{policy_version_for, GovaiEnvironment};
 use aigov_audit::metering::{GovaiPlan, MeteringConfig};
 use aigov_audit::policy_config::ResolvedPolicyConfig;
 
-static CWD_LOCK: Mutex<()> = Mutex::new(());
+mod test_support;
+use test_support::env_lock;
 
 fn database_url() -> Option<String> {
     std::env::var("TEST_DATABASE_URL")
@@ -50,7 +50,7 @@ async fn ready_ok_when_db_migrated_and_ledger_writable() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let cwd = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(cwd.path()).expect("chdir");
     let ledger = cwd.path().join("govai-led");
@@ -96,27 +96,22 @@ async fn ready_ok_when_db_migrated_and_ledger_writable() {
 #[cfg(unix)]
 #[tokio::test]
 async fn ready_not_ready_when_tenant_ledger_probe_path_cannot_be_created() {
-    use std::os::unix::fs::PermissionsExt;
-
     let Some(url) = database_url() else {
         eprintln!("skip ready_http: set DATABASE_URL or TEST_DATABASE_URL");
         return;
     };
 
-    let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = env_lock().await;
     let cwd = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(cwd.path()).expect("chdir");
     let ledger = cwd.path().join("govai-led");
     std::fs::create_dir_all(&ledger).unwrap();
 
-    // Create a read-only directory and force /ready's tenant probe to target a nested path under it.
-    // This must fail at `create_dir_all(parent)` or `open()` even if GOVAI_LEDGER_DIR itself is writable.
-    let ro = cwd.path().join("ro");
-    std::fs::create_dir_all(&ro).unwrap();
-    let mut perms = std::fs::metadata(&ro).unwrap().permissions();
-    perms.set_mode(0o500); // r-x
-    std::fs::set_permissions(&ro, perms).unwrap();
-    let bad_probe_path = ro.join("subdir").join("audit_log__probe.jsonl");
+    // Deterministic failure on Linux CI: make the probe path's parent a *regular file*.
+    // Then `create_dir_all(parent)` must fail with "Not a directory".
+    let not_a_dir = cwd.path().join("not_a_dir");
+    std::fs::write(&not_a_dir, "not a directory").unwrap();
+    let bad_probe_path = not_a_dir.join("audit_log__probe.jsonl");
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -164,9 +159,4 @@ async fn ready_not_ready_when_tenant_ledger_probe_path_cannot_be_created() {
             .and_then(Value::as_str),
         Some(bad_probe_path.to_string_lossy().as_ref())
     );
-
-    // Restore permissions so the temp dir can be cleaned up.
-    let mut perms = std::fs::metadata(&ro).unwrap().permissions();
-    perms.set_mode(0o700);
-    let _ = std::fs::set_permissions(&ro, perms);
 }

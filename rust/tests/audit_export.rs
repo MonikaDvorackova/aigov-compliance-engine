@@ -13,12 +13,8 @@ use aigov_audit::{audit_store, schema::EvidenceEvent};
 use serde_json::Value;
 use tempfile::TempDir;
 use tower::ServiceExt;
-use std::sync::{Mutex, OnceLock};
-
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
-}
+mod test_support;
+use test_support::env_lock;
 
 fn ensure_test_tenant_map() {
     if audit_api_key::api_key_tenant_map_is_initialized() {
@@ -80,7 +76,7 @@ async fn export_json(app: axum::Router, api_key: &str, run_id: &str) -> (StatusC
 
 #[tokio::test]
 async fn export_contains_decision_and_evidence_requirements() {
-    let _g = env_lock();
+    let _g = env_lock().await;
     ensure_test_tenant_map();
     let tmp = TempDir::new().unwrap();
     std::env::set_var("GOVAI_LEDGER_DIR", tmp.path().to_string_lossy().to_string());
@@ -163,7 +159,7 @@ async fn export_contains_decision_and_evidence_requirements() {
 
 #[tokio::test]
 async fn export_includes_discovery_generated_requirements() {
-    let _g = env_lock();
+    let _g = env_lock().await;
     ensure_test_tenant_map();
     let tmp = TempDir::new().unwrap();
     std::env::set_var("GOVAI_LEDGER_DIR", tmp.path().to_string_lossy().to_string());
@@ -205,7 +201,7 @@ async fn export_includes_discovery_generated_requirements() {
 
 #[tokio::test]
 async fn export_respects_tenant_isolation() {
-    let _g = env_lock();
+    let _g = env_lock().await;
     ensure_test_tenant_map();
     let tmp = TempDir::new().unwrap();
     std::env::set_var("GOVAI_LEDGER_DIR", tmp.path().to_string_lossy().to_string());
@@ -264,7 +260,7 @@ async fn export_respects_tenant_isolation() {
 
 #[tokio::test]
 async fn export_includes_discovery_findings_with_deterministic_ordering() {
-    let _g = env_lock();
+    let _g = env_lock().await;
     ensure_test_tenant_map();
     let tmp = TempDir::new().unwrap();
     std::env::set_var("GOVAI_LEDGER_DIR", tmp.path().to_string_lossy().to_string());

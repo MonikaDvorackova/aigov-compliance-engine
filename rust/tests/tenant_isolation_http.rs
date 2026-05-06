@@ -11,7 +11,6 @@ use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
-use std::sync::Mutex;
 use tower::ServiceExt;
 
 use aigov_audit::api_usage::ApiUsageState;
@@ -22,7 +21,36 @@ use aigov_audit::metering::{GovaiPlan, MeteringConfig};
 use aigov_audit::policy_config::ResolvedPolicyConfig;
 use aigov_audit::project;
 
-static CWD_LOCK: Mutex<()> = Mutex::new(());
+mod test_support;
+use test_support::env_lock;
+
+struct TestEnv {
+    original_cwd: std::path::PathBuf,
+    original_ledger_dir: Option<std::ffi::OsString>,
+}
+
+impl TestEnv {
+    fn new(dir: &std::path::Path) -> Self {
+        let original_cwd = std::env::current_dir().expect("getcwd");
+        let original_ledger_dir = std::env::var_os("GOVAI_LEDGER_DIR");
+        std::env::set_current_dir(dir).expect("chdir");
+        std::env::set_var("GOVAI_LEDGER_DIR", dir);
+        Self {
+            original_cwd,
+            original_ledger_dir,
+        }
+    }
+}
+
+impl Drop for TestEnv {
+    fn drop(&mut self) {
+        match self.original_ledger_dir.take() {
+            Some(v) => std::env::set_var("GOVAI_LEDGER_DIR", v),
+            None => std::env::remove_var("GOVAI_LEDGER_DIR"),
+        }
+        let _ = std::env::set_current_dir(&self.original_cwd);
+    }
+}
 
 fn ensure_test_tenant_map() {
     if audit_api_key::api_key_tenant_map_is_initialized() {
@@ -116,9 +144,9 @@ async fn first_evidence_event_creates_tenant_ledger_from_api_key_mapping() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _env = TestEnv::new(dir.path());
 
     ensure_test_tenant_map();
 
@@ -178,9 +206,9 @@ async fn ingest_writes_only_to_tenant_ledger_and_reads_are_isolated() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _env = TestEnv::new(dir.path());
 
     ensure_test_tenant_map();
 
@@ -301,9 +329,9 @@ async fn missing_tenant_context_is_rejected_in_prod() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _env = TestEnv::new(dir.path());
 
     ensure_test_tenant_map();
 
@@ -346,9 +374,9 @@ async fn spoofing_x_govai_project_has_no_effect_on_ledger_tenant() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _env = TestEnv::new(dir.path());
 
     ensure_test_tenant_map();
 
@@ -410,9 +438,9 @@ async fn dev_defaults_to_default_tenant_ledger_without_headers() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _env = TestEnv::new(dir.path());
     seed_empty_tenant_ledger("default");
 
     ensure_test_tenant_map();
@@ -465,9 +493,9 @@ async fn verify_log_missing_tenant_context_is_rejected_in_prod() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _env = TestEnv::new(dir.path());
 
     ensure_test_tenant_map();
 

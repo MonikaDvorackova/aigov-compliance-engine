@@ -7,7 +7,6 @@ use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
-use std::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -17,7 +16,8 @@ use aigov_audit::govai_environment::{policy_version_for, GovaiEnvironment};
 use aigov_audit::metering::{self, GovaiPlan, MeteringConfig};
 use aigov_audit::policy_config::ResolvedPolicyConfig;
 
-static CWD_LOCK: Mutex<()> = Mutex::new(());
+mod test_support;
+use test_support::env_lock;
 
 fn database_url() -> Option<String> {
     std::env::var("TEST_DATABASE_URL")
@@ -45,7 +45,7 @@ async fn usage_metering_off_includes_normalized_plan_limits_remaining() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
 
@@ -97,7 +97,7 @@ async fn usage_metering_on_includes_normalized_and_legacy_metering_limits() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
+    let _g = env_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     std::env::set_current_dir(dir.path()).expect("chdir");
 

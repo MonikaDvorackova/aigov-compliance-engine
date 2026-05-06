@@ -1633,14 +1633,29 @@ async fn readiness_check(State(audit): State<AuditState>) -> (StatusCode, Json<s
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let probe_tenant = format!("ready-probe-{pid}-{nanos}");
-    // Test-only override to deterministically exercise failure paths without changing production semantics.
-    #[cfg(test)]
-    let probe_path_override = std::env::var("GOVAI_TEST_READY_TENANT_PROBE_PATH")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    #[cfg(not(test))]
-    let probe_path_override: Option<String> = None;
+    // Test override to deterministically exercise failure paths without changing production semantics.
+    //
+    // NOTE: `#[cfg(test)]` does NOT apply to integration tests (`rust/tests/*.rs`) because the
+    // library is compiled as a normal dependency. Use `debug_assertions` so `cargo test` builds
+    // (including CI) can enable the override, while release builds cannot.
+    let probe_path_override: Option<String> = {
+        #[cfg(any(test, debug_assertions))]
+        {
+            // Never allow the override outside of dev semantics.
+            if matches!(audit.deployment_env, GovaiEnvironment::Dev) {
+                std::env::var("GOVAI_TEST_READY_TENANT_PROBE_PATH")
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            } else {
+                None
+            }
+        }
+        #[cfg(not(any(test, debug_assertions)))]
+        {
+            None
+        }
+    };
 
     let probe_path = probe_path_override
         .unwrap_or_else(|| project::resolve_ledger_path(audit.ledger_base, &probe_tenant));
