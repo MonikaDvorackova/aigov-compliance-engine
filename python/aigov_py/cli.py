@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
+from urllib.parse import urlparse
 
 from govai import (
     GovAIAPIError,
@@ -25,13 +28,25 @@ from aigov_py import cli_exit
 from aigov_py import evidence_artifact_gate as eag
 from aigov_py.client import GovaiClient
 from aigov_py.discovery_scan import scan_repo
+from aigov_py.discovery_policy_mapping import (
+    coerce_discovery_signals,
+    discovery_required_evidence_additions,
+    triggered_by_discovery,
+)
+from aigov_py.policy_loader import load_policy_module, policy_identity, required_evidence_from_policy
+from aigov_py import export_bundle as export_bundle_mod
+from aigov_py import fetch_bundle_from_govai
 from aigov_py.prototype_domain import (
     approved_human_event_id_for_run,
     assessment_id_for_run,
     model_version_id_for_run,
     risk_id_for_run,
 )
+from aigov_py import report as report_mod
 from aigov_py.types import AssessmentCreate, GovaiError
+from aigov_py import verify as verify_mod
+from aigov_py.demo_golden_path import generate_demo_golden_path
+from aigov_py.portable_evidence_digest import portable_evidence_digest_v1
 
 # Thin wrappers — same package
 
@@ -42,10 +57,6 @@ class GovaiArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         self.print_usage(sys.stderr)
         self.exit(cli_exit.EX_USAGE, f"{self.prog}: error: {message}\n")
-from aigov_py import export_bundle as export_bundle_mod
-from aigov_py import fetch_bundle_from_govai
-from aigov_py import report as report_mod
-from aigov_py import verify as verify_mod
 
 
 def _system_exit_code(se: SystemExit) -> int:
@@ -83,6 +94,15 @@ def _api_key(ns: argparse.Namespace) -> str | None:
     )
 
 
+def _is_localhost_url(url: str) -> bool:
+    try:
+        u = urlparse(str(url or ""))
+    except Exception:
+        return False
+    host = (u.hostname or "").strip().lower()
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
 def _resolve_project(ns: argparse.Namespace) -> str | None:
     flag = (getattr(ns, "project", None) or "").strip()
     if flag:
@@ -99,6 +119,20 @@ def _resolve_run_id(ns: argparse.Namespace) -> str | None:
     if env:
         return env
     return None
+
+
+def _default_run_id_for_evidence_pack_init() -> str:
+    """
+    Evidence-pack init run_id rules:
+    - explicit --run-id wins
+    - in CI (GitHub Actions): deterministic `ci-<GITHUB_RUN_ID>-<GITHUB_RUN_ATTEMPT or 1>`
+    - otherwise: uuid4 (unique)
+    """
+    gh_run_id = (os.environ.get("GITHUB_RUN_ID") or "").strip()
+    if gh_run_id:
+        gh_attempt = (os.environ.get("GITHUB_RUN_ATTEMPT") or "").strip() or "1"
+        return f"ci-{gh_run_id}-{gh_attempt}"
+    return str(uuid.uuid4())
 
 
 def _print_json(data: Any, *, compact: bool) -> None:
@@ -266,6 +300,401 @@ def _print_check_failure_details(summary: dict[str, Any], verdict: str) -> None:
                 print(f"  - {reason}")
 
 
+def _print_doctor_block(title: str) -> None:
+    print("")
+    print(f"== {title} ==")
+
+
+def _stable_reason_codes(codes: Sequence[str] | None) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for c in (codes or []):
+        s = str(c or "").strip()
+        if not s:
+            continue
+        if s not in seen:
+            seen.add(s)
+            out.append(s)
+    out.sort()
+    return out
+
+
+def _category_for_verdict(verdict: str) -> str:
+    v = (verdict or "").strip().upper()
+    if v == "ERROR":
+        return "integration"
+    if v == "BLOCKED":
+        return "evidence"
+    if v == "INVALID":
+        return "policy"
+    return "policy" if v == "VALID" else "integration"
+
+
+def _shell_argv_join(argv: Sequence[str]) -> str:
+    """Join argv for copy/paste into bash; preserve ``$GOVAI_API_KEY`` without quoting so it expands."""
+    parts: list[str] = []
+    for a in argv:
+        s = str(a)
+        if s == "$GOVAI_API_KEY":
+            parts.append(s)
+        else:
+            parts.append(shlex.quote(s))
+    return " ".join(parts)
+
+
+def _format_repro_command(args_list: Sequence[str]) -> str:
+    # Exact CLI reproduction command, with stable shell quoting.
+    return _shell_argv_join(["govai", *[str(a) for a in args_list]])
+
+
+def _print_final_summary(
+    *,
+    verdict: str,
+    reason_codes: Sequence[str] | None,
+    next_action: str,
+    repro: str,
+    triggered_by: Sequence[str] | None = None,
+) -> None:
+    # Preserve "verdict-first" stdout contract even when CI merges stdout+stderr.
+    # If stdout is buffered and stderr is unbuffered, stderr can appear first unless we flush.
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
+    v = (verdict or "").strip().upper() or "ERROR"
+    if v not in {"VALID", "INVALID", "BLOCKED", "ERROR"}:
+        v = "ERROR"
+    cat = _category_for_verdict(v)
+    rc = _stable_reason_codes(reason_codes)
+
+    # Printed to stderr so existing stdout remains machine-friendly (verdict-only / JSON-only).
+    print("--------------------------------", file=sys.stderr, flush=True)
+    print("GovAI summary", file=sys.stderr, flush=True)
+    print(f"verdict: {v}", file=sys.stderr, flush=True)
+    print(f"category: {cat}", file=sys.stderr, flush=True)
+    print(f"reason_codes: {rc}", file=sys.stderr, flush=True)
+    if triggered_by:
+        tb = [str(x).strip() for x in triggered_by if str(x or "").strip()]
+        # Stable ordering
+        seen: set[str] = set()
+        stable: list[str] = []
+        for x in tb:
+            if x not in seen:
+                seen.add(x)
+                stable.append(x)
+        stable.sort()
+        print(f"triggered_by: {stable}", file=sys.stderr, flush=True)
+    print(f"next_action: {next_action}", file=sys.stderr, flush=True)
+    print(f"repro: {repro}", file=sys.stderr, flush=True)
+    print("--------------------------------", file=sys.stderr, flush=True)
+
+
+def _summary_for_compliance(
+    *,
+    verdict: str,
+    summary: dict[str, Any] | None,
+    repro: str,
+) -> tuple[str, list[str], str, str]:
+    v = (verdict or "").strip().upper() or "ERROR"
+    codes: list[str] = []
+
+    if v == "VALID":
+        next_action = "Proceed with deployment."
+    elif v == "BLOCKED":
+        missing = _missing_evidence_from_summary(summary or {})
+        blocked_reasons = (summary or {}).get("blocked_reasons")
+        if missing or (isinstance(blocked_reasons, list) and blocked_reasons):
+            codes.append("EVIDENCE_MISSING")
+        next_action = _next_action_for_missing_evidence(missing) or (
+            "Submit the missing evidence for this run_id, then rerun the same command."
+        )
+    elif v == "INVALID":
+        codes.append("EVALUATION_FAILED")
+        next_action = "Fix the failed evaluation evidence and rerun the same command."
+    else:
+        codes.append("INTEGRATION_ERROR")
+        next_action = "Check GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY (and network), then rerun the same command."
+
+    return v if v in {"VALID", "INVALID", "BLOCKED"} else "ERROR", _stable_reason_codes(codes), next_action, repro
+
+
+_MISSING_EVIDENCE_HINTS: dict[str, str] = {
+    "evaluation_reported": "Run your evaluation pipeline and submit evidence.",
+    "human_approved": "Record human approval event.",
+    "usage_policy_defined": "Define and submit usage policy.",
+    "privacy_review_completed": "Complete privacy review and submit evidence.",
+    "model_registered": "Register the model version and submit evidence.",
+    "risk_recorded": "Record risk assessment evidence for this run.",
+    "risk_reviewed": "Complete risk review and submit evidence.",
+    "risk_mitigated": "Record mitigation evidence and submit it for this run.",
+}
+
+
+def _next_action_for_missing_evidence(missing: Sequence[str] | None) -> str | None:
+    """
+    Deterministic mapping: missing evidence → actionable hint.
+    Picks the first hint by stable (sorted) missing code order.
+    """
+    codes = sorted({str(x).strip() for x in (missing or []) if str(x or "").strip()})
+    for c in codes:
+        hint = _MISSING_EVIDENCE_HINTS.get(c)
+        if hint:
+            return hint
+    return None
+
+
+def _triggered_by_from_repo_scan(path: Path) -> list[str]:
+    """
+    Best-effort local enhancement for summary output:
+    - deterministic scan_repo()
+    - deterministic mapping to discovery-required evidence
+    - returns *signal labels* (not evidence codes)
+
+    This does not change Rust semantics and is not submitted to the backend.
+    """
+    scan = scan_repo(path, include_history=False)
+    signals = coerce_discovery_signals(scan)
+    # Ensure we only claim triggers that correspond to a rule we enforce in mapping.
+    _ = discovery_required_evidence_additions(signals)
+    return triggered_by_discovery(signals)
+
+
+def doctor(audit_url: str, api_key: str | None, *, timeout_sec: float) -> int:
+    """
+    ``govai doctor``: read-only preflight checks for first-time success.
+
+    This does not change compliance semantics; it probes `/status` and `/ready` for operator clarity.
+    """
+    client = GovAIClient(audit_url.rstrip("/"), api_key=api_key, default_project=os.environ.get("GOVAI_PROJECT"))
+
+    _print_doctor_block("GovAI doctor")
+    print(f"govai_cli_version: {__version__}")
+    print(f"audit_base_url: {audit_url}")
+    print(f"api_key_configured: {bool(api_key)}")
+
+    _print_doctor_block("HTTP checks")
+    ok_status = False
+    ok_ready = False
+
+    try:
+        status = client.request_json("GET", "/status", timeout=timeout_sec, raise_on_body_ok_false=False)
+        if isinstance(status, dict) and status.get("ok") is not False:
+            ok_status = True
+            pv = status.get("policy_version")
+            env = status.get("environment")
+            print(f"PASS /status (policy_version={pv} environment={env})")
+        else:
+            msg = status.get("message") if isinstance(status, dict) else None
+            print(f"FAIL /status ({msg or 'unexpected response'})")
+    except GovAIHTTPError as e:
+        hint = ""
+        if e.status_code == 404:
+            hint = " hint: base_url must point to audit service origin (no /api or /v1 prefix)."
+        print(f"FAIL /status ({e}).{hint}")
+    except Exception as e:
+        print(f"FAIL /status ({e})")
+
+    try:
+        ready = client.request_json("GET", "/ready", timeout=timeout_sec, raise_on_body_ok_false=False)
+        if isinstance(ready, dict) and ready.get("ok") is not False:
+            ok_ready = True
+            print("PASS /ready (operational readiness: DB + migrations + ledger)")
+        else:
+            msg = ready.get("message") if isinstance(ready, dict) else None
+            print(f"FAIL /ready ({msg or 'not ready'})")
+    except GovAIHTTPError as e:
+        if e.status_code in (401, 403):
+            print(
+                "FAIL /ready (auth rejected). hint: verify GOVAI_API_KEY and server GOVAI_API_KEYS_JSON / GOVAI_API_KEYS configuration."
+            )
+        else:
+            print(f"FAIL /ready ({e})")
+    except Exception as e:
+        print(f"FAIL /ready ({e})")
+
+    if ok_status and ok_ready:
+        return cli_exit.EX_OK
+    return cli_exit.EX_ERR
+
+
+def _preflight_print_section(title: str) -> None:
+    print(title)
+
+
+def _preflight_print_fail(reason: str) -> None:
+    msg = (reason or "").strip() or "preflight failed"
+    print(msg)
+    print("FAIL")
+
+
+def _preflight_print_pass() -> None:
+    print("PASS")
+
+
+def _preflight_local_evidence_pack_check(*, timeout_sec: float) -> tuple[bool, str | None]:
+    _ = timeout_sec  # reserved for future local timeouts
+    run_id = str(uuid.uuid4())
+    try:
+        with tempfile.TemporaryDirectory(prefix="govai_preflight_") as td:
+            out_dir = Path(td)
+            generate_demo_golden_path(run_id=run_id, output_dir=out_dir)
+
+            files = sorted(p.name for p in out_dir.iterdir() if p.is_file())
+            expected = sorted([f"{run_id}.json", "evidence_digest_manifest.json"])
+            if files != expected:
+                return (
+                    False,
+                    f"unexpected evidence pack files (expected {expected}, got {files})",
+                )
+
+            bundle, _bundle_path = eag.load_bundle(run_id, out_dir)
+            manifest = eag.load_manifest(out_dir)
+
+            if str(bundle.get("run_id") or "") != str(manifest.get("run_id") or ""):
+                return False, "bundle/manifest run_id mismatch"
+
+            events = bundle.get("events")
+            if not isinstance(events, list):
+                return False, "bundle.events must be a list"
+
+            required_types = {
+                "data_registered",
+                "model_trained",
+                "evaluation_reported",
+                "human_approved",
+                "model_promoted",
+            }
+            present_types: set[str] = set()
+            for e in events:
+                if isinstance(e, dict):
+                    et = e.get("event_type")
+                    if isinstance(et, str) and et.strip():
+                        present_types.add(et.strip())
+            missing = sorted(required_types.difference(present_types))
+            if missing:
+                return False, f"missing required event_type(s): {', '.join(missing)}"
+
+            expected_digest = str(manifest.get("events_content_sha256") or "").strip().lower()
+            if len(expected_digest) != 64:
+                return False, "manifest events_content_sha256 missing or invalid"
+
+            got_digest = portable_evidence_digest_v1(run_id, events).lower()
+            if got_digest != expected_digest:
+                return False, "evidence digest mismatch (recompute != manifest)"
+    except Exception:
+        # Keep production gate output actionable and minimal (no stack traces).
+        return False, "failed to generate/validate evidence pack"
+
+    return True, None
+
+
+def _preflight_audit_ready_check(*, audit_url: str, api_key: str | None, timeout_sec: float) -> tuple[bool, str | None]:
+    try:
+        client = GovAIClient(audit_url.rstrip("/"), api_key=api_key, default_project=os.environ.get("GOVAI_PROJECT"))
+        _ = client.request_json("GET", "/ready", timeout=timeout_sec, raise_on_body_ok_false=False)
+    except Exception:
+        return False, "audit service not ready (/ready != 200)"
+    return True, None
+
+
+def _preflight_submit_capability_check(
+    *,
+    audit_url: str,
+    api_key: str | None,
+    timeout_sec: float,
+) -> tuple[bool, str | None]:
+    run_id = str(uuid.uuid4())
+    try:
+        with tempfile.TemporaryDirectory(prefix="govai_preflight_submit_") as td:
+            out_dir = Path(td)
+            generate_demo_golden_path(run_id=run_id, output_dir=out_dir)
+            bundle, _bundle_path = eag.load_bundle(run_id, out_dir)
+            manifest = eag.load_manifest(out_dir)
+
+            client = GovAIClient(audit_url.rstrip("/"), api_key=api_key, default_project=os.environ.get("GOVAI_PROJECT"))
+            # Submit all evidence for this new run_id.
+            eag.submit_evidence_bundle_events(client, bundle=bundle, progress=None)
+
+            expected = str(manifest.get("events_content_sha256") or "").strip().lower()
+            got_body = eag.bundle_hash_digest(client, run_id)
+            got = str(got_body.get("events_content_sha256") or "").strip().lower()
+            if expected and got and expected != got:
+                return False, "submitted evidence digest mismatch (/bundle-hash != manifest)"
+    except GovAIHTTPError as exc:
+        payload = getattr(exc, "payload", None)
+        code: str | None = None
+        if isinstance(payload, dict):
+            err = payload.get("error")
+            if isinstance(err, dict) and isinstance(err.get("code"), str):
+                code = (err.get("code") or "").strip().upper() or None
+            if code is None and isinstance(payload.get("code"), str):
+                code = (payload.get("code") or "").strip().upper() or None
+        if code:
+            return False, f"submit capability check failed ({code})"
+        return False, "submit capability check failed (HTTP error)"
+    except GovAIAPIError as exc:
+        payload = getattr(exc, "payload", None)
+        code: str | None = None
+        if isinstance(payload, dict) and isinstance(payload.get("code"), str):
+            code = (payload.get("code") or "").strip().upper() or None
+        if code:
+            return False, f"submit capability check failed ({code})"
+        return False, "submit capability check failed (API error)"
+    except Exception:
+        return False, "submit capability check failed (cannot submit evidence or verify digest)"
+
+    return True, None
+
+
+def preflight(
+    *,
+    local_only: bool,
+    submit: bool,
+    timeout_sec: float,
+    audit_url: str,
+    api_key: str | None,
+) -> int:
+    ok_all = True
+
+    _preflight_print_section("Preflight: local evidence pack")
+    ok_local, reason_local = _preflight_local_evidence_pack_check(timeout_sec=timeout_sec)
+    if ok_local:
+        _preflight_print_pass()
+    else:
+        ok_all = False
+        _preflight_print_fail(reason_local or "local evidence pack check failed")
+
+    if local_only:
+        return cli_exit.EX_OK if ok_all else cli_exit.EX_ERR
+
+    _preflight_print_section("Preflight: audit service")
+    ok_audit, reason_audit = _preflight_audit_ready_check(
+        audit_url=audit_url,
+        api_key=api_key,
+        timeout_sec=timeout_sec,
+    )
+    if ok_audit:
+        _preflight_print_pass()
+    else:
+        ok_all = False
+        _preflight_print_fail(reason_audit or "audit service check failed")
+
+    if submit:
+        _preflight_print_section("Preflight: submit capability")
+        ok_submit, reason_submit = _preflight_submit_capability_check(
+            audit_url=audit_url,
+            api_key=api_key,
+            timeout_sec=timeout_sec,
+        )
+        if ok_submit:
+            _preflight_print_pass()
+        else:
+            ok_all = False
+            _preflight_print_fail(reason_submit or "submit capability check failed")
+
+    return cli_exit.EX_OK if ok_all else cli_exit.EX_ERR
+
+
 def _exit_for_compliance_verdict(verdict: str) -> int:
     if verdict == "VALID":
         return cli_exit.EX_OK
@@ -301,6 +730,9 @@ def _verify_artifact_digest_continuity(
         got_body = eag.bundle_hash_digest(client, run_id)
     except Exception as exc:
         print(f"ERROR: /bundle-hash failed: {exc}", file=sys.stderr)
+        msg = str(exc).lower()
+        if "connection refused" in msg or "failed to establish a new connection" in msg:
+            print('hint: Run local audit service (e.g. make audit_bg) before verify', file=sys.stderr)
         return cli_exit.EX_ERR
     got = str(got_body.get("events_content_sha256") or "").strip().lower()
     if got != expected:
@@ -925,6 +1357,92 @@ def build_parser() -> GovaiArgumentParser:
         help="Deterministic demo: BLOCKED → missing evidence → VALID → export audit JSON (requires GOVAI_* env vars).",
     )
 
+    s_demo_gp = sub.add_parser(
+        "demo-golden-path",
+        help="Generate deterministic CI-ready evidence artifacts (artefacts/<run_id>.json + artefacts/evidence_digest_manifest.json).",
+    )
+    s_demo_gp.add_argument(
+        "--output-dir",
+        dest="demo_output_dir",
+        type=Path,
+        default=Path("artefacts"),
+        help="Output directory for artefacts (default: artefacts).",
+    )
+    s_demo_gp.add_argument(
+        "--print-run-id",
+        action="store_true",
+        help="Print only the run_id to stdout (full instructions go to stderr).",
+    )
+    s_demo_gp.add_argument(
+        "--show-api-key",
+        action="store_true",
+        help="Include the resolved api key value in the printed verify command (default: use $GOVAI_API_KEY).",
+    )
+
+    # Customer-facing evidence pack generator (deterministic by default).
+    s_ep = sub.add_parser(
+        "evidence-pack",
+        help="Generate a minimal customer-ready evidence pack (<run_id>.json + evidence_digest_manifest.json).",
+    )
+    s_ep_sub = s_ep.add_subparsers(dest="evidence_pack_cmd", required=True, metavar="SUBCOMMAND")
+    s_ep_init = s_ep_sub.add_parser(
+        "init",
+        help="Write <run_id>.json and evidence_digest_manifest.json to an output directory (deterministic default).",
+    )
+    s_ep_init.add_argument(
+        "--run-id",
+        default=None,
+        help="Run id to embed in the evidence pack (default: CI-deterministic in GitHub Actions; otherwise uuid4).",
+    )
+    s_ep_init.add_argument(
+        "--out",
+        dest="evidence_pack_out_dir",
+        type=Path,
+        default=Path("evidence_pack"),
+        help="Output directory for the evidence pack files (default: evidence_pack).",
+    )
+    s_ep_init.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow overwriting an existing output directory.",
+    )
+
+    s_preflight = sub.add_parser(
+        "preflight",
+        help="Fail-safe pre-deployment gate: validate local evidence-pack + audit service readiness; optional submit+digest verification.",
+    )
+    g_preflight_mode = s_preflight.add_mutually_exclusive_group(required=False)
+    g_preflight_mode.add_argument(
+        "--local-only",
+        action="store_true",
+        dest="local_only",
+        help="Run only local evidence-pack validation (does not require GOVAI_AUDIT_BASE_URL).",
+    )
+    g_preflight_mode.add_argument(
+        "--with-submit",
+        action="store_true",
+        dest="with_submit",
+        help="Also submit a fresh evidence pack to the audit service and verify /bundle-hash digest (requires GOVAI_API_KEY).",
+    )
+
+    s_doctor = sub.add_parser(
+        "doctor",
+        help="(Deprecated) Alias for `govai preflight`.",
+    )
+    g_doctor_mode = s_doctor.add_mutually_exclusive_group(required=False)
+    g_doctor_mode.add_argument(
+        "--local-only",
+        action="store_true",
+        dest="local_only",
+        help="Run only local evidence-pack validation (does not require GOVAI_AUDIT_BASE_URL).",
+    )
+    g_doctor_mode.add_argument(
+        "--with-submit",
+        action="store_true",
+        dest="with_submit",
+        help="Also submit a fresh evidence pack to the audit service and verify /bundle-hash digest (requires GOVAI_API_KEY).",
+    )
+
     s_verify = sub.add_parser("verify", help="Verify local docs/* artifacts and governance hash chain.")
     s_verify.add_argument("--run-id", default=None, help="Run UUID (fallback: env GOVAI_RUN_ID or RUN_ID).")
     s_verify.add_argument("--json", action="store_true", help="Machine-readable output on stdout.")
@@ -1215,6 +1733,25 @@ def build_parser() -> GovaiArgumentParser:
         help="Directory containing real_world_ci_injection.json.",
     )
 
+    # Policy tooling (compile-only product layer)
+    s_policy = sub.add_parser("policy", help="Policy module tools (compile-only).")
+    s_policy_sub = s_policy.add_subparsers(dest="policy_cmd", required=True)
+
+    s_policy_compile = s_policy_sub.add_parser(
+        "compile",
+        help="Compile a policy module YAML into a flat required_evidence set.",
+    )
+    s_policy_compile.add_argument(
+        "--path",
+        required=True,
+        help="Path to policy module YAML (e.g. docs/policies/ai-act-high-risk.example.yaml).",
+    )
+    s_policy_compile.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON (policy identity + required_evidence).",
+    )
+
     return p
 
 
@@ -1228,6 +1765,34 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.cmd is None:
         parser.print_help()
+        return cli_exit.EX_OK
+
+    if args.cmd == "policy" and getattr(args, "policy_cmd", None) == "compile":
+        raw_path = str(getattr(args, "path", "") or "").strip()
+        if not raw_path:
+            print("error: --path is required", file=sys.stderr)
+            return cli_exit.EX_USAGE
+        try:
+            pol = load_policy_module(raw_path)
+            req = sorted(required_evidence_from_policy(pol))
+        except ValueError as e:
+            print(f"error: invalid policy module: {e}", file=sys.stderr)
+            return cli_exit.EX_USAGE
+        except OSError as e:
+            print(f"error: cannot read policy module: {e}", file=sys.stderr)
+            return cli_exit.EX_ERR
+
+        if bool(getattr(args, "json", False)):
+            _print_json(
+                {
+                    "policy": policy_identity(pol),
+                    "required_evidence": req,
+                },
+                compact=False,
+            )
+        else:
+            for item in req:
+                print(item)
         return cli_exit.EX_OK
 
     if args.cmd == "experiment":
@@ -1284,21 +1849,176 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.cmd == "run" and getattr(args, "run_cmd", None) == "demo-deterministic":
         return run_demo_deterministic(timeout_sec=float(getattr(args, "timeout", 30.0)))
 
+    if args.cmd == "demo-golden-path":
+        run_id = str(uuid.uuid4())
+        out_dir = Path(getattr(args, "demo_output_dir"))
+        res = generate_demo_golden_path(run_id=run_id, output_dir=out_dir)
+
+        audit_url = _audit_url(args)
+        api_key = _api_key(args)
+
+        if bool(getattr(args, "print_run_id", False)):
+            print(res.run_id)
+            stream = sys.stderr
+        else:
+            stream = sys.stdout
+
+        # Proactive local operator hint: if localhost and /ready is unreachable.
+        if audit_url and _is_localhost_url(audit_url):
+            try:
+                client = GovAIClient(audit_url.rstrip("/"), api_key=api_key, default_project=os.environ.get("GOVAI_PROJECT"))
+                _ = client.request_json("GET", "/ready", timeout=2.0, raise_on_body_ok_false=False)
+            except Exception:
+                print("Local audit service is not running. Start it with: make audit_bg", file=stream)
+                print("", file=stream)
+
+        print(f"run_id: {res.run_id}", file=stream)
+        print(f"artefacts_path: {res.artefacts_path}", file=stream)
+        print("", file=stream)
+        print("next steps (run in order — submit before verify/check):", file=stream)
+        print("", file=stream)
+        prefix: list[str] = ["govai"]
+        project = _resolve_project(args)
+        if project:
+            prefix += ["--project", project]
+        if audit_url:
+            prefix += ["--audit-base-url", audit_url]
+        # Never leak key by default; always prefer env var placeholder for copy/paste onboarding.
+        if api_key and bool(getattr(args, "show_api_key", False)):
+            prefix += ["--api-key", api_key]
+        else:
+            prefix += ["--api-key", "$GOVAI_API_KEY"]
+        artefacts = str(res.artefacts_path)
+        submit_cmd = prefix + ["submit-evidence-pack", "--path", artefacts, "--run-id", res.run_id]
+        verify_cmd = prefix + ["verify-evidence-pack", "--path", artefacts, "--run-id", res.run_id]
+        check_cmd = prefix + ["check", "--run-id", res.run_id]
+
+        print(_shell_argv_join(submit_cmd), file=stream)
+        print(_shell_argv_join(verify_cmd), file=stream)
+        print(_shell_argv_join(check_cmd), file=stream)
+
+        if not api_key:
+            print("", file=stream)
+            print("missing GOVAI_API_KEY. Set it, e.g.:", file=stream)
+            print('export GOVAI_API_KEY="YOUR_LOCAL_KEY"', file=stream)
+        if not audit_url:
+            print("", file=stream)
+            print("missing GOVAI_AUDIT_BASE_URL. Set it, e.g.:", file=stream)
+            print('export GOVAI_AUDIT_BASE_URL="http://127.0.0.1:8088"', file=stream)
+        return cli_exit.EX_OK
+
+    if args.cmd == "evidence-pack" and getattr(args, "evidence_pack_cmd", None) == "init":
+        raw_run_id = getattr(args, "run_id", None)
+        run_id = raw_run_id if isinstance(raw_run_id, str) and raw_run_id != "" else _default_run_id_for_evidence_pack_init()
+        out_dir = Path(getattr(args, "evidence_pack_out_dir")).expanduser().resolve()
+        force = bool(getattr(args, "force", False))
+
+        if out_dir.exists():
+            if not out_dir.is_dir():
+                print(
+                    f"error: output path exists and is not a directory: {out_dir}",
+                    file=sys.stderr,
+                )
+                return cli_exit.EX_USAGE
+            if not force:
+                print(
+                    "error: output directory already exists; refusing to overwrite.\n"
+                    f"  path: {out_dir}\n"
+                    "  hint: choose a new --out directory, or pass --force to overwrite",
+                    file=sys.stderr,
+                )
+                return cli_exit.EX_USAGE
+
+        try:
+            res = generate_demo_golden_path(run_id=run_id, output_dir=out_dir)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return cli_exit.EX_USAGE
+        except OSError as exc:
+            print(f"error: cannot write evidence pack: {exc}", file=sys.stderr)
+            return cli_exit.EX_ERR
+        except Exception as exc:
+            print(f"error: evidence pack generation failed: {exc}", file=sys.stderr)
+            return cli_exit.EX_ERR
+
+        # Keep stdout minimal and copy/paste friendly.
+        print(f"run_id: {res.run_id}")
+        print(f"path: {res.artefacts_path}")
+        return cli_exit.EX_OK
+
     audit_url = _audit_url(args)
     api_key = _api_key(args)
     project = _resolve_project(args)
+    repro = _format_repro_command(args_list)
+
+    if args.cmd == "preflight":
+        local_only = bool(getattr(args, "local_only", False))
+        with_submit = bool(getattr(args, "with_submit", False))
+        audit_env = _require_env_nonempty("GOVAI_AUDIT_BASE_URL")
+        api_env = _require_env_nonempty("GOVAI_API_KEY")
+        if not local_only and not audit_env:
+            print("error: govai preflight requires GOVAI_AUDIT_BASE_URL (unless --local-only)", file=sys.stderr)
+            print('hint: export GOVAI_AUDIT_BASE_URL="https://YOUR_GOVAI_AUDIT_SERVICE"', file=sys.stderr)
+            return cli_exit.EX_USAGE
+        if with_submit and not api_env:
+            print("error: govai preflight --with-submit requires GOVAI_API_KEY", file=sys.stderr)
+            print('hint: export GOVAI_API_KEY="YOUR_API_KEY"', file=sys.stderr)
+            return cli_exit.EX_USAGE
+        return preflight(
+            local_only=local_only,
+            submit=with_submit,
+            timeout_sec=float(getattr(args, "timeout", 30.0)),
+            audit_url=audit_url,
+            api_key=api_key,
+        )
+
+    if args.cmd == "doctor":
+        print("warning: 'govai doctor' is deprecated, use 'govai preflight'", file=sys.stderr, flush=True)
+        local_only = bool(getattr(args, "local_only", False))
+        with_submit = bool(getattr(args, "with_submit", False))
+        audit_env = _require_env_nonempty("GOVAI_AUDIT_BASE_URL")
+        api_env = _require_env_nonempty("GOVAI_API_KEY")
+        if not local_only and not audit_env:
+            print("error: govai preflight requires GOVAI_AUDIT_BASE_URL (unless --local-only)", file=sys.stderr)
+            print('hint: export GOVAI_AUDIT_BASE_URL="https://YOUR_GOVAI_AUDIT_SERVICE"', file=sys.stderr)
+            return cli_exit.EX_USAGE
+        if with_submit and not api_env:
+            print("error: govai preflight --with-submit requires GOVAI_API_KEY", file=sys.stderr)
+            print('hint: export GOVAI_API_KEY="YOUR_API_KEY"', file=sys.stderr)
+            return cli_exit.EX_USAGE
+        return preflight(
+            local_only=local_only,
+            submit=with_submit,
+            timeout_sec=float(getattr(args, "timeout", 30.0)),
+            audit_url=audit_url,
+            api_key=api_key,
+        )
 
     if args.cmd == "verify":
+        summary_verdict = "ERROR"
+        summary_codes: list[str] = ["INTEGRATION_ERROR"]
+        summary_next_action = "Fix the reported issue, then rerun the same command."
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
+            _print_final_summary(
+                verdict="ERROR",
+                reason_codes=["USAGE_ERROR"],
+                next_action="Pass --run-id (or set GOVAI_RUN_ID / RUN_ID), then rerun.",
+                repro=repro,
+            )
             return cli_exit.EX_USAGE
         prev_audit = os.environ.get("AIGOV_AUDIT_URL")
         prev_end = os.environ.get("AIGOV_AUDIT_ENDPOINT")
         try:
             os.environ["AIGOV_AUDIT_URL"] = audit_url
             os.environ["AIGOV_AUDIT_ENDPOINT"] = audit_url
-            return verify_mod.verify(run_id, as_json=args.json)
+            rc = verify_mod.verify(run_id, as_json=args.json)
+            if rc == cli_exit.EX_OK:
+                summary_verdict = "VALID"
+                summary_codes = []
+                summary_next_action = "Proceed (artifacts verified)."
+            return rc
         finally:
             if prev_audit is None:
                 os.environ.pop("AIGOV_AUDIT_URL", None)
@@ -1308,6 +2028,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 os.environ.pop("AIGOV_AUDIT_ENDPOINT", None)
             else:
                 os.environ["AIGOV_AUDIT_ENDPOINT"] = prev_end
+            _print_final_summary(
+                verdict=summary_verdict,
+                reason_codes=summary_codes,
+                next_action=summary_next_action,
+                repro=repro,
+            )
 
     if args.cmd == "fetch-bundle":
         run_id = _resolve_run_id(args)
@@ -1357,30 +2083,71 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cli_exit.EX_OK
 
     if args.cmd == "check":
+        summary_verdict = "ERROR"
+        summary_obj: dict[str, Any] | None = None
+        summary_codes: list[str] = ["INTEGRATION_ERROR"]
+        summary_next_action = "Check GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY (and network), then rerun the same command."
+        summary_triggered_by: list[str] | None = None
         opt = (getattr(args, "check_run_id", None) or "").strip()
         run_id = opt or _resolve_run_id(args)
         if not run_id:
             print("run id required", file=sys.stderr)
+            _print_final_summary(
+                verdict="ERROR",
+                reason_codes=["USAGE_ERROR"],
+                next_action="Pass --run-id (or set GOVAI_RUN_ID / RUN_ID), then rerun.",
+                repro=repro,
+            )
             return cli_exit.EX_USAGE
+
+        # Optional local enrichment for summary output (append-only).
+        raw_scan_path = (os.environ.get("GOVAI_DISCOVERY_PATH") or "").strip()
+        if raw_scan_path:
+            try:
+                scan_path = Path(raw_scan_path).expanduser()
+                if scan_path.exists():
+                    summary_triggered_by = _triggered_by_from_repo_scan(scan_path)
+            except Exception:
+                summary_triggered_by = None
 
         client = GovAIClient(audit_url, api_key=api_key, default_project=project)
         vad = getattr(args, "verify_artifacts_dir", None)
-        if vad is not None:
-            artifact_dir = Path(vad).expanduser().resolve()
-            rc = _verify_artifact_digest_continuity(client, artifact_dir=artifact_dir, run_id=run_id)
-            if rc != cli_exit.EX_OK:
-                return rc
+        try:
+            if vad is not None:
+                artifact_dir = Path(vad).expanduser().resolve()
+                rc = _verify_artifact_digest_continuity(client, artifact_dir=artifact_dir, run_id=run_id)
+                if rc != cli_exit.EX_OK:
+                    summary_verdict = "ERROR"
+                    summary_codes = ["DIGEST_MISMATCH"]
+                    summary_next_action = "Fix evidence_digest_manifest.json / hosted bundle-hash mismatch, then rerun."
+                    return rc
 
-        code_sum, summary = _compliance_verdict_or_err(client, run_id, timeout=args.timeout)
-        if code_sum != cli_exit.EX_OK or summary is None:
-            return code_sum
+            code_sum, summary = _compliance_verdict_or_err(client, run_id, timeout=args.timeout)
+            if code_sum != cli_exit.EX_OK or summary is None:
+                summary_verdict = "ERROR"
+                summary_codes = ["INTEGRATION_ERROR"]
+                return code_sum
 
-        verdict = str(summary.get("verdict") or "").strip()
-        print(verdict)
-        if verdict in ("BLOCKED", "INVALID"):
-            _print_check_failure_details(summary, verdict)
+            summary_obj = summary
+            verdict = str(summary.get("verdict") or "").strip()
+            print(verdict, flush=True)
+            if verdict in ("BLOCKED", "INVALID"):
+                _print_check_failure_details(summary, verdict)
 
-        return _exit_for_compliance_verdict(verdict)
+            summary_verdict, summary_codes, summary_next_action, _ = _summary_for_compliance(
+                verdict=verdict,
+                summary=summary_obj,
+                repro=repro,
+            )
+            return _exit_for_compliance_verdict(verdict)
+        finally:
+            _print_final_summary(
+                verdict=summary_verdict,
+                reason_codes=summary_codes,
+                triggered_by=summary_triggered_by,
+                next_action=summary_next_action,
+                repro=repro,
+            )
 
     if args.cmd == "submit-evidence-pack":
         run_id = _resolve_run_id(args)
@@ -1413,35 +2180,80 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cli_exit.EX_OK
 
     if args.cmd == "verify-evidence-pack":
+        summary_verdict = "ERROR"
+        summary_obj: dict[str, Any] | None = None
+        summary_codes: list[str] = ["INTEGRATION_ERROR"]
+        summary_next_action = "Check GOVAI_AUDIT_BASE_URL and GOVAI_API_KEY (and network), then rerun the same command."
+        summary_triggered_by: list[str] | None = None
         run_id = _resolve_run_id(args)
         if not run_id:
             print("run id required: pass --run-id or set GOVAI_RUN_ID (or RUN_ID)", file=sys.stderr)
+            _print_final_summary(
+                verdict="ERROR",
+                reason_codes=["USAGE_ERROR"],
+                next_action="Pass --run-id (or set GOVAI_RUN_ID / RUN_ID), then rerun.",
+                repro=repro,
+            )
             return cli_exit.EX_USAGE
         artifact_dir = Path(getattr(args, "verify_pack_dir")).expanduser().resolve()
+
+        # Optional local enrichment for summary output (append-only).
+        raw_scan_path = (os.environ.get("GOVAI_DISCOVERY_PATH") or "").strip()
+        if raw_scan_path:
+            try:
+                scan_path = Path(raw_scan_path).expanduser()
+                if scan_path.exists():
+                    summary_triggered_by = _triggered_by_from_repo_scan(scan_path)
+            except Exception:
+                summary_triggered_by = None
+
         client = GovAIClient(audit_url, api_key=api_key, default_project=project)
         try:
-            _b, bundle_path = eag.load_bundle(run_id, artifact_dir)
-        except (OSError, json.JSONDecodeError, TypeError, FileNotFoundError) as exc:
-            print(f"ERROR: cannot load evidence bundle: {exc}", file=sys.stderr)
-            return cli_exit.EX_ERR
-        # Ensure manifest referent exists (CI must ship both files).
-        _ = bundle_path
-        rc = _verify_artifact_digest_continuity(
-            client,
-            artifact_dir=artifact_dir,
-            run_id=run_id,
-            require_export=bool(getattr(args, "require_export", False)),
-        )
-        if rc != cli_exit.EX_OK:
-            return rc
-        code_sum, summary = _compliance_verdict_or_err(client, run_id, timeout=args.timeout)
-        if code_sum != cli_exit.EX_OK or summary is None:
-            return code_sum
-        verdict = str(summary.get("verdict") or "").strip()
-        print(verdict)
-        if verdict in ("BLOCKED", "INVALID"):
-            _print_check_failure_details(summary, verdict)
-        return _exit_for_compliance_verdict(verdict)
+            try:
+                _b, bundle_path = eag.load_bundle(run_id, artifact_dir)
+            except (OSError, json.JSONDecodeError, TypeError, FileNotFoundError) as exc:
+                print(f"ERROR: cannot load evidence bundle: {exc}", file=sys.stderr)
+                summary_verdict = "ERROR"
+                summary_codes = ["EVIDENCE_BUNDLE_INVALID"]
+                summary_next_action = "Fix the evidence pack JSON files, then rerun the same command."
+                return cli_exit.EX_ERR
+            # Ensure manifest referent exists (CI must ship both files).
+            _ = bundle_path
+            rc = _verify_artifact_digest_continuity(
+                client,
+                artifact_dir=artifact_dir,
+                run_id=run_id,
+                require_export=bool(getattr(args, "require_export", False)),
+            )
+            if rc != cli_exit.EX_OK:
+                summary_verdict = "ERROR"
+                summary_codes = ["DIGEST_MISMATCH"]
+                summary_next_action = "Fix evidence_digest_manifest.json / hosted bundle-hash mismatch, then rerun."
+                return rc
+            code_sum, summary = _compliance_verdict_or_err(client, run_id, timeout=args.timeout)
+            if code_sum != cli_exit.EX_OK or summary is None:
+                summary_verdict = "ERROR"
+                summary_codes = ["INTEGRATION_ERROR"]
+                return code_sum
+            summary_obj = summary
+            verdict = str(summary.get("verdict") or "").strip()
+            print(verdict)
+            if verdict in ("BLOCKED", "INVALID"):
+                _print_check_failure_details(summary, verdict)
+            summary_verdict, summary_codes, summary_next_action, _ = _summary_for_compliance(
+                verdict=verdict,
+                summary=summary_obj,
+                repro=repro,
+            )
+            return _exit_for_compliance_verdict(verdict)
+        finally:
+            _print_final_summary(
+                verdict=summary_verdict,
+                reason_codes=summary_codes,
+                triggered_by=summary_triggered_by,
+                next_action=summary_next_action,
+                repro=repro,
+            )
 
     if args.cmd == "submit-evidence":
         run_id = _resolve_run_id(args)

@@ -23,13 +23,13 @@ def _workflow_job_declaration_body(lines: list[str], job_key: str) -> str:
     return "\n".join(parts)
 
 
-def test_govai_compliance_gate_allows_same_repo_pr_and_pinned_cli() -> None:
+def test_govai_compliance_gate_allows_same_repo_pr_and_workspace_cli() -> None:
     p = REPO_ROOT / ".github/workflows/compliance.yml"
     text = p.read_text(encoding="utf-8")
     lines = text.splitlines()
     segment = _workflow_job_declaration_body(lines, "govai-compliance-gate")
     assert "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'" not in segment
-    assert 'python -m pip install "aigov-py==0.2.1"' in segment
+    assert "python -m pip install -e ./python" in segment
     assert "github.event.pull_request.head.repo.full_name" in segment
     assert "github.repository" in segment
 

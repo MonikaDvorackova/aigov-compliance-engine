@@ -4,7 +4,24 @@ GovAI is an **audit-backed decision system** for AI deployments: append-only evi
 
 [![Join Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/sRBSafRtE)
 
+## Golden path (local demo, 2 min)
+
+Minimal deterministic local example using the **existing evidence-pack format**:
+
+- `docs/golden-path.md`
+- `docs/evidence-pack.md` (generate a minimal customer-ready evidence pack)
+
+## Troubleshooting and operator docs
+
+- **Troubleshooting matrix (customers + operators)**: `docs/troubleshooting.md`
+- **Operator runbook (hosted/self-hosted)**: `docs/operator-runbook.md`
+
 ## Quickstart (5 minutes)
+
+Choose one:
+
+- **Hosted (recommended)**: follow `docs/customer-onboarding-10min.md` (canonical hosted onboarding: `BLOCKED → VALID`, then export).
+- **Local (Docker, this repo)**: continue below (for local evaluation / contributor setup).
 
 1. Clone the repo
 
@@ -71,6 +88,32 @@ Non-guarantees:
 - not a legal certification
 - not full compliance coverage
 - does not generate missing evidence
+
+## Bring your own policy
+
+GovAI is **policy-agnostic**: the engine enforces evidence completeness and deterministic decision semantics, not a specific legal framework.
+Policy is a **configuration layer** that compiles into a flat `required_evidence` set (static mapping, no runtime logic).
+Customers can replace the AI Act mapping with an internal policy module **without changing the core GovAI engine**.
+The engine remains deterministic: evidence log + policy requirements → `GET /compliance-summary` → `VALID` / `BLOCKED` / `INVALID`.
+Use `govai policy compile --path <policy.yaml>` to inspect the flat `required_evidence` set for a policy module.
+See `docs/customer-policy-modules.md` and `docs/policies/`.
+
+## How GovAI decides what is required
+
+GovAI compiles “what is required” into a deterministic **flat set**:
+
+`discovery (context detection)` + `policy modules (static mapping)` → `required_evidence (flat set)` → existing GovAI engine → verdict (`VALID` / `INVALID` / `BLOCKED`)
+
+Key constraints:
+
+- discovery is heuristic-only and deterministic (no ML, no scoring)
+- policy modules are static mappings (no conditionals)
+- the core decision semantics and API contracts remain unchanged
+
+See:
+
+- `docs/discovery-v2.md`
+- `docs/customer-policy-modules.md`
 
 ## When to use GovAI
 

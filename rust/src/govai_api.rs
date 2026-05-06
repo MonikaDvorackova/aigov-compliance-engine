@@ -765,6 +765,16 @@ async fn ingest(
                     None,
                 )
             } else {
+                let cwd = std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "(unavailable)".to_string());
+                let ledger_dir = crate::ledger_storage::configured_ledger_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "(unset)".to_string());
+                eprintln!(
+                    "ingest: append_error tenant_id={} log_path={} cwd={} ledger_dir={} err={}",
+                    ledger_tid, log_path, cwd, ledger_dir, e
+                );
                 api_err(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "APPEND_ERROR",
@@ -1610,6 +1620,106 @@ async fn readiness_check(State(audit): State<AuditState>) -> (StatusCode, Json<s
         );
     }
 
+    // `/ready` must reflect the same effective ledger semantics as `/evidence` append:
+    // - tenant-scoped ledger filename resolution (`project::resolve_ledger_path`)
+    // - parent directory existence (CI/container paths may exist at startup but differ at runtime)
+    // - ability to create/open the tenant-scoped ledger file itself
+    //
+    // This intentionally does *not* rely on request headers (readiness is unauthenticated),
+    // but it uses the same tenant-scoping naming scheme to catch path issues early.
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let probe_tenant = format!("ready-probe-{pid}-{nanos}");
+    // Test override to deterministically exercise failure paths without changing production semantics.
+    //
+    // NOTE: `#[cfg(test)]` does NOT apply to integration tests (`rust/tests/*.rs`) because the
+    // library is compiled as a normal dependency. Use `debug_assertions` so `cargo test` builds
+    // (including CI) can enable the override, while release builds cannot.
+    let probe_path_override: Option<String> = {
+        #[cfg(any(test, debug_assertions))]
+        {
+            // Never allow the override outside of dev semantics.
+            if matches!(audit.deployment_env, GovaiEnvironment::Dev) {
+                std::env::var("GOVAI_TEST_READY_TENANT_PROBE_PATH")
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            } else {
+                None
+            }
+        }
+        #[cfg(not(any(test, debug_assertions)))]
+        {
+            None
+        }
+    };
+
+    let probe_path = probe_path_override
+        .unwrap_or_else(|| project::resolve_ledger_path(audit.ledger_base, &probe_tenant));
+    eprintln!(
+        "readiness: tenant_ledger_probe path={} ledger_base={} env={} ledger_dir={}",
+        probe_path,
+        audit.ledger_base,
+        audit.deployment_env.as_str(),
+        crate::ledger_storage::configured_ledger_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "(unset)".to_string())
+    );
+    if let Some(parent) = std::path::Path::new(&probe_path).parent() {
+        if !parent.as_os_str().is_empty() && parent != std::path::Path::new(".") {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                let msg = format!(
+                    "Failed to create tenant ledger parent directory {}: {e}",
+                    parent.display()
+                );
+                eprintln!("readiness: tenant_ledger_probe_parent failed: {msg}");
+                return api_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "NOT_READY",
+                    "ledger not ready",
+                    "Ensure GOVAI_LEDGER_DIR exists and is writable (or cwd writable in dev).",
+                    Some(json!({ "checks": { "tenant_ledger_probe": false }, "details": { "probe_path": probe_path, "raw": msg } })),
+                );
+            }
+        }
+    }
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&probe_path)
+    {
+        Ok(mut f) => {
+            // Minimal write to ensure the filesystem path is usable for append semantics.
+            if let Err(e) = std::io::Write::write_all(&mut f, b"") {
+                let msg = format!("tenant ledger probe write failed: {e}");
+                eprintln!("readiness: tenant_ledger_probe_write failed: {msg}");
+                return api_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "NOT_READY",
+                    "ledger not ready",
+                    "Ensure GOVAI_LEDGER_DIR exists and is writable (or cwd writable in dev).",
+                    Some(json!({ "checks": { "tenant_ledger_probe": false }, "details": { "probe_path": probe_path, "raw": msg } })),
+                );
+            }
+            // Best-effort cleanup; ignore failure.
+            let _ = std::fs::remove_file(&probe_path);
+        }
+        Err(e) => {
+            let msg = format!("tenant ledger probe open failed: {e}");
+            eprintln!("readiness: tenant_ledger_probe_open failed: {msg}");
+            return api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NOT_READY",
+                "ledger not ready",
+                "Ensure GOVAI_LEDGER_DIR exists and is writable (or cwd writable in dev).",
+                Some(json!({ "checks": { "tenant_ledger_probe": false }, "details": { "probe_path": probe_path, "raw": msg } })),
+            );
+        }
+    }
+
     (
         StatusCode::OK,
         Json(json!({
@@ -1618,7 +1728,8 @@ async fn readiness_check(State(audit): State<AuditState>) -> (StatusCode, Json<s
             "checks": {
                 "database_ping": true,
                 "migrations_complete": true,
-                "ledger_writable": true
+                "ledger_writable": true,
+                "tenant_ledger_probe": true
             }
         })),
     )
@@ -2915,7 +3026,7 @@ mod api_error_response_tests {
     use serde_json::Value;
 
     const TENANT_SCOPED_NOT_FOUND_HINT: &str =
-        "The resource was not found under the current tenant context. Check the run id and API key. Note: X-GovAI-Project is metadata only and does not select the ledger tenant.";
+        "The resource was not found under the current tenant context. Check the run_id and API key. Note: X-GovAI-Project does not determine the ledger tenant.";
 
     fn pool_lazy_for_tests() -> DbPool {
         sqlx::PgPool::connect_lazy("postgres://postgres:postgres@localhost/postgres")
@@ -2939,7 +3050,9 @@ mod api_error_response_tests {
             ledger_base: ledger_base_static,
             policy_version,
             deployment_env: GovaiEnvironment::Dev,
-            policy: crate::policy_config::load_with_env("dev").config,
+            policy: crate::policy_config::load_for_deployment(GovaiEnvironment::Dev)
+                .expect("test policy load")
+                .config,
             pool: pool_lazy_for_tests(),
             metering: crate::metering::MeteringConfig {
                 enabled: false,

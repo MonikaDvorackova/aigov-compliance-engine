@@ -54,6 +54,7 @@ def test_subcommand_help() -> None:
         "usage",
         "create-assessment",
         "discovery",
+        "policy",
     ):
         with pytest.raises(SystemExit) as ei:
             build_parser().parse_args([sub, "--help"])
@@ -63,6 +64,12 @@ def test_subcommand_help() -> None:
 def test_discovery_scan_help() -> None:
     with pytest.raises(SystemExit) as ei:
         build_parser().parse_args(["discovery", "scan", "--help"])
+    assert ei.value.code == 0
+
+
+def test_policy_compile_help() -> None:
+    with pytest.raises(SystemExit) as ei:
+        build_parser().parse_args(["policy", "compile", "--help"])
     assert ei.value.code == 0
 
 

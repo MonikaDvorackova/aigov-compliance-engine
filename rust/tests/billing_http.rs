@@ -8,7 +8,6 @@ use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
-use std::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -23,25 +22,106 @@ use aigov_audit::project;
 use aigov_audit::schema::EvidenceEvent;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use std::collections::{HashMap, HashSet};
+use std::ffi::{OsStr, OsString};
 
-static CWD_LOCK: Mutex<()> = Mutex::new(());
+mod test_support;
+use test_support::env_lock;
+
+const TEST_DEFAULT_API_KEY: &str = "key_default";
 
 /// Same key→tenant mapping contract as `tenant_isolation_http` tests (init once per process).
-fn ensure_dev_api_key_tenant_map() {
-    if audit_api_key::api_key_tenant_map_is_initialized() {
-        return;
-    }
-    std::env::set_var(
+fn ensure_dev_api_key_tenant_map(env: &mut TestEnv) {
+    // Make the test mapping explicit and deterministic. Initialization itself is still once-per-process.
+    env.set_var(
         "GOVAI_API_KEYS_JSON",
         r#"{"key_default":"default","key_github_actions":"github-actions","key_tenant_a":"tenant-a","key_tenant_b":"tenant-b"}"#,
     );
+    if audit_api_key::api_key_tenant_map_is_initialized() {
+        return;
+    }
     let _ = audit_api_key::init_api_key_tenant_map(GovaiEnvironment::Dev);
+}
+
+/// Test env guard: isolates ledger storage + auth env vars per-test.
+struct TestEnv {
+    _ledger_dir: tempfile::TempDir,
+    original_cwd: std::path::PathBuf,
+    original_vars: HashMap<&'static str, Option<OsString>>,
+    touched_vars: HashSet<&'static str>,
+}
+
+impl TestEnv {
+    fn new() -> Self {
+        let original_cwd = std::env::current_dir().expect("getcwd");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ledger_dir_path = dir.path().to_path_buf();
+        std::env::set_current_dir(dir.path()).expect("chdir temp");
+        let mut env = Self {
+            _ledger_dir: dir,
+            original_cwd,
+            original_vars: HashMap::new(),
+            touched_vars: HashSet::new(),
+        };
+        env.set_var("GOVAI_LEDGER_DIR", ledger_dir_path);
+        env
+    }
+
+    fn touch(&mut self, key: &'static str) {
+        if self.touched_vars.insert(key) {
+            let prev = std::env::var_os(key);
+            self.original_vars.insert(key, prev);
+        }
+    }
+
+    fn set_var(&mut self, key: &'static str, value: impl AsRef<OsStr>) {
+        self.touch(key);
+        std::env::set_var(key, value);
+    }
+
+    fn remove_var(&mut self, key: &'static str) {
+        self.touch(key);
+        std::env::remove_var(key);
+    }
+}
+
+impl Drop for TestEnv {
+    fn drop(&mut self) {
+        // Restore only vars this test touched; never clobber unrelated concurrent tests.
+        for (k, prev) in self.original_vars.drain() {
+            match prev {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        let _ = std::env::set_current_dir(&self.original_cwd);
+    }
+}
+
+fn authz_default(req: axum::http::request::Builder) -> axum::http::request::Builder {
+    req.header(header::AUTHORIZATION, format!("Bearer {TEST_DEFAULT_API_KEY}"))
+}
+
+async fn read_json_response(res: axum::response::Response) -> (StatusCode, Value, String) {
+    let status = res.status();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let raw = String::from_utf8_lossy(&bytes).to_string();
+    let json: Value = serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({ "raw": raw }));
+    (status, json, raw)
 }
 
 fn database_url() -> Option<String> {
     std::env::var("TEST_DATABASE_URL")
         .or_else(|_| std::env::var("DATABASE_URL"))
         .ok()
+}
+
+fn force_explicit_db_url_for_process_helpers(env: &mut TestEnv, url: &str) {
+    // Some code paths (especially app wiring) may read DB URLs from env. In CI, we must not
+    // allow falling back to libpq defaults (e.g. OS user "runner") due to missing/partial vars.
+    env.set_var("TEST_DATABASE_URL", url);
+    env.set_var("GOVAI_DATABASE_URL", url);
+    env.set_var("DATABASE_URL", url);
 }
 
 fn seed_empty_tenant_ledger(tenant_id: &str) {
@@ -165,10 +245,12 @@ async fn canonical_evidence_billing_http() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
+    ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
+    env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
 
     let pool = PgPoolOptions::new()
         .max_connections(3)
@@ -181,7 +263,6 @@ async fn canonical_evidence_billing_http() {
         .expect("migrate");
 
     let tenant = format!("billing_http_{}", uuid::Uuid::new_v4());
-    seed_empty_tenant_ledger(&tenant);
     let period = aigov_audit::evidence_usage::current_period_start_utc();
     sqlx::query("DELETE FROM govai_usage_counters WHERE tenant_id = $1 AND period_start = $2")
         .bind(&tenant)
@@ -199,7 +280,7 @@ async fn canonical_evidence_billing_http() {
     let r1 = app
         .clone()
         .oneshot(
-            Request::builder()
+            authz_default(Request::builder())
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
@@ -220,7 +301,7 @@ async fn canonical_evidence_billing_http() {
     let r2 = app
         .clone()
         .oneshot(
-            Request::builder()
+            authz_default(Request::builder())
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
@@ -259,7 +340,7 @@ async fn canonical_evidence_billing_http() {
     let r3 = app
         .clone()
         .oneshot(
-            Request::builder()
+            authz_default(Request::builder())
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
@@ -300,7 +381,7 @@ async fn canonical_evidence_billing_http() {
     // 4) GET /usage uses same tenant scope as ingest (`x-govai-project`)
     let ur = app
         .oneshot(
-            Request::builder()
+            authz_default(Request::builder())
                 .method("GET")
                 .uri("/usage")
                 .header("x-govai-project", &tenant)
@@ -326,10 +407,12 @@ async fn append_failure_does_not_increment_billing_counter() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
+    ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
+    env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
 
     let pool = PgPoolOptions::new()
         .max_connections(3)
@@ -342,7 +425,6 @@ async fn append_failure_does_not_increment_billing_counter() {
         .expect("migrate");
 
     let tenant = format!("append_fail_{}", uuid::Uuid::new_v4());
-    seed_empty_tenant_ledger(&tenant);
     let period = aigov_audit::evidence_usage::current_period_start_utc();
     sqlx::query("DELETE FROM govai_usage_counters WHERE tenant_id = $1 AND period_start = $2")
         .bind(&tenant)
@@ -351,7 +433,7 @@ async fn append_failure_does_not_increment_billing_counter() {
         .await
         .ok();
 
-    std::env::set_var("AIGOV_TEST_APPEND_FAIL", "1");
+    env.set_var("AIGOV_TEST_APPEND_FAIL", "1");
     let app = test_router(pool.clone()).await;
     let run_id = uuid::Uuid::new_v4().to_string();
     let event_id = uuid::Uuid::new_v4().to_string();
@@ -359,7 +441,7 @@ async fn append_failure_does_not_increment_billing_counter() {
 
     let r = app
         .oneshot(
-            Request::builder()
+            authz_default(Request::builder())
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
@@ -369,7 +451,7 @@ async fn append_failure_does_not_increment_billing_counter() {
         )
         .await
         .unwrap();
-    std::env::remove_var("AIGOV_TEST_APPEND_FAIL");
+    env.remove_var("AIGOV_TEST_APPEND_FAIL");
 
     assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let c = aigov_audit::evidence_usage::get_evidence_usage(&pool, &tenant)
@@ -388,10 +470,12 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
+    ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
+    env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -411,7 +495,7 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
     let r1 = app
         .clone()
         .oneshot(
-            Request::builder()
+            authz_default(Request::builder())
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
@@ -432,7 +516,7 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
     let r2 = app
         .clone()
         .oneshot(
-            Request::builder()
+            authz_default(Request::builder())
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
@@ -456,7 +540,7 @@ async fn environment_staging_e2e_stamp_mismatch_compliance_summary() {
 
     let r3 = app
         .oneshot(
-            Request::builder()
+            authz_default(Request::builder())
                 .method("GET")
                 .uri(format!("/compliance-summary?run_id={run_id}"))
                 .header("x-govai-project", "default")
@@ -481,10 +565,12 @@ async fn ingest_policy_violation_includes_code_and_message() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
+    ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
+    env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
 
     let pool = PgPoolOptions::new()
         .max_connections(3)
@@ -503,7 +589,7 @@ async fn ingest_policy_violation_includes_code_and_message() {
 
     let res = app
         .oneshot(
-            Request::builder()
+            authz_default(Request::builder())
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
@@ -543,10 +629,12 @@ async fn allowed_ingest_emits_policy_decision_record() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
+    ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
+    env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
 
     let pool = PgPoolOptions::new()
         .max_connections(3)
@@ -565,7 +653,7 @@ async fn allowed_ingest_emits_policy_decision_record() {
 
     let res = app
         .oneshot(
-            Request::builder()
+            authz_default(Request::builder())
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
@@ -594,9 +682,9 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     seed_empty_tenant_ledger("default");
 
     let pool = PgPoolOptions::new()
@@ -617,8 +705,11 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
         .await
         .expect("insert team");
 
-    const RAW_KEY: &str = "metering_on_http_test_secret";
-    std::env::set_var("GOVAI_API_KEYS", RAW_KEY);
+    // Use a key present in the global `GOVAI_API_KEYS_JSON` tenant map. Once that map is
+    // initialized, all audit routes require the bearer token to be present in it (401 otherwise).
+    ensure_dev_api_key_tenant_map(&mut env);
+    const RAW_KEY: &str = "key_default";
+    env.set_var("GOVAI_API_KEYS", RAW_KEY);
     let api_usage = ApiUsageState::from_env(&pool).expect("api usage");
     let metering_cfg = MeteringConfig {
         enabled: true,
@@ -635,7 +726,7 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
     );
 
     let kh = key_fingerprint(RAW_KEY);
-    seed_empty_tenant_ledger(&kh);
+    seed_empty_tenant_ledger("default");
     sqlx::query("DELETE FROM public.govai_api_key_billing WHERE key_hash = $1")
         .bind(&kh)
         .execute(&pool)
@@ -687,10 +778,12 @@ async fn metering_on_monthly_new_runs_limit_429_includes_scope() {
         .await
         .unwrap();
 
-    assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
-    let bytes = res.into_body().collect().await.unwrap().to_bytes();
-    std::env::remove_var("GOVAI_API_KEYS");
-    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    let (status, v, raw) = read_json_response(res).await;
+    if status != StatusCode::TOO_MANY_REQUESTS {
+        eprintln!("metering_on_monthly_new_runs_limit response {status}: {raw}");
+    }
+    env.remove_var("GOVAI_API_KEYS");
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(v["ok"], false);
     assert_eq!(v["error"]["code"], "MONTHLY_RUN_LIMIT_EXCEEDED");
     assert!(v["error"]["message"].as_str().unwrap_or("").trim().len() > 0);
@@ -712,11 +805,11 @@ async fn stripe_webhook_secret_missing_returns_503() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     seed_empty_tenant_ledger("default");
-    std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
+    env.remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -749,12 +842,14 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
+    ensure_dev_api_key_tenant_map(&mut env);
+    env.set_var("GOVAI_API_KEYS", TEST_DEFAULT_API_KEY);
     seed_empty_tenant_ledger("default");
-    std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
-    std::env::set_var("GOVAI_STRIPE_WEBHOOK_SECRET", "plain_webhook_secret");
+    env.remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
+    env.set_var("GOVAI_STRIPE_WEBHOOK_SECRET", "plain_webhook_secret");
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -768,7 +863,9 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
 
     let app = test_router(pool).await;
 
-    let body = br#"{"id":"evt_stripe_integration_1","type":"invoice.paid"}"#;
+    // Minimal valid Stripe event shape for `invoice.paid`:
+    // handler requires `data.object` to exist; invoice processing reads `customer` if present.
+    let body = br#"{"id":"evt_stripe_integration_1","type":"invoice.paid","data":{"object":{"customer":"cus_test_1"}}}"#;
     let t = chrono::Utc::now().timestamp();
     let signed = format!("{}.{t}", String::from_utf8_lossy(body));
     let mut mac = Hmac::<Sha256>::new_from_slice(b"plain_webhook_secret").expect("hmac key");
@@ -789,7 +886,11 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
         )
         .await
         .unwrap();
-    assert_eq!(r1.status(), StatusCode::OK);
+    let (s1, b1, raw1) = read_json_response(r1).await;
+    if s1 != StatusCode::OK {
+        eprintln!("stripe_webhook r1 {s1}: {raw1}");
+    }
+    assert_eq!(s1, StatusCode::OK, "unexpected webhook response: {b1}");
 
     let r2 = app
         .clone()
@@ -804,8 +905,11 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
         )
         .await
         .unwrap();
-    assert_eq!(r2.status(), StatusCode::OK);
-    let b2: Value = serde_json::from_slice(&r2.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let (s2, b2, raw2) = read_json_response(r2).await;
+    if s2 != StatusCode::OK {
+        eprintln!("stripe_webhook r2 {s2}: {raw2}");
+    }
+    assert_eq!(s2, StatusCode::OK, "unexpected webhook response: {b2}");
     assert_eq!(b2["duplicate"], true);
 
     let run_id = Uuid::new_v4().to_string();
@@ -814,7 +918,7 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
     let r3 = app
         .clone()
         .oneshot(
-            Request::builder()
+            authz_default(Request::builder())
                 .method("POST")
                 .uri("/evidence")
                 .header(header::CONTENT_TYPE, "application/json")
@@ -827,20 +931,24 @@ async fn stripe_webhook_signed_idempotent_and_billing_usage_summary() {
 
     let r4 = app
         .oneshot(
-            Request::builder()
+            authz_default(Request::builder())
                 .method("GET")
                 .uri("/billing/usage-summary?unit=evidence_event")
+                .header("x-govai-project", "default")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(r4.status(), StatusCode::OK);
-    let v: Value = serde_json::from_slice(&r4.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let (s4, v, raw4) = read_json_response(r4).await;
+    if s4 != StatusCode::OK {
+        eprintln!("billing_usage_summary {s4}: {raw4}");
+    }
+    assert_eq!(s4, StatusCode::OK);
     assert!(v["usage_count"].as_i64().unwrap() >= 1);
     assert!(!v["traces"].as_array().unwrap().is_empty());
 
-    std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
+    env.remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
 }
 
 #[tokio::test]
@@ -850,14 +958,14 @@ async fn billing_checkout_session_missing_stripe_secret_returns_503() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
-    ensure_dev_api_key_tenant_map();
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
+    ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
 
-    std::env::set_var("GOVAI_API_KEYS", "key_default");
-    std::env::remove_var("GOVAI_STRIPE_SECRET_KEY");
+    env.set_var("GOVAI_API_KEYS", "key_default");
+    env.remove_var("GOVAI_STRIPE_SECRET_KEY");
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -892,7 +1000,7 @@ async fn billing_checkout_session_missing_stripe_secret_returns_503() {
     assert_eq!(v["ok"], false);
     assert_eq!(v["error"]["code"], "STRIPE_NOT_CONFIGURED");
 
-    std::env::remove_var("GOVAI_API_KEYS");
+    env.remove_var("GOVAI_API_KEYS");
 }
 
 #[tokio::test]
@@ -902,14 +1010,14 @@ async fn billing_checkout_session_requires_api_key_when_keys_configured() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
-    ensure_dev_api_key_tenant_map();
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
+    ensure_dev_api_key_tenant_map(&mut env);
     seed_empty_tenant_ledger("default");
 
-    std::env::set_var("GOVAI_API_KEYS", "key_default");
-    std::env::set_var("GOVAI_STRIPE_SECRET_KEY", "sk_test_fake_for_auth_gate");
+    env.set_var("GOVAI_API_KEYS", "key_default");
+    env.set_var("GOVAI_STRIPE_SECRET_KEY", "sk_test_fake_for_auth_gate");
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -940,8 +1048,8 @@ async fn billing_checkout_session_requires_api_key_when_keys_configured() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 
-    std::env::remove_var("GOVAI_API_KEYS");
-    std::env::remove_var("GOVAI_STRIPE_SECRET_KEY");
+    env.remove_var("GOVAI_API_KEYS");
+    env.remove_var("GOVAI_STRIPE_SECRET_KEY");
 }
 
 #[tokio::test]
@@ -951,11 +1059,11 @@ async fn stripe_webhook_subscription_updated_upserts_tenant_billing_account() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
     seed_empty_tenant_ledger("default");
-    std::env::set_var("GOVAI_STRIPE_WEBHOOK_SECRET", "plain_webhook_secret_sub_upd");
+    env.set_var("GOVAI_STRIPE_WEBHOOK_SECRET", "plain_webhook_secret_sub_upd");
 
     let pool = PgPoolOptions::new()
         .max_connections(2)
@@ -1021,7 +1129,7 @@ async fn stripe_webhook_subscription_updated_upserts_tenant_billing_account() {
     assert_eq!(row.2.as_deref(), Some("sub_webhook_test_42"));
     assert_eq!(row.3, "active");
 
-    std::env::remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
+    env.remove_var("GOVAI_STRIPE_WEBHOOK_SECRET");
 }
 
 #[tokio::test]
@@ -1031,11 +1139,11 @@ async fn billing_status_returns_none_before_checkout() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
-    ensure_dev_api_key_tenant_map();
-    std::env::set_var("GOVAI_API_KEYS", "key_github_actions");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
+    ensure_dev_api_key_tenant_map(&mut env);
+    env.set_var("GOVAI_API_KEYS", "key_github_actions");
     seed_empty_tenant_ledger("github-actions");
 
     let pool = PgPoolOptions::new()
@@ -1067,7 +1175,7 @@ async fn billing_status_returns_none_before_checkout() {
     assert_eq!(v["subscription_status"], "none");
     assert!(v["stripe_customer_id"].is_null());
 
-    std::env::remove_var("GOVAI_API_KEYS");
+    env.remove_var("GOVAI_API_KEYS");
 }
 
 #[tokio::test]
@@ -1077,11 +1185,11 @@ async fn billing_report_usage_is_idempotent_without_stripe_item() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
-    ensure_dev_api_key_tenant_map();
-    std::env::set_var("GOVAI_API_KEYS", "key_tenant_b");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
+    ensure_dev_api_key_tenant_map(&mut env);
+    env.set_var("GOVAI_API_KEYS", "key_tenant_b");
     seed_empty_tenant_ledger("tenant-b");
 
     let pool = PgPoolOptions::new()
@@ -1093,6 +1201,27 @@ async fn billing_report_usage_is_idempotent_without_stripe_item() {
         .run(&pool)
         .await
         .expect("migrate");
+
+    // Ensure `report-usage` uses a stable (period_start, period_end) across both calls.
+    // Otherwise it falls back to (month_start..now), which changes every call and breaks idempotency.
+    let period_start = chrono::Utc::now() - chrono::Duration::days(2);
+    let period_end = chrono::Utc::now() + chrono::Duration::days(20);
+    sqlx::query(
+        r#"
+        insert into public.tenant_billing_accounts (tenant_id, subscription_status, current_period_start, current_period_end)
+        values ('tenant-b', 'active', $1, $2)
+        on conflict (tenant_id) do update set
+          subscription_status = excluded.subscription_status,
+          current_period_start = excluded.current_period_start,
+          current_period_end = excluded.current_period_end,
+          updated_at = now()
+        "#,
+    )
+    .bind(period_start)
+    .bind(period_end)
+    .execute(&pool)
+    .await
+    .expect("seed billing period");
 
     let app = test_router(pool).await;
     let r1 = app
@@ -1108,8 +1237,11 @@ async fn billing_report_usage_is_idempotent_without_stripe_item() {
         )
         .await
         .unwrap();
-    assert_eq!(r1.status(), StatusCode::OK);
-    let b1: Value = serde_json::from_slice(&r1.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let (s1, b1, raw1) = read_json_response(r1).await;
+    if s1 != StatusCode::OK {
+        eprintln!("billing_report_usage r1 {s1}: {raw1}");
+    }
+    assert_eq!(s1, StatusCode::OK, "unexpected report-usage response: {b1}");
     assert_eq!(b1["idempotent_hit"], false);
 
     let r2 = app
@@ -1124,12 +1256,15 @@ async fn billing_report_usage_is_idempotent_without_stripe_item() {
         )
         .await
         .unwrap();
-    assert_eq!(r2.status(), StatusCode::OK);
-    let b2: Value = serde_json::from_slice(&r2.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let (s2, b2, raw2) = read_json_response(r2).await;
+    if s2 != StatusCode::OK {
+        eprintln!("billing_report_usage r2 {s2}: {raw2}");
+    }
+    assert_eq!(s2, StatusCode::OK, "unexpected report-usage response: {b2}");
     assert_eq!(b2["idempotent_hit"], true);
     assert_eq!(b1["report_id"], b2["report_id"]);
 
-    std::env::remove_var("GOVAI_API_KEYS");
+    env.remove_var("GOVAI_API_KEYS");
 }
 
 #[tokio::test]
@@ -1139,12 +1274,12 @@ async fn billing_enforcement_blocks_evidence_when_subscription_inactive() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
-    ensure_dev_api_key_tenant_map();
-    std::env::set_var("GOVAI_API_KEYS", "key_tenant_a");
-    std::env::set_var("GOVAI_BILLING_ENFORCEMENT", "on");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
+    ensure_dev_api_key_tenant_map(&mut env);
+    env.set_var("GOVAI_API_KEYS", "key_tenant_a");
+    env.set_var("GOVAI_BILLING_ENFORCEMENT", "on");
     seed_empty_tenant_ledger("tenant-a");
 
     let pool = PgPoolOptions::new()
@@ -1177,8 +1312,8 @@ async fn billing_enforcement_blocks_evidence_when_subscription_inactive() {
     let v: Value = serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(v["error"]["code"], "BILLING_INACTIVE");
 
-    std::env::remove_var("GOVAI_API_KEYS");
-    std::env::remove_var("GOVAI_BILLING_ENFORCEMENT");
+    env.remove_var("GOVAI_API_KEYS");
+    env.remove_var("GOVAI_BILLING_ENFORCEMENT");
 }
 
 #[tokio::test]
@@ -1188,12 +1323,12 @@ async fn billing_enforcement_allows_evidence_when_subscription_active() {
         return;
     };
 
-    let _lock = CWD_LOCK.lock().expect("lock");
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::env::set_current_dir(dir.path()).expect("chdir");
-    ensure_dev_api_key_tenant_map();
-    std::env::set_var("GOVAI_API_KEYS", "key_tenant_b");
-    std::env::set_var("GOVAI_BILLING_ENFORCEMENT", "on");
+    let _g = env_lock().await;
+    let mut env = TestEnv::new();
+    force_explicit_db_url_for_process_helpers(&mut env, &url);
+    ensure_dev_api_key_tenant_map(&mut env);
+    env.set_var("GOVAI_API_KEYS", "key_tenant_b");
+    env.set_var("GOVAI_BILLING_ENFORCEMENT", "on");
     seed_empty_tenant_ledger("tenant-b");
 
     let pool = PgPoolOptions::new()
@@ -1236,6 +1371,6 @@ async fn billing_enforcement_allows_evidence_when_subscription_active() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 
-    std::env::remove_var("GOVAI_API_KEYS");
-    std::env::remove_var("GOVAI_BILLING_ENFORCEMENT");
+    env.remove_var("GOVAI_API_KEYS");
+    env.remove_var("GOVAI_BILLING_ENFORCEMENT");
 }

@@ -36,6 +36,7 @@ Whitespace-only values are ignored so the next variable in the precedence list c
 
 - **Policy version id** (for bundle hash and `/status`): `v0.5_dev`, `v0.5_staging`, `v0.5_prod` — see `rust/src/govai_environment.rs` (`policy_version_for`).
 - **Policy knobs** (`require_approval`, `block_if_missing_evidence`, `enforce_approver_allowlist`, `approver_allowlist`): loaded from `policy.<env>.json` then `policy.json` under **`AIGOV_POLICY_DIR`** if set, otherwise under the process working directory — unless **`AIGOV_POLICY_FILE`** points at a single file. See `rust/src/policy_config.rs` and the full contract in [`policy-contract.md`](policy-contract.md).
+- **`AIGOV_POLICY_STRICT`**: when set to `true` / `1` / `on` / `yes`, invalid or missing policy files **abort startup even in `dev`**. Without strict mode, **only `dev`** may fall back to compiled defaults when a file is missing or invalid; **`staging`** and **`prod`** always require a valid resolvable policy file.
 - **Repository defaults:** `rust/policy.dev.json` sets `enforce_approver_allowlist: false`; `rust/policy.json` sets it `true` for shared/staging/prod-style configs. Allowlist defaults are defined in code (`compliance_officer`, `risk_officer`) when the field is omitted.
 
 ## Evidence ingest

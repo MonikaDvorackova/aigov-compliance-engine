@@ -4,13 +4,13 @@ name: python-govai
 on:
   pull_request:
     paths:
-      - "python/govai/**"
+      - "python/aigov_py/**"
       - "python/tests/**"
       - "python/pyproject.toml"
   push:
     branches: [main, staging]
     paths:
-      - "python/govai/**"
+      - "python/aigov_py/**"
       - "python/tests/**"
       - "python/pyproject.toml"
   workflow_dispatch:
@@ -33,4 +33,4 @@ jobs:
           . .venv/bin/activate
           pip install -U pip
           pip install -e ".[dev]"
-          pytest -v
+          python -m pytest -q

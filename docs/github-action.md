@@ -27,6 +27,12 @@ A green job using **this action** therefore means CI artefacts were anchored by 
 
 **CI integration:** this composite action is the artefact-bound CI integration. The currently supported customer-facing decision endpoint is `GET /compliance-summary`. Runtime decision APIs are separate hardening work and are not documented as available in this branch.
 
+## Golden path (local, deterministic)
+
+If you want a minimal **copy/paste** example that uses the same **evidence pack** format as CI (`<run_id>.json` + `evidence_digest_manifest.json`) and shows `BLOCKED → VALID`, see:
+
+- `docs/golden-path.md`
+
 ## Synthetic smoke workflow (explicitly labelled)
 
 Manual workflow **`.github/workflows/govai-smoke.yml`** is labelled **SYNTHETIC SMOKE TEST ONLY**. It pushes scripted curls and optionally runs **`govai check`**; it runs **only** on **`workflow_dispatch`** — not automatically on merges to **`main`**. Use it for demos and connectivity probes, never as proof of artefact-bound production compliance.
@@ -89,6 +95,52 @@ jobs:
           path: artefacts
 
       - name: Artefact-bound GovAI gate
+        uses: MonikaDvorackova/aigov-compliance-engine@v1
+        with:
+          run_id: ${{ vars.GOVAI_RUN_ID }}
+          artifacts_path: artefacts
+          base_url: ${{ vars.GOVAI_AUDIT_BASE_URL }}
+          api_key: ${{ secrets.GOVAI_API_KEY }}
+```
+
+## Minimal “example customer repo” layout (what your repo should contain)
+
+This is the smallest practical shape that is easy to copy and hard to misuse. Your repo produces:
+
+- **`evidence_digest_manifest.json`** (digest manifest)
+- **`<run_id>.json`** (evidence bundle)
+
+and then runs the composite action against the directory that contains both.
+
+Suggested layout:
+
+```text
+.
+├── .github/workflows/compliance.yml
+└── artefacts/
+    ├── evidence_digest_manifest.json
+    └── <run_id>.json
+```
+
+Minimal workflow snippet (caller supplies artefacts, then gates):
+
+```yaml
+name: compliance
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  govai:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Your pipeline step(s) must create / download:
+      # - artefacts/evidence_digest_manifest.json
+      # - artefacts/<run_id>.json
+
+      - name: GovAI artefact-bound compliance gate
         uses: MonikaDvorackova/aigov-compliance-engine@v1
         with:
           run_id: ${{ vars.GOVAI_RUN_ID }}
