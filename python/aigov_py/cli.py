@@ -1185,6 +1185,29 @@ def build_parser() -> GovaiArgumentParser:
         help="Include the resolved api key value in the printed verify command (default: use $GOVAI_API_KEY).",
     )
 
+    # Customer-facing evidence pack generator (deterministic by default).
+    s_ep = sub.add_parser(
+        "evidence-pack",
+        help="Generate a minimal customer-ready evidence pack (<run_id>.json + evidence_digest_manifest.json).",
+    )
+    s_ep_sub = s_ep.add_subparsers(dest="evidence_pack_cmd", required=True, metavar="SUBCOMMAND")
+    s_ep_init = s_ep_sub.add_parser(
+        "init",
+        help="Write <run_id>.json and evidence_digest_manifest.json to an output directory (deterministic default).",
+    )
+    s_ep_init.add_argument(
+        "--run-id",
+        default=None,
+        help="Run id to embed in the evidence pack (default: deterministic demo UUID).",
+    )
+    s_ep_init.add_argument(
+        "--out",
+        dest="evidence_pack_out_dir",
+        type=Path,
+        default=Path("evidence_pack"),
+        help="Output directory for the evidence pack files (default: evidence_pack).",
+    )
+
     sub.add_parser(
         "doctor",
         help="Preflight checks: validate audit base URL + auth and ensure /ready is HTTP 200 (DB+migrations+ledger).",
@@ -1652,6 +1675,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("", file=stream)
             print("missing GOVAI_AUDIT_BASE_URL. Set it, e.g.:", file=stream)
             print('export GOVAI_AUDIT_BASE_URL="http://127.0.0.1:8088"', file=stream)
+        return cli_exit.EX_OK
+
+    if args.cmd == "evidence-pack" and getattr(args, "evidence_pack_cmd", None) == "init":
+        # Deterministic by default so customers have a valid copy/paste path.
+        # For production usage, callers should always provide a unique run_id.
+        run_id = (str(getattr(args, "run_id", "") or "").strip()) or "00000000-0000-0000-0000-000000000000"
+        out_dir = Path(getattr(args, "evidence_pack_out_dir"))
+        try:
+            res = generate_demo_golden_path(run_id=run_id, output_dir=out_dir)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return cli_exit.EX_USAGE
+        except OSError as exc:
+            print(f"error: cannot write evidence pack: {exc}", file=sys.stderr)
+            return cli_exit.EX_ERR
+        except Exception as exc:
+            print(f"error: evidence pack generation failed: {exc}", file=sys.stderr)
+            return cli_exit.EX_ERR
+
+        # Keep stdout minimal and copy/paste friendly.
+        print(f"run_id: {res.run_id}")
+        print(f"path: {res.artefacts_path}")
         return cli_exit.EX_OK
 
     audit_url = _audit_url(args)
