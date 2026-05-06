@@ -1,6 +1,13 @@
-## Golden path: audit service → artefacts → submit → verify → `VALID`
+## Golden path (local demo): audit service → artefacts → submit → verify → `VALID`
 
-This is the **proven contractual shape** used in CI (`govai-compliance-gate` after `submit-evidence-pack` + `verify-evidence-pack`). A first-line **`VALID`** from `govai check` alone is **not** sufficient proof unless the ledger ingest and digest continuity steps completed successfully beforehand.
+This is a **local, repository-oriented demo** of the CI contract shape (`govai-compliance-gate` after `submit-evidence-pack` + `verify-evidence-pack`).
+
+If you are an **external customer onboarding to a hosted GovAI backend**, start here instead:
+
+- `docs/customer-onboarding-10min.md` (canonical customer entrypoint)
+- `docs/evidence-pack.md` (supported evidence pack commands + file shape)
+
+A first-line **`VALID`** from `govai check` alone is **not** sufficient proof unless the ledger ingest and digest continuity steps completed successfully beforehand.
 
 ### Required components
 
