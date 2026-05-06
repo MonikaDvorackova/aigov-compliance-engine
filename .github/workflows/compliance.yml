@@ -81,7 +81,9 @@ jobs:
           echo "base_sha=${BASE_SHA}" >> "${GITHUB_OUTPUT}"
           echo "head_sha=${HEAD_SHA}" >> "${GITHUB_OUTPUT}"
 
-          CORE_CHANGED="$(printf '%s\n' "${CHANGED_FILES}" | grep -E '^(rust/|python/govai/|python/aigov_py/|docs/strong-core-contract-note\.md$|ARCHITECTURE\.md$|Makefile$)' || true)"
+          # "Core-affecting" means changes that can modify compliance logic, audit behavior,
+          # evidence-pack shape, or production gate semantics.
+          CORE_CHANGED="$(printf '%s\n' "${CHANGED_FILES}" | grep -E '^(\.github/workflows/|rust/|python/|scripts/|Makefile$|Cargo\.(lock|toml)$|pyproject\.toml$|docs/strong-core-contract-note\.md$|ARCHITECTURE\.md$)' || true)"
 
           if [ -n "${REPORTS_CHANGED}" ]; then
             echo "reports_changed=true" >> "${GITHUB_OUTPUT}"
@@ -490,7 +492,8 @@ jobs:
           )"
           c="$(printf '%s\n' "${SORTED_UNIQ}" | awk 'NF' | wc -l | tr -d '[:space:]')"
           if [ "${c}" -eq 0 ]; then
-            echo "::error::docs/reports changed in this change set but no valid report basenames were derived (expected exactly one .md basename per non-release promotion PR)."
+            echo "::error::Artefact-bound gate required but no docs/reports/*.md basename was found in this change set."
+            echo "::error::Core-affecting changes require exactly one docs/reports/*.md change per PR (except staging→main release promotion)."
             exit 1
           fi
           if [ "${c}" -gt 1 ]; then
@@ -515,7 +518,7 @@ jobs:
           set -euo pipefail
           rid="${{ steps.govai_emit_run_id.outputs.run_id }}"
           if [ -z "${rid}" ]; then
-            echo "::error::docs/reports/** changed but evidence_pack did not emit run_id — hosted artefact-bound gate cannot run. Do not merge."
+            echo "::error::Artefact-bound gate required but evidence_pack did not emit run_id — hosted artefact-bound gate cannot run. Do not merge."
             exit 1
           fi
 
@@ -685,7 +688,7 @@ jobs:
             make run RUN_ID="${RUN_ID}"
 
             ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            post_local_ev "ai_discovery_reported" "{\"event_id\":\"evt_ai_discovery_${RUN_ID}_${GITHUB_RUN_ID}\",\"event_type\":\"ai_discovery_reported\",\"ts_utc\":\"${ts}\",\"actor\":\"ci\",\"system\":\"github_actions\",\"run_id\":\"${RUN_ID}\",\"payload\":{\"openai\":false,\"transformers\":false,\"model_artifacts\":false}}"
+            post_local_ev "ai_discovery_reported" "{\"event_id\":\"evt_ai_discovery_${RUN_ID}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}\",\"event_type\":\"ai_discovery_reported\",\"ts_utc\":\"${ts}\",\"actor\":\"ci\",\"system\":\"github_actions\",\"run_id\":\"${RUN_ID}\",\"payload\":{\"openai\":false,\"transformers\":false,\"model_artifacts\":false}}"
 
             make approve RUN_ID="${RUN_ID}"
             make promote RUN_ID="${RUN_ID}"
