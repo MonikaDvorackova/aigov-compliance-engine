@@ -403,7 +403,8 @@ paths:
       summary: Compact chain check (plaintext JSON body)
       operationId: getVerifyLog
       x-govai-surface: stable
-      security: []
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Chain OK
@@ -412,7 +413,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/VerifyLogOk"
         "400":
-          description: Tenant error or chain failure
+          description: Bad request (e.g. missing tenant context)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyLogError"
+        "401":
+          description: Unauthorized (API keys enforced)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleOkFalse"
+        "500":
+          description: Chain or checkpoint verification failure
           content:
             application/json:
               schema:
@@ -448,7 +461,8 @@ paths:
       summary: Canonical bundle SHA-256
       operationId: getBundleHash
       x-govai-surface: stable
-      security: []
+      security:
+        - bearerAuth: []
       parameters:
         - name: run_id
           in: query
@@ -457,13 +471,35 @@ paths:
             type: string
       responses:
         "200":
-          description: Digest or logical error (`ok:false`, HTTP 200).
+          description: Digest
           content:
             application/json:
               schema:
-                oneOf:
-                  - $ref: "#/components/schemas/BundleHashSuccess"
-                  - $ref: "#/components/schemas/BundleDocumentError"
+                $ref: "#/components/schemas/BundleHashSuccess"
+        "400":
+          description: Bad request (e.g. missing tenant context)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BundleDocumentError"
+        "401":
+          description: Unauthorized (API keys enforced)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimpleOkFalse"
+        "404":
+          description: Run not found in tenant ledger
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BundleDocumentError"
+        "503":
+          description: Bundle not available (transient)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BundleDocumentError"
 
   /compliance-summary:
     get:
