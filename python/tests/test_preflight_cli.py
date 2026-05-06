@@ -10,17 +10,17 @@ from aigov_py.cli import main
 
 
 def test_preflight_local_evidence_pack_passes_without_audit_env(capsys: pytest.CaptureFixture[str]) -> None:
-    code = main(["preflight"])
+    code = main(["preflight", "--local-only"])
     out = capsys.readouterr()
     assert code == cli_exit.EX_OK
     assert "Preflight: local evidence pack" in out.out
     assert out.out.strip().endswith("PASS")
-    # No audit section unless GOVAI_AUDIT_BASE_URL is set.
+    # local-only: no audit section.
     assert "Preflight: audit service" not in out.out
 
 
 def test_doctor_is_deprecated_alias_of_preflight_and_warns_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
-    code = main(["doctor"])
+    code = main(["doctor", "--local-only"])
     out = capsys.readouterr()
     assert code == cli_exit.EX_OK
     assert "warning: 'govai doctor' is deprecated, use 'govai preflight'" in out.err
@@ -76,6 +76,7 @@ def test_preflight_audit_ready_fail(monkeypatch: pytest.MonkeyPatch, capsys: pyt
 
 def test_preflight_submit_capability_pass(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setenv("GOVAI_AUDIT_BASE_URL", "http://audit.example")
+    monkeypatch.setenv("GOVAI_API_KEY", "k_test")
     monkeypatch.setenv("GOVAI_PROJECT", "ci")
 
     state: dict[str, Any] = {}
@@ -135,10 +136,46 @@ def test_preflight_detects_manifest_mismatch(monkeypatch: pytest.MonkeyPatch, ca
 
     monkeypatch.setattr(cli_mod, "generate_demo_golden_path", tampered_generate_demo_golden_path)
 
-    code = cli_mod.main(["preflight"])
+    code = cli_mod.main(["preflight", "--local-only"])
     out = capsys.readouterr()
     assert code == cli_exit.EX_ERR
     assert "Preflight: local evidence pack" in out.out
     assert "evidence digest mismatch" in out.out
     assert out.out.strip().endswith("FAIL")
+
+
+def test_preflight_without_audit_base_url_fails(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.delenv("GOVAI_AUDIT_BASE_URL", raising=False)
+    code = main(["preflight"])
+    out = capsys.readouterr()
+    assert code == cli_exit.EX_USAGE
+    assert "requires GOVAI_AUDIT_BASE_URL" in out.err
+
+
+def test_preflight_local_only_without_audit_base_url_passes(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.delenv("GOVAI_AUDIT_BASE_URL", raising=False)
+    code = main(["preflight", "--local-only"])
+    out = capsys.readouterr()
+    assert code == cli_exit.EX_OK
+    assert "Preflight: audit service" not in out.out
+
+
+def test_preflight_with_submit_without_api_key_fails_clearly(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GOVAI_AUDIT_BASE_URL", "http://audit.example")
+    monkeypatch.delenv("GOVAI_API_KEY", raising=False)
+    code = main(["preflight", "--with-submit"])
+    out = capsys.readouterr()
+    assert code == cli_exit.EX_USAGE
+    assert "requires GOVAI_API_KEY" in out.err
+
+
+def test_doctor_alias_follows_default_behavior_and_warns(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.delenv("GOVAI_AUDIT_BASE_URL", raising=False)
+    code = main(["doctor"])
+    out = capsys.readouterr()
+    assert code == cli_exit.EX_USAGE
+    assert "warning: 'govai doctor' is deprecated, use 'govai preflight'" in out.err
+    assert "requires GOVAI_AUDIT_BASE_URL" in out.err
 

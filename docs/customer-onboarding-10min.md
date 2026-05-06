@@ -34,6 +34,12 @@ export GOVAI_AUDIT_BASE_URL="https://audit.example.com"
 export GOVAI_API_KEY="YOUR_API_KEY"
 ```
 
+Preflight (fail-safe: validates local evidence pack + requires backend readiness):
+
+```bash
+govai preflight
+```
+
 Sanity check (must be 200):
 
 ```bash
