@@ -34,6 +34,12 @@ from aigov_py.discovery_policy_mapping import (
     triggered_by_discovery,
 )
 from aigov_py.policy_loader import load_policy_module, policy_identity, required_evidence_from_policy
+from aigov_py.policy_bundle_signing import (
+    load_trust_from_env_json,
+    sign_policy_bundle_ed25519,
+    verify_policy_bundle_ed25519,
+)
+from aigov_py.sigstore_verify import SigstoreIdentity, load_bundle_bytes, parse_json_payload, verify_dsse_bundle
 from aigov_py import export_bundle as export_bundle_mod
 from aigov_py import fetch_bundle_from_govai
 from aigov_py.prototype_domain import (
@@ -1734,7 +1740,7 @@ def build_parser() -> GovaiArgumentParser:
     )
 
     # Policy tooling (compile-only product layer)
-    s_policy = sub.add_parser("policy", help="Policy module tools (compile-only).")
+    s_policy = sub.add_parser("policy", help="Policy tools (modules + signed bundles).")
     s_policy_sub = s_policy.add_subparsers(dest="policy_cmd", required=True)
 
     s_policy_compile = s_policy_sub.add_parser(
@@ -1750,6 +1756,63 @@ def build_parser() -> GovaiArgumentParser:
         "--json",
         action="store_true",
         help="Print machine-readable JSON (policy identity + required_evidence).",
+    )
+
+    s_policy_sign = s_policy_sub.add_parser(
+        "sign-bundle",
+        help="Sign a govai.policy.v1 bundle using Ed25519 (governance-as-code).",
+    )
+    s_policy_sign.add_argument("--in", dest="in_path", required=True, help="Input policy bundle JSON path.")
+    s_policy_sign.add_argument("--out", dest="out_path", required=True, help="Output policy bundle JSON path.")
+    s_policy_sign.add_argument("--issuer-id", required=True, help="Policy issuer id (must match policy.issuer.issuer_id).")
+    s_policy_sign.add_argument("--signer", required=True, help="Signer identity label.")
+    s_policy_sign.add_argument("--private-key-base64", required=True, help="Ed25519 private key (base64, 32 bytes seed).")
+    s_policy_sign.add_argument("--created-at-utc", required=True, help="RFC3339 UTC timestamp.")
+    s_policy_sign.add_argument("--expires-at-utc", default=None, help="Optional RFC3339 UTC timestamp.")
+
+    s_policy_verify = s_policy_sub.add_parser(
+        "verify-bundle",
+        help="Verify a govai.policy.v1 bundle signature using trusted public keys in AIGOV_POLICY_TRUST_ED25519_JSON.",
+    )
+    s_policy_verify.add_argument("--path", required=True, help="Policy bundle JSON path.")
+
+    # Crypto verification (Sigstore/DSSE baseline)
+    s_crypto = sub.add_parser("crypto", help="Cryptographic verification tools.")
+    s_crypto_sub = s_crypto.add_subparsers(dest="crypto_cmd", required=True)
+
+    s_crypto_verify_pack = s_crypto_sub.add_parser(
+        "verify-evidence-pack",
+        help="Verify a Sigstore DSSE attestation binds run_id to events_content_sha256.",
+    )
+    s_crypto_verify_pack.add_argument(
+        "--run-id",
+        required=True,
+        help="Run id to verify.",
+    )
+    s_crypto_verify_pack.add_argument(
+        "--attestation-bundle",
+        required=True,
+        help="Path to Sigstore bundle JSON (DSSE).",
+    )
+    s_crypto_verify_pack.add_argument(
+        "--identity",
+        required=True,
+        help="Expected signing identity (e.g. email, workflow identity).",
+    )
+    s_crypto_verify_pack.add_argument(
+        "--issuer",
+        required=True,
+        help="Expected OIDC issuer for the signing identity.",
+    )
+    s_crypto_verify_pack.add_argument(
+        "--expected-events-content-sha256",
+        required=True,
+        help="Expected events_content_sha256 (usually from evidence_digest_manifest.json).",
+    )
+    s_crypto_verify_pack.add_argument(
+        "--sigstore-env",
+        default="prod",
+        help="Sigstore environment: prod|staging (default: prod).",
     )
 
     return p
@@ -1793,6 +1856,79 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             for item in req:
                 print(item)
+        return cli_exit.EX_OK
+
+    if args.cmd == "policy" and getattr(args, "policy_cmd", None) == "sign-bundle":
+        try:
+            sign_policy_bundle_ed25519(
+                str(getattr(args, "in_path")),
+                out_path=str(getattr(args, "out_path")),
+                issuer_id=str(getattr(args, "issuer_id")),
+                signer=str(getattr(args, "signer")),
+                private_key_base64=str(getattr(args, "private_key_base64")),
+                created_at_utc=str(getattr(args, "created_at_utc")),
+                expires_at_utc=getattr(args, "expires_at_utc"),
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"error: policy sign failed: {e}", file=sys.stderr)
+            return cli_exit.EX_ERR
+        return cli_exit.EX_OK
+
+    if args.cmd == "policy" and getattr(args, "policy_cmd", None) == "verify-bundle":
+        raw = str(getattr(args, "path", "") or "").strip()
+        if not raw:
+            print("error: --path is required", file=sys.stderr)
+            return cli_exit.EX_USAGE
+        try:
+            doc = json.loads(Path(raw).read_text(encoding="utf-8"))
+            trust_raw = os.environ.get("AIGOV_POLICY_TRUST_ED25519_JSON", "")
+            trust = load_trust_from_env_json(trust_raw)
+            if not trust:
+                raise ValueError("AIGOV_POLICY_TRUST_ED25519_JSON is empty/unset")
+            verify_policy_bundle_ed25519(doc, trust=trust)
+        except Exception as e:  # noqa: BLE001
+            print(f"error: policy verify failed: {e}", file=sys.stderr)
+            return cli_exit.EX_ERR
+        print("ok")
+        return cli_exit.EX_OK
+
+    if args.cmd == "crypto" and getattr(args, "crypto_cmd", None) == "verify-evidence-pack":
+        run_id = str(getattr(args, "run_id") or "").strip()
+        bundle_path = str(getattr(args, "attestation_bundle") or "").strip()
+        identity = str(getattr(args, "identity") or "").strip()
+        issuer = str(getattr(args, "issuer") or "").strip()
+        expected = str(getattr(args, "expected_events_content_sha256") or "").strip().lower()
+        sigstore_env = str(getattr(args, "sigstore_env") or "prod").strip()
+
+        if not run_id or not bundle_path or not identity or not issuer or not expected:
+            print("error: missing required arguments", file=sys.stderr)
+            return cli_exit.EX_USAGE
+
+        try:
+            payload_type, payload = verify_dsse_bundle(
+                bundle_json_bytes=load_bundle_bytes(bundle_path),
+                identity=SigstoreIdentity(identity=identity, issuer=issuer),
+                sigstore_env=sigstore_env,
+            )
+            doc = parse_json_payload(payload)
+            schema = str(doc.get("schema") or "").strip()
+            if schema != "aigov.evidence_attestation.v1":
+                raise ValueError(f"unexpected attestation schema: {schema!r}")
+            got_run = str(doc.get("run_id") or "").strip()
+            got_digest = str(doc.get("events_content_sha256") or "").strip().lower()
+            if got_run != run_id:
+                raise ValueError(f"run_id mismatch: expected={run_id} got={got_run}")
+            if got_digest != expected:
+                raise ValueError(
+                    f"events_content_sha256 mismatch: expected={expected} got={got_digest}"
+                )
+            if not str(payload_type or "").strip():
+                raise ValueError("missing DSSE payload type")
+        except Exception as e:  # noqa: BLE001
+            print(f"error: crypto verify failed: {e}", file=sys.stderr)
+            return cli_exit.EX_ERR
+
+        print("ok")
         return cli_exit.EX_OK
 
     if args.cmd == "experiment":

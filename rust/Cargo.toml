@@ -27,6 +27,10 @@ hmac = "0.12"
 subtle = "2.6"
 base64 = "0.22"
 urlencoding = "2.1"
+ed25519-dalek = { version = "2", features = ["pkcs8"] }
+aws-config = "1"
+aws-sdk-s3 = "1"
+governor = "0.7"
 
 [dev-dependencies]
 hmac = "0.12"

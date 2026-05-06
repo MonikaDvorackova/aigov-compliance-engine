@@ -27,11 +27,15 @@ fn database_url() -> Option<String> {
 
 async fn test_router(pool: sqlx::PgPool, metering: MeteringConfig) -> Router {
     let api_usage = ApiUsageState::from_env(&pool).expect("api usage");
+    let resolved = ResolvedPolicyConfig::all_defaults();
+    let policy_store =
+        aigov_audit::policy_store::PolicyStore::load_for_deployment(GovaiEnvironment::Dev, resolved)
+            .expect("policy store");
     govai_api::audit_router(
         "audit_log.jsonl",
         policy_version_for(GovaiEnvironment::Dev),
         GovaiEnvironment::Dev,
-        ResolvedPolicyConfig::all_defaults().config,
+        policy_store,
         api_usage,
         pool,
         metering,

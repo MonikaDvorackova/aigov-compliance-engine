@@ -10,8 +10,7 @@ use crate::db::{self, DbPool};
 use crate::evidence_usage;
 use crate::govai_environment::GovaiEnvironment;
 use crate::metering::{self, GovaiPlan, MeteringConfig, MeteringReject};
-use crate::policy;
-use crate::policy_config::PolicyConfig;
+use crate::policy_store::PolicyStore;
 use crate::pricing;
 use crate::project;
 use crate::projection;
@@ -72,6 +71,56 @@ fn api_err(
         Some(serde_json::Value::Object(extra))
     };
     api_error_with(status, code, message, hint, details, extra)
+}
+
+/// Ledger view used for deterministic policy evaluation at ingest time.
+///
+/// This is intentionally conservative:
+/// - missing ledger file => empty iterator
+/// - parse errors => treated as hard policy failures (fail-closed via caller)
+struct LedgerFileView {
+    log_path: String,
+}
+
+impl crate::policy_engine::LedgerView for LedgerFileView {
+    fn iter_events_for_run<'a>(
+        &'a self,
+        run_id: &'a str,
+    ) -> Box<dyn Iterator<Item = EvidenceEvent> + 'a> {
+        // We must not panic here. Errors are surfaced as a single synthetic event
+        // that will deterministically fail gates when required.
+        let scan = crate::audit_store::scan_ledger_records(self.log_path.as_str());
+        let events: Vec<EvidenceEvent> = match scan {
+            Ok((records, _diag)) => {
+                let mut out: Vec<EvidenceEvent> = Vec::new();
+                for rec in records {
+                    if let Ok(ev) = serde_json::from_str::<EvidenceEvent>(&rec.event_json) {
+                        if ev.run_id == run_id {
+                            out.push(ev);
+                        }
+                    } else {
+                        // Fail-closed: inject a marker event that will never satisfy
+                        // any real gate but allows evaluation to proceed deterministically.
+                        out.push(EvidenceEvent {
+                            event_id: "policy_parse_error".to_string(),
+                            event_type: "policy_parse_error".to_string(),
+                            ts_utc: "1970-01-01T00:00:00Z".to_string(),
+                            actor: "system".to_string(),
+                            system: "govai".to_string(),
+                            run_id: run_id.to_string(),
+                            environment: None,
+                            payload: json!({ "error": "log_parse_error" }),
+                        });
+                        break;
+                    }
+                }
+                out
+            }
+            Err(_) => Vec::new(),
+        };
+
+        Box::new(events.into_iter())
+    }
 }
 
 fn normalize_error_code(raw: &str) -> String {
@@ -271,7 +320,7 @@ pub struct AuditState {
     pub ledger_base: &'static str,
     pub policy_version: &'static str,
     pub deployment_env: GovaiEnvironment,
-    pub policy: PolicyConfig,
+    pub policy_store: PolicyStore,
     pub pool: DbPool,
     pub metering: MeteringConfig,
 }
@@ -402,7 +451,14 @@ async fn ingest(
         }
     };
 
-    if let Err(e) = policy::enforce(&event, &log_path, &audit.policy) {
+    // Deterministic, declarative policy enforcement (bundle policy if configured; else legacy adapter).
+    let ledger = LedgerFileView {
+        log_path: log_path.clone(),
+    };
+    if let Err(e) = audit
+        .policy_store
+        .enforce_ingest_for_request(&ledger_tid, &event, &ledger)
+    {
         return api_err(
             StatusCode::BAD_REQUEST,
             "POLICY_VIOLATION",
@@ -1035,6 +1091,153 @@ async fn verify(
     (
         StatusCode::OK,
         Json(json!({ "ok": true, "policy_version": audit.policy_version })),
+    )
+}
+
+async fn verify_immutable(
+    State(audit): State<AuditState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let (log_path, tenant_id) = match tenant_log_path(&audit, &headers) {
+        Ok(p) => p,
+        Err(e) => {
+            return api_err(
+                StatusCode::BAD_REQUEST,
+                "MISSING_TENANT_CONTEXT",
+                "Missing tenant context.",
+                "Provide `Authorization: Bearer <api_key>`.",
+                Some(serde_json::Value::String(e)),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+
+    if let Err(e) = crate::audit_store::verify_chain(&log_path) {
+        return api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "CHAIN_INVALID",
+            "The append-only chain failed verification. The ledger may have been corrupted.",
+            "Retry later. If this persists, contact support (this is a server-side integrity issue).",
+            Some(json!({ "raw": e })),
+            Some(audit.policy_version),
+            None,
+        );
+    }
+    if let Err(e) = crate::audit_store::verify_checkpoints(&log_path) {
+        return api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "CHECKPOINT_INVALID",
+            "Ledger checkpoint verification failed. The ledger or checkpoint log may have been tampered with.",
+            "Retry later. If this persists, contact support (this is a server-side integrity issue).",
+            Some(json!({ "raw": e })),
+            Some(audit.policy_version),
+            None,
+        );
+    }
+
+    let cfg = match crate::immutable_store::ImmutableStoreConfig::from_env() {
+        Ok(c) => c,
+        Err(e) => {
+            return api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "IMMUTABLE_CONFIG_INVALID",
+                "Immutable audit backend configuration is invalid.",
+                "Fix GOVAI_IMMUTABLE_BACKEND and related env vars.",
+                Some(json!({ "raw": e })),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+    if !cfg.validate_startup(audit.deployment_env).is_ok() || matches!(cfg.kind, crate::immutable_store::ImmutableBackendKind::Disabled) {
+        return api_err(
+            StatusCode::BAD_REQUEST,
+            "IMMUTABLE_BACKEND_DISABLED",
+            "Immutable audit backend is not enabled for this deployment.",
+            "Enable GOVAI_IMMUTABLE_BACKEND=aws_s3_object_lock and configure the bucket.",
+            None,
+            Some(audit.policy_version),
+            None,
+        );
+    }
+
+    let store = match crate::immutable_store::ImmutableStore::init(cfg).await {
+        Ok(s) => s,
+        Err(e) => {
+            return api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "IMMUTABLE_BACKEND_INIT_FAILED",
+                "Could not initialize immutable audit backend.",
+                "Retry later. If this persists, contact support.",
+                Some(json!({ "raw": e })),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+
+    let Some(cp) = (match crate::audit_store::latest_checkpoint(&log_path) {
+        Ok(x) => x,
+        Err(e) => {
+            return api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CHECKPOINT_READ_FAILED",
+                "Could not read ledger checkpoints.",
+                "Retry later. If this persists, contact support.",
+                Some(json!({ "raw": e })),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    }) else {
+        return api_err(
+            StatusCode::NOT_FOUND,
+            "NO_CHECKPOINT",
+            "No checkpoint exists for this tenant ledger yet.",
+            "Generate an export to force a checkpoint, or submit evidence to create one.",
+            None,
+            Some(audit.policy_version),
+            None,
+        );
+    };
+
+    // Anchor id is the checkpoint digest (events_content_sha256) for deterministic lookup.
+    let anchor_id = cp.events_content_sha256.clone();
+    let got = match store.get_anchor_bytes(&tenant_id, &anchor_id).await {
+        Ok(x) => x,
+        Err(e) => {
+            return api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "IMMUTABLE_READ_FAILED",
+                "Could not read immutable anchor object.",
+                "Retry later. If this persists, contact support.",
+                Some(json!({ "raw": e })),
+                Some(audit.policy_version),
+                None,
+            );
+        }
+    };
+    if got.is_none() {
+        return api_err(
+            StatusCode::NOT_FOUND,
+            "IMMUTABLE_ANCHOR_MISSING",
+            "Immutable anchor object is missing for the current ledger checkpoint.",
+            "Run anchor-now or investigate immutable backend configuration and retention.",
+            Some(json!({ "anchor_id": anchor_id })),
+            Some(audit.policy_version),
+            None,
+        );
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+          "ok": true,
+          "policy_version": audit.policy_version,
+          "tenant_id": tenant_id,
+          "anchor_id": anchor_id
+        })),
     )
 }
 
@@ -2355,11 +2558,34 @@ async fn billing_reconciliation_route(
     }
 }
 
+async fn rate_limit_middleware(
+    State(audit): State<AuditState>,
+    request: Request,
+    next: Next,
+) -> axum::response::Response {
+    // Only apply to gated audit routes (those already require API key), but enforce
+    // fail-closed behavior if tenant context can't be established.
+    let headers = request.headers().clone();
+    if let Err(e) = crate::rate_limit::check_request_allowed(&headers, audit.deployment_env) {
+        return api_err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "RATE_LIMITED",
+            "Request rate limit exceeded.",
+            "Retry later. If this persists, contact support.",
+            Some(json!({ "raw": e })),
+            Some(audit.policy_version),
+            None,
+        )
+        .into_response();
+    }
+    next.run(request).await
+}
+
 pub fn audit_router(
     log_path: &'static str,
     policy_version: &'static str,
     deployment_env: GovaiEnvironment,
-    policy: PolicyConfig,
+    policy_store: PolicyStore,
     api_usage: ApiUsageState,
     pool: DbPool,
     metering: MeteringConfig,
@@ -2368,7 +2594,7 @@ pub fn audit_router(
         ledger_base: log_path,
         policy_version,
         deployment_env,
-        policy,
+        policy_store,
         pool,
         metering,
     };
@@ -2381,6 +2607,7 @@ pub fn audit_router(
     });
     let billing_enforcement_layer =
         middleware::from_fn_with_state(state.clone(), billing_enforcement_middleware);
+    let rate_limit_layer = middleware::from_fn_with_state(state.clone(), rate_limit_middleware);
 
     let unauthenticated = Router::new()
         .route("/ready", get(readiness_check))
@@ -2395,6 +2622,7 @@ pub fn audit_router(
         .route("/billing/status", get(billing_status_route))
         .route("/billing/report-usage", post(billing_report_usage_route))
         .route("/verify", get(verify))
+        .route("/verify-immutable", get(verify_immutable))
         .route("/bundle", get(bundle_route))
         .route("/bundle-hash", get(bundle_hash_route))
         .route("/verify-log", get(verify_log))
@@ -2403,6 +2631,7 @@ pub fn audit_router(
         .route("/billing/portal-session", post(billing_portal_route))
         .route("/billing/invoices", get(billing_invoices_route))
         .route("/billing/reconciliation", get(billing_reconciliation_route))
+        .layer(rate_limit_layer)
         .layer(billing_enforcement_layer)
         .layer(audit_key_layer)
         .with_state(state.clone());
@@ -3079,9 +3308,12 @@ mod api_error_response_tests {
             ledger_base: ledger_base_static,
             policy_version,
             deployment_env: GovaiEnvironment::Dev,
-            policy: crate::policy_config::load_for_deployment(GovaiEnvironment::Dev)
-                .expect("test policy load")
-                .config,
+            policy_store: {
+                let resolved = crate::policy_config::load_for_deployment(GovaiEnvironment::Dev)
+                    .expect("test policy load");
+                crate::policy_store::PolicyStore::load_for_deployment(GovaiEnvironment::Dev, resolved)
+                    .expect("policy store load")
+            },
             pool: pool_lazy_for_tests(),
             metering: crate::metering::MeteringConfig {
                 enabled: false,
@@ -3488,6 +3720,14 @@ pub struct PromotionDecisionBody {
     pub decision: String,
 }
 
+#[derive(Deserialize)]
+pub struct DelegateApprovalBody {
+    /// `"review"` or `"promotion"`
+    pub scope: String,
+    /// Supabase user id (UUID) receiving the delegation.
+    pub delegatee_user_id: String,
+}
+
 async fn list_compliance_workflow(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -3778,6 +4018,30 @@ async fn post_review_decision(
         }
     };
 
+    // Separation of duties: workflow owner cannot review their own run unless explicitly delegated.
+    if let Ok(Some(wf)) = db::get_compliance_workflow(&state.pool, team_id, &rid).await {
+        if wf.created_by == user.user_id {
+            let delegated = db::has_workflow_delegation(
+                &state.pool,
+                team_id,
+                &rid,
+                "review",
+                user.user_id,
+            )
+            .await
+            .unwrap_or(false);
+            if !delegated {
+                return json_error(
+                    StatusCode::FORBIDDEN,
+                    "separation_of_duties",
+                    "Separation-of-duties: workflow owner cannot review their own run.",
+                    None,
+                    None,
+                );
+            }
+        }
+    }
+
     let rec =
         match db::transition_workflow_review(&state.pool, team_id, &rid, user.user_id, approve)
             .await
@@ -3793,6 +4057,17 @@ async fn post_review_decision(
                 )
             }
         };
+
+    let _ = db::insert_identity_audit_log(
+        &state.pool,
+        team_id,
+        user.user_id,
+        "workflow_review",
+        "run",
+        &rid,
+        json!({ "decision": body.decision }),
+    )
+    .await;
 
     match rec {
         Some(r) => (StatusCode::OK, Json(json_ok_workflow(workflow_to_out(r)))),
@@ -3880,6 +4155,30 @@ async fn post_promotion_decision(
         }
     };
 
+    // Separation of duties: workflow owner cannot decide promotion for their own run unless explicitly delegated.
+    if let Ok(Some(wf)) = db::get_compliance_workflow(&state.pool, team_id, &rid).await {
+        if wf.created_by == user.user_id {
+            let delegated = db::has_workflow_delegation(
+                &state.pool,
+                team_id,
+                &rid,
+                "promotion",
+                user.user_id,
+            )
+            .await
+            .unwrap_or(false);
+            if !delegated {
+                return json_error(
+                    StatusCode::FORBIDDEN,
+                    "separation_of_duties",
+                    "Separation-of-duties: workflow owner cannot decide promotion for their own run.",
+                    None,
+                    None,
+                );
+            }
+        }
+    }
+
     let rec =
         match db::transition_workflow_promotion(&state.pool, team_id, &rid, user.user_id, allow)
             .await
@@ -3896,6 +4195,17 @@ async fn post_promotion_decision(
             }
         };
 
+    let _ = db::insert_identity_audit_log(
+        &state.pool,
+        team_id,
+        user.user_id,
+        "workflow_promotion",
+        "run",
+        &rid,
+        json!({ "decision": body.decision }),
+    )
+    .await;
+
     match rec {
         Some(r) => (
             StatusCode::OK,
@@ -3911,6 +4221,116 @@ async fn post_promotion_decision(
             })),
         ),
     }
+}
+
+async fn post_delegate_approval(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+    Json(body): Json<DelegateApprovalBody>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let cfg = match AuthConfig::from_env() {
+        Ok(c) => c,
+        Err(e) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "config_error",
+                "Server authentication is not configured correctly.",
+                None,
+                Some(json!({ "details": e })),
+            )
+        }
+    };
+
+    let user = match crate::auth::require_user(&cfg, &headers).await {
+        Ok(u) => u,
+        Err(resp) => return resp,
+    };
+
+    let team_id = match resolve_team_id(&state.pool, &user, &headers).await {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+
+    let perms = match team_product_permissions(&state.pool, team_id, user.user_id).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    if !perms.admin_override {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "ok": false,
+                "error": "forbidden",
+                "code": "insufficient_role",
+                "message": "You do not have permission to perform this action.",
+                "reason": "INSUFFICIENT_ROLE",
+                "required_permission": "admin_override"
+            })),
+        );
+    }
+
+    let rid = run_id.trim().to_string();
+    if rid.is_empty() {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "run_id_required",
+            "Missing required path parameter run_id.",
+            None,
+            None,
+        );
+    }
+
+    let scope = body.scope.trim();
+    if scope != "review" && scope != "promotion" {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_scope",
+            "Invalid scope. Expected `review` or `promotion`.",
+            None,
+            Some(json!({ "expected": ["review", "promotion"] })),
+        );
+    }
+
+    let delegatee = body.delegatee_user_id.trim();
+    let delegatee = match Uuid::parse_str(delegatee) {
+        Ok(u) => u,
+        Err(_) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_delegatee_user_id",
+                "Invalid delegatee_user_id (expected UUID).",
+                None,
+                None,
+            )
+        }
+    };
+
+    if let Err(e) =
+        db::create_workflow_delegation(&state.pool, team_id, &rid, scope, user.user_id, delegatee)
+            .await
+    {
+        return json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "db_error",
+            "We could not persist the delegation. Please retry.",
+            None,
+            Some(json!({ "details": e.to_string() })),
+        );
+    }
+
+    let _ = db::insert_identity_audit_log(
+        &state.pool,
+        team_id,
+        user.user_id,
+        "workflow_delegation_created",
+        "run",
+        &rid,
+        json!({ "scope": scope, "delegatee_user_id": delegatee.to_string() }),
+    )
+    .await;
+
+    (StatusCode::OK, Json(json!({ "ok": true })))
 }
 
 pub fn compliance_workflow_router(pool: DbPool) -> Router {
@@ -3932,6 +4352,10 @@ pub fn compliance_workflow_router(pool: DbPool) -> Router {
         .route(
             "/api/compliance-workflow/:run_id/promotion",
             post(post_promotion_decision),
+        )
+        .route(
+            "/api/compliance-workflow/:run_id/delegate",
+            post(post_delegate_approval),
         )
         .with_state(state)
 }

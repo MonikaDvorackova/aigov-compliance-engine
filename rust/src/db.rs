@@ -6,7 +6,7 @@ use uuid::Uuid;
 pub type DbPool = PgPool;
 
 /// Count of `.sql` files under `rust/migrations/`. Updated when migrations are added; tests assert parity.
-pub const EXPECTED_SQLX_MIGRATION_COUNT: i64 = 16;
+pub const EXPECTED_SQLX_MIGRATION_COUNT: i64 = 17;
 
 pub fn postgres_url_configured_nonempty() -> Result<(), String> {
     let url = std::env::var("GOVAI_DATABASE_URL")
@@ -499,4 +499,85 @@ pub async fn transition_workflow_promotion(
     .await?;
 
     Ok(row.map(|r| map_workflow_row(&r)))
+}
+
+pub async fn insert_identity_audit_log(
+    pool: &DbPool,
+    team_id: Uuid,
+    actor_user_id: Uuid,
+    action: &str,
+    object_type: &str,
+    object_id: &str,
+    details: serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        insert into public.identity_audit_log
+          (team_id, actor_user_id, action, object_type, object_id, details)
+        values
+          ($1, $2, $3, $4, $5, $6)
+        "#,
+    )
+    .bind(team_id)
+    .bind(actor_user_id)
+    .bind(action)
+    .bind(object_type)
+    .bind(object_id)
+    .bind(details)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn create_workflow_delegation(
+    pool: &DbPool,
+    team_id: Uuid,
+    run_id: &str,
+    scope: &str,
+    delegator_user_id: Uuid,
+    delegatee_user_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        insert into public.compliance_workflow_delegations
+          (team_id, run_id, scope, delegator_user_id, delegatee_user_id)
+        values
+          ($1, $2, $3, $4, $5)
+        "#,
+    )
+    .bind(team_id)
+    .bind(run_id)
+    .bind(scope)
+    .bind(delegator_user_id)
+    .bind(delegatee_user_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn has_workflow_delegation(
+    pool: &DbPool,
+    team_id: Uuid,
+    run_id: &str,
+    scope: &str,
+    delegatee_user_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    let row = sqlx::query_scalar::<_, i64>(
+        r#"
+        select 1
+        from public.compliance_workflow_delegations
+        where team_id = $1
+          and run_id = $2
+          and scope = $3
+          and delegatee_user_id = $4
+        limit 1
+        "#,
+    )
+    .bind(team_id)
+    .bind(run_id)
+    .bind(scope)
+    .bind(delegatee_user_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.is_some())
 }
