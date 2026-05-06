@@ -10,15 +10,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: gitleaks (secret scanning)
         uses: gitleaks/gitleaks-action@v2
         env:
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   dependency-scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: trivy fs (dependency + vuln scanning)
         uses: aquasecurity/trivy-action@0.30.0
         with:
@@ -27,4 +30,3 @@ jobs:
           format: "table"
           severity: "CRITICAL,HIGH"
           exit-code: "1"
-
