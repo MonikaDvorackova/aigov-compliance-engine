@@ -368,6 +368,7 @@ def test_check_exits_err_when_verdict_missing(capsys: pytest.CaptureFixture[str]
 def _verify_pack_artifact_dir(tmp_path: Path, run_id: str) -> Path:
     d = tmp_path / "art"
     d.mkdir()
+    promoted_digest = "11" * 32
     bundle = {
         "ok": True,
         "run_id": run_id,
@@ -381,20 +382,45 @@ def _verify_pack_artifact_dir(tmp_path: Path, run_id: str) -> Path:
                 "run_id": run_id,
                 "payload": {"openai": False},
             }
+            ,
+            {
+                "event_id": "e2",
+                "event_type": "model_promoted",
+                "ts_utc": "2020-01-01T00:00:01Z",
+                "actor": "ci",
+                "system": "github_actions",
+                "run_id": run_id,
+                "payload": {
+                    "artifact_path": "s3://bucket/model",
+                    "artifact_sha256": promoted_digest,
+                    "promotion_reason": "ok",
+                    "assessment_id": "a1",
+                    "risk_id": "r1",
+                    "dataset_governance_commitment": "c1",
+                    "approved_human_event_id": "h1",
+                    "ai_system_id": "ai1",
+                    "dataset_id": "d1",
+                    "model_version_id": "m1",
+                },
+            },
         ],
     }
     (d / f"{run_id}.json").write_text(json.dumps(bundle), encoding="utf-8")
-    (d / "evidence_digest_manifest.json").write_text(
-        json.dumps({"run_id": run_id, "events_content_sha256": "ab" * 32}),
-        encoding="utf-8",
-    )
+    from aigov_py.portable_evidence_digest import portable_evidence_digest_v1
+
+    digest = portable_evidence_digest_v1(run_id, bundle["events"]).lower()
+    (d / "evidence_digest_manifest.json").write_text(json.dumps({"run_id": run_id, "events_content_sha256": digest}), encoding="utf-8")
     return d
 
 
 def test_verify_evidence_pack_logs_skipped_export(tmp_path, capsys: pytest.CaptureFixture[str]) -> None:
     run_id = "rid-verify-skip"
     d = _verify_pack_artifact_dir(tmp_path, run_id)
-    with patch("aigov_py.cli.eag.bundle_hash_digest", return_value={"events_content_sha256": "ab" * 32}):
+    from aigov_py.portable_evidence_digest import portable_evidence_digest_v1
+
+    bundle = json.loads((d / f"{run_id}.json").read_text(encoding="utf-8"))
+    digest = portable_evidence_digest_v1(run_id, bundle["events"]).lower()
+    with patch("aigov_py.cli.eag.bundle_hash_digest", return_value={"events_content_sha256": digest}):
         with patch(
             "aigov_py.cli.eag.fetch_export_evidence_hashes",
             return_value=(None, "export not available"),
@@ -420,7 +446,11 @@ def test_verify_evidence_pack_logs_skipped_export(tmp_path, capsys: pytest.Captu
 def test_verify_evidence_pack_require_export_fails_when_export_unavailable(tmp_path) -> None:
     run_id = "rid-verify-req"
     d = _verify_pack_artifact_dir(tmp_path, run_id)
-    with patch("aigov_py.cli.eag.bundle_hash_digest", return_value={"events_content_sha256": "ab" * 32}):
+    from aigov_py.portable_evidence_digest import portable_evidence_digest_v1
+
+    bundle = json.loads((d / f"{run_id}.json").read_text(encoding="utf-8"))
+    digest = portable_evidence_digest_v1(run_id, bundle["events"]).lower()
+    with patch("aigov_py.cli.eag.bundle_hash_digest", return_value={"events_content_sha256": digest}):
         with patch(
             "aigov_py.cli.eag.fetch_export_evidence_hashes",
             return_value=(None, "export not available"),
@@ -439,4 +469,151 @@ def test_verify_evidence_pack_require_export_fails_when_export_unavailable(tmp_p
                     "--require-export",
                 ]
             )
+    assert code == cli_exit.EX_ERR
+
+
+def test_verify_evidence_pack_fails_on_tampered_bundle_digest(tmp_path: Path) -> None:
+    run_id = "rid-verify-tamper-bundle"
+    d = _verify_pack_artifact_dir(tmp_path, run_id)
+    # Tamper bundle without updating manifest.
+    bundle_path = d / f"{run_id}.json"
+    ob = json.loads(bundle_path.read_text(encoding="utf-8"))
+    assert isinstance(ob, dict)
+    assert isinstance(ob.get("events"), list)
+    ob["events"][0]["payload"]["openai"] = True  # deterministic tamper
+    bundle_path.write_text(json.dumps(ob), encoding="utf-8")
+
+    # Even if hosted digest matches the manifest, local recompute must fail first (fail-closed).
+    manifest = json.loads((d / "evidence_digest_manifest.json").read_text(encoding="utf-8"))
+    with patch("aigov_py.cli.eag.bundle_hash_digest", return_value={"events_content_sha256": manifest["events_content_sha256"]}):
+        code = main(
+            [
+                "--audit-base-url",
+                "http://audit.test",
+                "--api-key",
+                "k",
+                "verify-evidence-pack",
+                "--path",
+                str(d),
+                "--run-id",
+                run_id,
+            ]
+        )
+    assert code == cli_exit.EX_ERR
+
+
+def test_verify_evidence_pack_fails_when_promoted_digest_missing(tmp_path: Path) -> None:
+    run_id = "rid-verify-missing-artifact-digest"
+    d = _verify_pack_artifact_dir(tmp_path, run_id)
+    bundle_path = d / f"{run_id}.json"
+    ob = json.loads(bundle_path.read_text(encoding="utf-8"))
+    # Remove promoted digest.
+    for e in ob.get("events", []):
+        if e.get("event_type") == "model_promoted":
+            e.get("payload", {}).pop("artifact_sha256", None)
+    bundle_path.write_text(json.dumps(ob), encoding="utf-8")
+
+    from aigov_py.portable_evidence_digest import portable_evidence_digest_v1
+
+    # Update manifest to match the tampered bundle so we isolate the promoted digest check.
+    digest = portable_evidence_digest_v1(run_id, ob["events"]).lower()
+    (d / "evidence_digest_manifest.json").write_text(json.dumps({"run_id": run_id, "events_content_sha256": digest}), encoding="utf-8")
+
+    with patch("aigov_py.cli.eag.bundle_hash_digest", return_value={"events_content_sha256": digest}):
+        code = main(
+            [
+                "--audit-base-url",
+                "http://audit.test",
+                "--api-key",
+                "k",
+                "verify-evidence-pack",
+                "--path",
+                str(d),
+                "--run-id",
+                run_id,
+            ]
+        )
+    assert code == cli_exit.EX_ERR
+
+
+def test_verify_evidence_pack_with_artifact_file_sha256_matches(tmp_path: Path) -> None:
+    run_id = "rid-verify-artifact-file-ok"
+    d = _verify_pack_artifact_dir(tmp_path, run_id)
+
+    # Create a local artifact file and set promoted digest to match it.
+    artifact_path = tmp_path / "model.bin"
+    artifact_path.write_bytes(b"hello-world")
+    import hashlib
+
+    sha = hashlib.sha256(artifact_path.read_bytes()).hexdigest().lower()
+
+    bundle_path = d / f"{run_id}.json"
+    ob = json.loads(bundle_path.read_text(encoding="utf-8"))
+    for e in ob.get("events", []):
+        if e.get("event_type") == "model_promoted":
+            e.get("payload", {})["artifact_sha256"] = sha
+    bundle_path.write_text(json.dumps(ob), encoding="utf-8")
+
+    from aigov_py.portable_evidence_digest import portable_evidence_digest_v1
+
+    digest = portable_evidence_digest_v1(run_id, ob["events"]).lower()
+    (d / "evidence_digest_manifest.json").write_text(json.dumps({"run_id": run_id, "events_content_sha256": digest}), encoding="utf-8")
+
+    with patch("aigov_py.cli.eag.bundle_hash_digest", return_value={"events_content_sha256": digest}):
+        with patch("aigov_py.cli.get_compliance_summary", return_value={"ok": True, "verdict": "VALID"}):
+            code = main(
+                [
+                    "--audit-base-url",
+                    "http://audit.test",
+                    "--api-key",
+                    "k",
+                    "verify-evidence-pack",
+                    "--path",
+                    str(d),
+                    "--run-id",
+                    run_id,
+                    "--artifact-file",
+                    str(artifact_path),
+                ]
+            )
+    assert code == cli_exit.EX_OK
+
+
+def test_verify_evidence_pack_with_artifact_file_sha256_mismatch_fails(tmp_path: Path) -> None:
+    run_id = "rid-verify-artifact-file-bad"
+    d = _verify_pack_artifact_dir(tmp_path, run_id)
+
+    artifact_path = tmp_path / "model.bin"
+    artifact_path.write_bytes(b"hello-world")
+
+    # Set promoted digest to a swapped/tampered value.
+    bundle_path = d / f"{run_id}.json"
+    ob = json.loads(bundle_path.read_text(encoding="utf-8"))
+    for e in ob.get("events", []):
+        if e.get("event_type") == "model_promoted":
+            e.get("payload", {})["artifact_sha256"] = "ff" * 32
+    bundle_path.write_text(json.dumps(ob), encoding="utf-8")
+
+    from aigov_py.portable_evidence_digest import portable_evidence_digest_v1
+
+    # Keep manifest consistent with the bundle to isolate the artifact-file check.
+    digest = portable_evidence_digest_v1(run_id, ob["events"]).lower()
+    (d / "evidence_digest_manifest.json").write_text(json.dumps({"run_id": run_id, "events_content_sha256": digest}), encoding="utf-8")
+
+    with patch("aigov_py.cli.eag.bundle_hash_digest", return_value={"events_content_sha256": digest}):
+        code = main(
+            [
+                "--audit-base-url",
+                "http://audit.test",
+                "--api-key",
+                "k",
+                "verify-evidence-pack",
+                "--path",
+                str(d),
+                "--run-id",
+                run_id,
+                "--artifact-file",
+                str(artifact_path),
+            ]
+        )
     assert code == cli_exit.EX_ERR

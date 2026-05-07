@@ -578,6 +578,15 @@ fn enforce_model_promoted(
         .and_then(|v| v.as_str())
         .map(|s| !s.trim().is_empty())
         .unwrap_or(false);
+    let artifact_digest_ok = p
+        .get("artifact_sha256")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().len() == 64)
+        .unwrap_or(false)
+        || p.get("artifact_digest_sha256")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().len() == 64)
+            .unwrap_or(false);
     let promotion_reason_ok = p
         .get("promotion_reason")
         .and_then(|v| v.as_str())
@@ -614,10 +623,10 @@ fn enforce_model_promoted(
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_string());
 
-    if !(artifact_path_ok && promotion_reason_ok) {
+    if !(artifact_path_ok && promotion_reason_ok && artifact_digest_ok) {
         return Err(PolicyViolation::new(
             CODE_SCHEMA_INVALID,
-            "policy_violation: model_promoted payload must include artifact_path(str) and promotion_reason(str)",
+            "policy_violation: model_promoted payload must include artifact_path(str), promotion_reason(str), and artifact digest (artifact_sha256 or artifact_digest_sha256, 64-char hex)",
         ));
     }
 
@@ -1088,6 +1097,7 @@ mod gate_tests {
             environment: None,
             payload: serde_json::json!({
                 "artifact_path": "s3://bucket/model",
+                "artifact_sha256": "11".repeat(32),
                 "promotion_reason": "metrics ok",
                 "assessment_id": "a1",
                 "risk_id": "r1",
@@ -1097,6 +1107,20 @@ mod gate_tests {
                 "model_version_id": "mv1",
             }),
         }
+    }
+
+    #[test]
+    fn model_promoted_rejected_when_artifact_digest_missing() {
+        let cfg = PolicyConfig::default();
+        let dir = tempfile::TempDir::new().unwrap();
+        let log = dir.path().join("empty.jsonl");
+        let mut ev = model_promoted_ev();
+        if let Some(obj) = ev.payload.as_object_mut() {
+            obj.remove("artifact_sha256");
+        }
+        let err = enforce(&ev, log.to_str().unwrap(), &cfg).unwrap_err();
+        assert_eq!(err.code, CODE_SCHEMA_INVALID);
+        assert!(!err.message.trim().is_empty());
     }
 
     fn human_approved_ev() -> EvidenceEvent {

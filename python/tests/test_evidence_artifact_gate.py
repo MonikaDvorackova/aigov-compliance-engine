@@ -213,17 +213,39 @@ def _two_event_artifact_dir(tmp_path: Path) -> tuple[Path, str]:
         "run_id": run_id,
         "payload": {"openai": False},
     }
+    promoted = {
+        "event_type": "model_promoted",
+        "ts_utc": "2020-01-01T00:02:00Z",
+        "actor": "ci",
+        "system": "github_actions",
+        "run_id": run_id,
+        "payload": {
+            "artifact_path": "s3://bucket/model",
+            "artifact_sha256": "11" * 32,
+            "promotion_reason": "ok",
+            "assessment_id": "a1",
+            "risk_id": "r1",
+            "dataset_governance_commitment": "c1",
+            "approved_human_event_id": "h1",
+            "ai_system_id": "ai1",
+            "dataset_id": "d1",
+            "model_version_id": "m1",
+        },
+    }
     bundle = {
         "ok": True,
         "run_id": run_id,
         "events": [
             {**ev, "event_id": "e1"},
-            {**ev, "event_id": "e2", "ts_utc": "2020-01-01T00:01:00Z"},
+            {**promoted, "event_id": "e2"},
         ],
     }
     (d / f"{run_id}.json").write_text(json.dumps(bundle), encoding="utf-8")
+    from aigov_py.portable_evidence_digest import portable_evidence_digest_v1
+
+    digest = portable_evidence_digest_v1(run_id, bundle["events"]).lower()
     (d / "evidence_digest_manifest.json").write_text(
-        json.dumps({"run_id": run_id, "events_content_sha256": ("ab" * 32)}, indent=2),
+        json.dumps({"run_id": run_id, "events_content_sha256": digest}, indent=2),
         encoding="utf-8",
     )
     return d, run_id
@@ -330,7 +352,8 @@ def test_verify_evidence_pack_still_runs_digest_after_idempotent_submit(tmp_path
 
     def fake_bundle_hash_digest(cli: object, rid: str) -> dict:
         digest_calls.append(rid)
-        return {"ok": True, "events_content_sha256": "ab" * 32, "run_id": rid}
+        manifest = json.loads((artifact_dir / "evidence_digest_manifest.json").read_text(encoding="utf-8"))
+        return {"ok": True, "events_content_sha256": manifest["events_content_sha256"], "run_id": rid}
 
     with patch("aigov_py.evidence_artifact_gate.submit_event", side_effect=fake_submit):
         c_submit = main(

@@ -715,11 +715,27 @@ def _verify_artifact_digest_continuity(
     artifact_dir: Path,
     run_id: str,
     require_export: bool = False,
+    artifact_file: Path | None = None,
 ) -> int:
     try:
+        bundle, _bundle_path = eag.load_bundle(run_id, artifact_dir)
         man = eag.load_manifest(artifact_dir)
     except (OSError, json.JSONDecodeError, TypeError, FileNotFoundError) as exc:
-        print(f"ERROR: cannot read digest manifest: {exc}", file=sys.stderr)
+        print(f"ERROR: cannot read evidence pack: {exc}", file=sys.stderr)
+        return cli_exit.EX_ERR
+
+    # Phase 1 prerequisite: local bundle must match CI digest manifest (fail-closed).
+    br = str(bundle.get("run_id") or "").strip()
+    if br != run_id.strip():
+        print(
+            f"ERROR: bundle run_id mismatch (bundle={br!r} expected={run_id!r})",
+            file=sys.stderr,
+        )
+        return cli_exit.EX_ERR
+
+    events = bundle.get("events")
+    if not isinstance(events, list):
+        print("ERROR: bundle.events must be a list", file=sys.stderr)
         return cli_exit.EX_ERR
     mr = str(man.get("run_id") or "").strip()
     if mr != run_id.strip():
@@ -732,6 +748,55 @@ def _verify_artifact_digest_continuity(
     if len(expected) != 64:
         print("ERROR: manifest events_content_sha256 missing or not a 64-char hex digest", file=sys.stderr)
         return cli_exit.EX_ERR
+
+    recomputed = portable_evidence_digest_v1(run_id, [dict(e) for e in events if isinstance(e, dict)]).lower()
+    if recomputed != expected:
+        print(
+            "ERROR: evidence bundle digest mismatch (recompute from <run_id>.json != evidence_digest_manifest.json "
+            f"events_content_sha256; expected={expected} actual={recomputed})",
+            file=sys.stderr,
+        )
+        return cli_exit.EX_ERR
+
+    # Phase 1 prerequisite: promoted artifact must carry a stable digest in evidence (source-of-truth),
+    # even when the artifact file isn't available at gate time.
+    promoted_digest: str | None = None
+    for e in reversed([ev for ev in events if isinstance(ev, dict)]):
+        if str(e.get("event_type") or "").strip() != "model_promoted":
+            continue
+        payload = e.get("payload")
+        if isinstance(payload, dict):
+            raw = payload.get("artifact_sha256") or payload.get("artifact_digest_sha256")
+            if isinstance(raw, str) and raw.strip():
+                promoted_digest = raw.strip().lower()
+        break
+    if not promoted_digest or len(promoted_digest) != 64:
+        print(
+            "ERROR: model_promoted missing required artifact digest (expected payload.artifact_sha256 "
+            "or payload.artifact_digest_sha256 as a 64-char hex string).",
+            file=sys.stderr,
+        )
+        return cli_exit.EX_ERR
+
+    if artifact_file is not None:
+        try:
+            import hashlib
+
+            h = hashlib.sha256()
+            with artifact_file.open("rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(chunk)
+            actual = h.hexdigest().lower()
+        except Exception as exc:
+            print(f"ERROR: cannot compute SHA256 for --artifact-file {artifact_file}: {exc}", file=sys.stderr)
+            return cli_exit.EX_ERR
+        if actual != promoted_digest:
+            print(
+                "ERROR: promoted artifact digest mismatch (--artifact-file sha256 != model_promoted payload digest; "
+                f"expected={promoted_digest} actual={actual})",
+                file=sys.stderr,
+            )
+            return cli_exit.EX_ERR
     try:
         got_body = eag.bundle_hash_digest(client, run_id)
     except Exception as exc:
@@ -1510,6 +1575,13 @@ def build_parser() -> GovaiArgumentParser:
         "--require-export",
         action="store_true",
         help="Fail (exit 1) if /api/export cross-check cannot be performed or disagrees with /bundle-hash.",
+    )
+    s_verify_pack.add_argument(
+        "--artifact-file",
+        dest="artifact_file",
+        default=None,
+        help="Optional path to the promoted model artifact on disk. When provided, verify its SHA256 matches "
+        "the model_promoted payload artifact digest in the evidence bundle.",
     )
 
     s_submit = sub.add_parser("submit-evidence", help="Submit one evidence event to POST /evidence.")
@@ -2360,6 +2432,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 artifact_dir=artifact_dir,
                 run_id=run_id,
                 require_export=bool(getattr(args, "require_export", False)),
+                artifact_file=(
+                    Path(str(getattr(args, "artifact_file") or "")).expanduser().resolve()
+                    if str(getattr(args, "artifact_file") or "").strip()
+                    else None
+                ),
             )
             if rc != cli_exit.EX_OK:
                 summary_verdict = "ERROR"
