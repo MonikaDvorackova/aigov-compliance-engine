@@ -1,8 +1,11 @@
-use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::types::{ObjectLockLegalHoldStatus, ObjectLockMode};
 use serde::{Deserialize, Serialize};
 
 use crate::govai_environment::GovaiEnvironment;
+
+#[cfg(feature = "immutable-s3")]
+use aws_sdk_s3::primitives::ByteStream;
+#[cfg(feature = "immutable-s3")]
+use aws_sdk_s3::types::{ObjectLockLegalHoldStatus, ObjectLockMode};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -96,22 +99,34 @@ impl ImmutableStoreConfig {
                 Ok(())
             }
             ImmutableBackendKind::AwsS3ObjectLock => {
-                let bucket = self
-                    .s3_bucket
-                    .as_deref()
-                    .unwrap_or("")
-                    .trim();
-                if bucket.is_empty() {
-                    return Err("Invalid immutable audit configuration: refusing to start — GOVAI_S3_OBJECT_LOCK_BUCKET required when GOVAI_IMMUTABLE_BACKEND=aws_s3_object_lock".to_string());
+                #[cfg(not(feature = "immutable-s3"))]
+                {
+                    let _ = env;
+                    Err(
+                        "Invalid immutable audit configuration: refusing to start — immutable S3 backend requires the immutable-s3 feature"
+                            .to_string(),
+                    )
                 }
-                if self.retention_days == 0 {
-                    return Err("Invalid immutable audit configuration: refusing to start — retention_days must be > 0".to_string());
+
+                #[cfg(feature = "immutable-s3")]
+                {
+                    let bucket = self
+                        .s3_bucket
+                        .as_deref()
+                        .unwrap_or("")
+                        .trim();
+                    if bucket.is_empty() {
+                        return Err("Invalid immutable audit configuration: refusing to start — GOVAI_S3_OBJECT_LOCK_BUCKET required when GOVAI_IMMUTABLE_BACKEND=aws_s3_object_lock".to_string());
+                    }
+                    if self.retention_days == 0 {
+                        return Err("Invalid immutable audit configuration: refusing to start — retention_days must be > 0".to_string());
+                    }
+                    let mode = self.object_lock_mode.trim().to_ascii_uppercase();
+                    if mode != "COMPLIANCE" && mode != "GOVERNANCE" {
+                        return Err("Invalid immutable audit configuration: refusing to start — GOVAI_S3_OBJECT_LOCK_MODE must be COMPLIANCE or GOVERNANCE".to_string());
+                    }
+                    Ok(())
                 }
-                let mode = self.object_lock_mode.trim().to_ascii_uppercase();
-                if mode != "COMPLIANCE" && mode != "GOVERNANCE" {
-                    return Err("Invalid immutable audit configuration: refusing to start — GOVAI_S3_OBJECT_LOCK_MODE must be COMPLIANCE or GOVERNANCE".to_string());
-                }
-                Ok(())
             }
         }
     }
@@ -120,17 +135,34 @@ impl ImmutableStoreConfig {
 #[derive(Debug, Clone)]
 pub struct ImmutableStore {
     cfg: ImmutableStoreConfig,
+    #[cfg(feature = "immutable-s3")]
     s3: Option<aws_sdk_s3::Client>,
 }
 
 impl ImmutableStore {
     pub async fn init(cfg: ImmutableStoreConfig) -> Result<Self, String> {
         match cfg.kind {
-            ImmutableBackendKind::Disabled => Ok(Self { cfg, s3: None }),
+            ImmutableBackendKind::Disabled => Ok(Self {
+                cfg,
+                #[cfg(feature = "immutable-s3")]
+                s3: None,
+            }),
             ImmutableBackendKind::AwsS3ObjectLock => {
-                let shared = aws_config::load_from_env().await;
-                let s3 = aws_sdk_s3::Client::new(&shared);
-                Ok(Self { cfg, s3: Some(s3) })
+                #[cfg(not(feature = "immutable-s3"))]
+                {
+                    let _ = cfg;
+                    return Err(
+                        "immutable S3 backend requires the immutable-s3 feature".to_string(),
+                    );
+                }
+
+                #[cfg(feature = "immutable-s3")]
+                {
+                    let shared =
+                        aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+                    let s3 = aws_sdk_s3::Client::new(&shared);
+                    Ok(Self { cfg, s3: Some(s3) })
+                }
             }
         }
     }
@@ -158,6 +190,16 @@ impl ImmutableStore {
         match self.cfg.kind {
             ImmutableBackendKind::Disabled => Ok(()),
             ImmutableBackendKind::AwsS3ObjectLock => {
+                #[cfg(not(feature = "immutable-s3"))]
+                {
+                    let _ = (tenant_id, anchor_id, bytes);
+                    return Err(
+                        "immutable S3 backend requires the immutable-s3 feature".to_string(),
+                    );
+                }
+
+                #[cfg(feature = "immutable-s3")]
+                {
                 let s3 = self.s3.as_ref().ok_or_else(|| "s3 client missing".to_string())?;
                 let bucket = self.cfg.s3_bucket.as_ref().ok_or_else(|| "bucket missing".to_string())?;
                 let key = self.anchor_key(tenant_id, anchor_id);
@@ -187,6 +229,7 @@ impl ImmutableStore {
                     .await
                     .map_err(|e| format!("s3 put_object failed: {e}"))?;
                 Ok(())
+                }
             }
         }
     }
@@ -199,6 +242,16 @@ impl ImmutableStore {
         match self.cfg.kind {
             ImmutableBackendKind::Disabled => Ok(None),
             ImmutableBackendKind::AwsS3ObjectLock => {
+                #[cfg(not(feature = "immutable-s3"))]
+                {
+                    let _ = (tenant_id, anchor_id);
+                    return Err(
+                        "immutable S3 backend requires the immutable-s3 feature".to_string(),
+                    );
+                }
+
+                #[cfg(feature = "immutable-s3")]
+                {
                 let s3 = self.s3.as_ref().ok_or_else(|| "s3 client missing".to_string())?;
                 let bucket = self.cfg.s3_bucket.as_ref().ok_or_else(|| "bucket missing".to_string())?;
                 let key = self.anchor_key(tenant_id, anchor_id);
@@ -226,6 +279,7 @@ impl ImmutableStore {
                         }
                     }
                 }
+                }
             }
         }
     }
@@ -249,7 +303,26 @@ mod tests {
         let err = cfg
             .validate_startup(GovaiEnvironment::Prod)
             .expect_err("must error");
-        assert!(err.contains("GOVAI_S3_OBJECT_LOCK_BUCKET"));
+        // When the feature is disabled, we must fail-closed with a feature error
+        // before we can validate AWS-specific bucket fields.
+        #[cfg(not(feature = "immutable-s3"))]
+        assert!(err.contains("immutable-s3"), "{err}");
+        #[cfg(feature = "immutable-s3")]
+        assert!(err.contains("GOVAI_S3_OBJECT_LOCK_BUCKET"), "{err}");
+    }
+
+    #[test]
+    fn immutable_disabled_validates_without_aws() {
+        let cfg = ImmutableStoreConfig {
+            kind: ImmutableBackendKind::Disabled,
+            s3_bucket: None,
+            s3_prefix: "p".to_string(),
+            s3_region: None,
+            retention_days: 365,
+            object_lock_mode: "COMPLIANCE".to_string(),
+            require_in_staging_prod: false,
+        };
+        assert!(cfg.validate_startup(GovaiEnvironment::Dev).is_ok());
     }
 }
 
