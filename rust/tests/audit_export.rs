@@ -4,7 +4,7 @@ use aigov_audit::{
     govai_api,
     govai_environment::GovaiEnvironment,
     metering::{GovaiPlan, MeteringConfig},
-    policy_config::PolicyConfig,
+    policy_config::ResolvedPolicyConfig,
 };
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
@@ -42,7 +42,10 @@ fn append_event(dir: &TempDir, tenant: &str, event: EvidenceEvent) {
 
 fn build_app(pool: sqlx::PgPool) -> axum::Router {
     // Policy config is not used by /api/export, but required for router wiring.
-    let policy = PolicyConfig::default();
+    let resolved = ResolvedPolicyConfig::all_defaults();
+    let policy_store =
+        aigov_audit::policy_store::PolicyStore::load_for_deployment(GovaiEnvironment::Dev, resolved)
+            .expect("policy store");
     let api_usage = ApiUsageState::from_env(&pool).unwrap();
     let metering = MeteringConfig {
         enabled: false,
@@ -52,7 +55,7 @@ fn build_app(pool: sqlx::PgPool) -> axum::Router {
         "audit_log.jsonl",
         "test-policy-v0",
         GovaiEnvironment::Dev,
-        policy,
+        policy_store,
         api_usage,
         pool,
         metering,

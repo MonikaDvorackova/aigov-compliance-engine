@@ -31,11 +31,15 @@ async fn router(pool: sqlx::PgPool) -> Router {
         enabled: false,
         default_plan: GovaiPlan::Free,
     };
+    let resolved = ResolvedPolicyConfig::all_defaults();
+    let policy_store =
+        aigov_audit::policy_store::PolicyStore::load_for_deployment(GovaiEnvironment::Dev, resolved)
+            .expect("policy store");
     govai_api::audit_router(
         "audit_log.jsonl",
         policy_version_for(GovaiEnvironment::Dev),
         GovaiEnvironment::Dev,
-        ResolvedPolicyConfig::all_defaults().config,
+        policy_store,
         api_usage,
         pool,
         metering,

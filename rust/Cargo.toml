@@ -3,6 +3,11 @@ name = "aigov_audit"
 version = "0.2.1"
 edition = "2021"
 
+[features]
+# Default builds intentionally exclude cloud immutable backends to keep
+# the dependency tree minimal and security scans deterministic.
+default = []
+
 [[bin]]
 name = "portable_evidence_digest_once"
 path = "src/bin/portable_evidence_digest_once.rs"
@@ -27,6 +32,8 @@ hmac = "0.12"
 subtle = "2.6"
 base64 = "0.22"
 urlencoding = "2.1"
+ed25519-dalek = { version = "2", features = ["pkcs8"] }
+governor = "0.7"
 
 [dev-dependencies]
 hmac = "0.12"

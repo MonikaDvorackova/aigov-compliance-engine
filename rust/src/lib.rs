@@ -4,8 +4,12 @@ pub mod audit_store;
 pub mod bundle;
 pub mod govai_environment;
 pub mod ledger_storage;
+pub mod immutable_store;
 pub mod policy;
 pub mod policy_config;
+pub mod policy_engine;
+pub mod policy_store;
+pub mod policy_signing;
 pub mod schema;
 pub mod verify_chain;
 
@@ -15,6 +19,7 @@ pub mod api_error;
 pub mod api_usage;
 pub mod audit_api_key;
 pub mod billing_trace;
+pub mod contracts;
 pub mod stripe_webhook;
 pub mod stripe_billing;
 pub mod auth;
@@ -25,6 +30,7 @@ pub mod metering;
 pub mod pricing;
 pub mod project;
 pub mod rbac;
+pub mod rate_limit;
 
 use axum::Router;
 use std::net::SocketAddr;
@@ -132,6 +138,17 @@ pub async fn run() -> Result<(), String> {
         }
     };
 
+    let policy_store = match crate::policy_store::PolicyStore::load_for_deployment(
+        deployment_env,
+        resolved_policy.clone(),
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e}");
+            return Err(e);
+        }
+    };
+
     if let Err(e) = db::postgres_url_configured_nonempty() {
         eprintln!("{e}");
         return Err(e);
@@ -203,7 +220,7 @@ pub async fn run() -> Result<(), String> {
             LOG_PATH,
             policy_version,
             deployment_env,
-            resolved_policy.config,
+            policy_store,
             api_usage,
             pool.clone(),
             metering,
