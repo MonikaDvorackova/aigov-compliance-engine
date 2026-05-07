@@ -6,6 +6,7 @@ use aigov_audit::immutable_store::{
     EnterpriseImmutableS3Adapter, ImmutableBackendKind, ImmutableObjectLockMode, ImmutableStoreConfig,
 };
 use aws_sdk_s3::types::{ObjectLockLegalHoldStatus, ObjectLockMode};
+use aws_smithy_http_client_reqwest::ReqwestHttpClient;
 
 #[derive(Clone)]
 pub struct ImmutableS3ObjectLockAdapter {
@@ -14,7 +15,15 @@ pub struct ImmutableS3ObjectLockAdapter {
 
 impl ImmutableS3ObjectLockAdapter {
     pub async fn new_from_env() -> Result<Self, String> {
-        let shared = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let reqwest_client = reqwest::Client::builder()
+            .user_agent("govai/aigov_immutable_s3")
+            .build()
+            .map_err(|e| format!("failed to build reqwest client: {e}"))?;
+
+        let shared = aws_config::defaults(aws_config::BehaviorVersion::latest())
+            .http_client(ReqwestHttpClient::new(reqwest_client))
+            .load()
+            .await;
         Ok(Self {
             s3: Arc::new(aws_sdk_s3::Client::new(&shared)),
         })

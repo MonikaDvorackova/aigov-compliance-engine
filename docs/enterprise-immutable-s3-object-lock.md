@@ -10,6 +10,13 @@ GovAI supports an **enterprise** immutable storage backend backed by **AWS S3 Ob
 
 This separation keeps the OSS `rust/Cargo.lock` free of the AWS SDK dependency tree so default Trivy scanning is clean.
 
+## Security scanning
+
+Phase 1 production hardening requirement: **both** the OSS core and the enterprise adapter must be security-clean without suppressions.
+
+- OSS: `rust/Cargo.lock` does not include the AWS SDK tree.
+- Enterprise adapter: uses a reqwest-backed Smithy HTTP client, eliminating the legacy `hyper-rustls 0.24` / `rustls 0.21` / `rustls-webpki 0.101.7` chain.
+
 ## Fail-closed behavior
 
 If `GOVAI_IMMUTABLE_BACKEND=aws_s3_object_lock` is configured but the enterprise adapter is not wired into the running process, GovAI fails closed with:
