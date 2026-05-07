@@ -715,23 +715,89 @@ def _verify_artifact_digest_continuity(
     artifact_dir: Path,
     run_id: str,
     require_export: bool = False,
-) -> int:
+    artifact_file: Path | None = None,
+) -> tuple[int, str]:
+    reason_code = "DIGEST_MISMATCH"
     try:
+        bundle, _bundle_path = eag.load_bundle(run_id, artifact_dir)
         man = eag.load_manifest(artifact_dir)
     except (OSError, json.JSONDecodeError, TypeError, FileNotFoundError) as exc:
-        print(f"ERROR: cannot read digest manifest: {exc}", file=sys.stderr)
-        return cli_exit.EX_ERR
+        print(f"ERROR: cannot read evidence pack: {exc}", file=sys.stderr)
+        return cli_exit.EX_ERR, reason_code
+
+    # Phase 1 prerequisite: local bundle must match CI digest manifest (fail-closed).
+    br = str(bundle.get("run_id") or "").strip()
+    if br != run_id.strip():
+        print(
+            f"ERROR: bundle run_id mismatch (bundle={br!r} expected={run_id!r})",
+            file=sys.stderr,
+        )
+        return cli_exit.EX_ERR, reason_code
+
+    events = bundle.get("events")
+    if not isinstance(events, list):
+        print("ERROR: bundle.events must be a list", file=sys.stderr)
+        return cli_exit.EX_ERR, reason_code
     mr = str(man.get("run_id") or "").strip()
     if mr != run_id.strip():
         print(
             f"ERROR: manifest run_id mismatch (manifest={mr!r} expected={run_id!r})",
             file=sys.stderr,
         )
-        return cli_exit.EX_ERR
+        return cli_exit.EX_ERR, reason_code
     expected = str(man.get("events_content_sha256") or "").strip().lower()
     if len(expected) != 64:
         print("ERROR: manifest events_content_sha256 missing or not a 64-char hex digest", file=sys.stderr)
-        return cli_exit.EX_ERR
+        return cli_exit.EX_ERR, reason_code
+
+    recomputed = portable_evidence_digest_v1(run_id, [dict(e) for e in events if isinstance(e, dict)]).lower()
+    if recomputed != expected:
+        print(
+            "ERROR: evidence bundle digest mismatch (recompute from <run_id>.json != evidence_digest_manifest.json "
+            f"events_content_sha256; expected={expected} actual={recomputed})",
+            file=sys.stderr,
+        )
+        return cli_exit.EX_ERR, reason_code
+
+    # Phase 1 prerequisite: promoted artifact must carry a stable digest in evidence (source-of-truth),
+    # even when the artifact file isn't available at gate time.
+    promoted_digest: str | None = None
+    for e in reversed([ev for ev in events if isinstance(ev, dict)]):
+        if str(e.get("event_type") or "").strip() != "model_promoted":
+            continue
+        payload = e.get("payload")
+        if isinstance(payload, dict):
+            raw = payload.get("artifact_sha256") or payload.get("artifact_digest_sha256")
+            if isinstance(raw, str) and raw.strip():
+                promoted_digest = raw.strip().lower()
+        break
+    if not promoted_digest or len(promoted_digest) != 64:
+        print(
+            "ERROR: model_promoted missing required artifact digest (expected payload.artifact_sha256 "
+            "or payload.artifact_digest_sha256 as a 64-char hex string).",
+            file=sys.stderr,
+        )
+        return cli_exit.EX_ERR, "MISSING_ARTIFACT_DIGEST"
+
+    if artifact_file is not None:
+        try:
+            import hashlib
+
+            h = hashlib.sha256()
+            with artifact_file.open("rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(chunk)
+            actual = h.hexdigest().lower()
+        except Exception as exc:
+            print(f"ERROR: cannot compute SHA256 for --artifact-file {artifact_file}: {exc}", file=sys.stderr)
+            return cli_exit.EX_ERR, reason_code
+        if actual != promoted_digest:
+            print(
+                "ERROR: promoted artifact digest mismatch (--artifact-file sha256 != model_promoted payload digest; "
+                f"expected={promoted_digest} actual={actual})",
+                file=sys.stderr,
+            )
+            return cli_exit.EX_ERR, reason_code
     try:
         got_body = eag.bundle_hash_digest(client, run_id)
     except Exception as exc:
@@ -739,7 +805,7 @@ def _verify_artifact_digest_continuity(
         msg = str(exc).lower()
         if "connection refused" in msg or "failed to establish a new connection" in msg:
             print('hint: Run local audit service (e.g. make audit_bg) before verify', file=sys.stderr)
-        return cli_exit.EX_ERR
+        return cli_exit.EX_ERR, reason_code
     got = str(got_body.get("events_content_sha256") or "").strip().lower()
     if got != expected:
         print(
@@ -747,7 +813,7 @@ def _verify_artifact_digest_continuity(
             f"(expected={expected} actual={got})",
             file=sys.stderr,
         )
-        return cli_exit.EX_ERR
+        return cli_exit.EX_ERR, reason_code
 
     export_hashes, export_skip = eag.fetch_export_evidence_hashes(client, run_id)
     if export_hashes is None:
@@ -761,7 +827,7 @@ def _verify_artifact_digest_continuity(
                 "ERROR: --require-export requires a successful /api/export cross-check.",
                 file=sys.stderr,
             )
-            return cli_exit.EX_ERR
+            return cli_exit.EX_ERR, reason_code
     else:
         ex = str(export_hashes.get("events_content_sha256") or "").strip().lower()
         if ex and ex != got:
@@ -770,8 +836,8 @@ def _verify_artifact_digest_continuity(
                 f"(export={ex} bundle_hash={got})",
                 file=sys.stderr,
             )
-            return cli_exit.EX_ERR
-    return cli_exit.EX_OK
+            return cli_exit.EX_ERR, reason_code
+    return cli_exit.EX_OK, "OK"
 
 
 def _compliance_verdict_or_err(client: GovAIClient, run_id: str, *, timeout: float) -> tuple[int, dict[str, Any] | None]:
@@ -1510,6 +1576,13 @@ def build_parser() -> GovaiArgumentParser:
         "--require-export",
         action="store_true",
         help="Fail (exit 1) if /api/export cross-check cannot be performed or disagrees with /bundle-hash.",
+    )
+    s_verify_pack.add_argument(
+        "--artifact-file",
+        dest="artifact_file",
+        default=None,
+        help="Optional path to the promoted model artifact on disk. When provided, verify its SHA256 matches "
+        "the model_promoted payload artifact digest in the evidence bundle.",
     )
 
     s_submit = sub.add_parser("submit-evidence", help="Submit one evidence event to POST /evidence.")
@@ -2251,10 +2324,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             if vad is not None:
                 artifact_dir = Path(vad).expanduser().resolve()
-                rc = _verify_artifact_digest_continuity(client, artifact_dir=artifact_dir, run_id=run_id)
+                rc, reason = _verify_artifact_digest_continuity(client, artifact_dir=artifact_dir, run_id=run_id)
                 if rc != cli_exit.EX_OK:
                     summary_verdict = "ERROR"
-                    summary_codes = ["DIGEST_MISMATCH"]
+                    summary_codes = [reason or "DIGEST_MISMATCH"]
                     summary_next_action = "Fix evidence_digest_manifest.json / hosted bundle-hash mismatch, then rerun."
                     return rc
 
@@ -2355,15 +2428,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return cli_exit.EX_ERR
             # Ensure manifest referent exists (CI must ship both files).
             _ = bundle_path
-            rc = _verify_artifact_digest_continuity(
+            rc, reason = _verify_artifact_digest_continuity(
                 client,
                 artifact_dir=artifact_dir,
                 run_id=run_id,
                 require_export=bool(getattr(args, "require_export", False)),
+                artifact_file=(
+                    Path(str(getattr(args, "artifact_file") or "")).expanduser().resolve()
+                    if str(getattr(args, "artifact_file") or "").strip()
+                    else None
+                ),
             )
             if rc != cli_exit.EX_OK:
                 summary_verdict = "ERROR"
-                summary_codes = ["DIGEST_MISMATCH"]
+                summary_codes = [reason or "DIGEST_MISMATCH"]
                 summary_next_action = "Fix evidence_digest_manifest.json / hosted bundle-hash mismatch, then rerun."
                 return rc
             code_sum, summary = _compliance_verdict_or_err(client, run_id, timeout=args.timeout)

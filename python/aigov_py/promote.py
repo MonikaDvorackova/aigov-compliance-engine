@@ -78,7 +78,11 @@ def main() -> None:
 
     artifact_path_fs_local = os.path.join("artifacts", f"model_{run_id}.joblib")
     artifact_path_report = f"python/artifacts/model_{run_id}.joblib"
-    artifact_sha = _sha256_file(artifact_path_fs_local) if os.path.exists(artifact_path_fs_local) else None
+    if not os.path.exists(artifact_path_fs_local):
+        raise SystemExit(
+            f"promote requires a local artifact file to compute artifact_sha256 (missing: {artifact_path_fs_local})"
+        )
+    artifact_sha = _sha256_file(artifact_path_fs_local)
 
     # Remote evidence event (audit service)
     event: Dict[str, Any] = {

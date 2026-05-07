@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +56,28 @@ def _bundle_doc(*, run_id: str, events: list[dict[str, Any]]) -> dict[str, Any]:
     return {"ok": True, "run_id": run_id, "events": events}
 
 
+def _deterministic_artifact_sha256(*, run_id: str, output_dir: Path) -> str:
+    """
+    Phase 1 requires `model_promoted` to be artifact-bound via a stable digest.
+
+    - If a local artifact file exists under the generated golden-path directory, hash it.
+    - Otherwise, derive a deterministic SHA256 from stable fixture content.
+    """
+
+    # Optional real artifact: for deployments that materialize a file during golden path.
+    candidate = (output_dir / f"artifact_{run_id}.bin").resolve()
+    if candidate.is_file():
+        h = hashlib.sha256()
+        with candidate.open("rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    # Keep digest deterministic across runs to preserve "except run_id" fixtures.
+    seed = b"aigov.golden_path_artifact.v1"
+    return hashlib.sha256(seed).hexdigest()
+
+
 def generate_demo_golden_path(*, run_id: str, output_dir: Path) -> GoldenPathResult:
     """
     Deterministic golden-path evidence artifacts for local/CI onboarding.
@@ -78,6 +101,7 @@ def generate_demo_golden_path(*, run_id: str, output_dir: Path) -> GoldenPathRes
     assessment_id = assessment_id_for_run(rid)
     risk_id = risk_id_for_run(rid)
     human_event_id = _event_id("human_approved", rid)
+    artifact_sha256 = _deterministic_artifact_sha256(run_id=rid, output_dir=out)
 
     # Optional: align discovery event id with naming; ingestion does not gate on ai_discovery_* id prefix.
     discovery_event_id = _event_id("ai_discovery_reported", rid)
@@ -134,7 +158,7 @@ def generate_demo_golden_path(*, run_id: str, output_dir: Path) -> GoldenPathRes
                 "dataset_id": _DATASET_ID,
                 "model_type": "LogisticRegression",
                 "artifact_path": f"registry://golden-path/model/{model_version_id}",
-                "artifact_sha256": "golden_path_placeholder_sha256",
+                "artifact_sha256": artifact_sha256,
             },
         },
         {
@@ -243,6 +267,7 @@ def generate_demo_golden_path(*, run_id: str, output_dir: Path) -> GoldenPathRes
             "run_id": rid,
             "payload": {
                 "artifact_path": f"registry://golden-path/artifacts/model/{model_version_id}",
+                "artifact_sha256": artifact_sha256,
                 "promotion_reason": "approved_by_human",
                 "ai_system_id": _AI_SYSTEM_ID,
                 "dataset_id": _DATASET_ID,
